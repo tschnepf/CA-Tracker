@@ -16,9 +16,9 @@ const runtimeFiles = [
   "content-script.js"
 ];
 
-test("manifest uses only scripting and local cache permissions", () => {
+test("manifest uses only the required bridge, storage, and OIDC permissions", () => {
   assert.equal(manifest.manifest_version, 3);
-  assert.deepEqual(manifest.permissions, ["scripting", "storage"]);
+  assert.deepEqual(manifest.permissions, ["scripting", "storage", "identity"]);
   assert.deepEqual(manifest.host_permissions, ["https://project.helixteam.com/*"]);
   assert.deepEqual(manifest.optional_host_permissions, [
     "https://*/*",
@@ -27,6 +27,7 @@ test("manifest uses only scripting and local cache permissions", () => {
   ]);
   assert.equal(manifest.permissions.includes("webRequest"), false);
   assert.equal(manifest.permissions.includes("downloads"), false);
+  assert.ok(manifest.key);
 });
 
 test("network access is isolated to the optional Task Hub client", () => {
@@ -37,6 +38,16 @@ test("network access is isolated to the optional Task Hub client", () => {
   assert.match(client, /\bfetchFunction\s*\(/);
   assert.doesNotMatch(client, /project\.helixteam\.com/);
   assert.match(client, /\/integrations\/helix\/sync/);
+  assert.match(client, /\/integrations\/helix\/auth\/config/);
+  assert.doesNotMatch(client, /\/integrations\/helix\/auth\/login/);
+  assert.doesNotMatch(client, /password\s*:/i);
+});
+
+test("Task Hub settings contain no direct credential fields", () => {
+  const options = fs.readFileSync(path.join(root, "options", "options.html"), "utf8");
+  assert.doesNotMatch(options, /type=["']password["']/i);
+  assert.doesNotMatch(options, /name=["']email["']/i);
+  assert.match(options, /Sign in with TaskHub ID/);
 });
 
 test("runtime code contains no Helix write, upload, delete, or generic network primitives", () => {

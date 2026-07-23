@@ -9,6 +9,8 @@
 
   const SETTINGS_KEY = "helix-taskhub-settings-v1";
   const AUTH_KEY = "helix-taskhub-auth-v1";
+  const CALLBACK_PATH = "taskhub";
+  const REFRESH_SKEW_MS = 60 * 1000;
 
   function normalizeBaseUrl(value) {
     const raw = String(value || "").trim();
@@ -75,12 +77,78 @@
     const nestedMessage = details && typeof details === "object"
       ? details.detail || details.non_field_errors && details.non_field_errors[0]
       : null;
-    const message = payload && (payload.message || payload.detail)
+    const message = payload && (
+      payload.message
+      || payload.detail
+      || payload.error_description
+      || (typeof payload.error === "string" ? payload.error : "")
+    )
       || nestedMessage
       || `Task Hub request failed (${response.status}).`;
     const error = new Error(String(message));
     error.status = response.status;
+    error.code = payload && (
+      payload.error_code
+      || typeof payload.error === "string" && payload.error
+      || payload.error && payload.error.code
+    ) || "";
     return error;
+  }
+
+  function sameOriginUrl(value, expectedOrigin, label) {
+    let parsed;
+    try {
+      parsed = new URL(String(value || ""));
+    } catch (_error) {
+      throw new Error(`Task Hub returned an invalid ${label}.`);
+    }
+    if (parsed.origin !== expectedOrigin || parsed.protocol !== new URL(expectedOrigin).protocol) {
+      throw new Error(`Task Hub returned a ${label} outside the selected server.`);
+    }
+    return parsed.toString();
+  }
+
+  function base64Url(bytes) {
+    let binary = "";
+    bytes.forEach((value) => {
+      binary += String.fromCharCode(value);
+    });
+    return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
+  }
+
+  function randomValue(cryptoObject, size) {
+    const bytes = new Uint8Array(size);
+    cryptoObject.getRandomValues(bytes);
+    return base64Url(bytes);
+  }
+
+  async function codeChallenge(cryptoObject, verifier) {
+    const encoded = new TextEncoder().encode(verifier);
+    const digest = await cryptoObject.subtle.digest("SHA-256", encoded);
+    return base64Url(new Uint8Array(digest));
+  }
+
+  function launchWebAuthFlow(chromeObject, url) {
+    return new Promise((resolve, reject) => {
+      chromeObject.identity.launchWebAuthFlow({ url, interactive: true }, (redirectedTo) => {
+        if (chromeObject.runtime.lastError) {
+          reject(new Error(chromeObject.runtime.lastError.message || "TaskHub ID sign-in was cancelled."));
+        } else if (!redirectedTo) {
+          reject(new Error("TaskHub ID sign-in did not return to the extension."));
+        } else {
+          resolve(redirectedTo);
+        }
+      });
+    });
+  }
+
+  function removePermission(chromeObject, baseUrl) {
+    if (!chromeObject.permissions || typeof chromeObject.permissions.remove !== "function" || !baseUrl) {
+      return Promise.resolve();
+    }
+    return new Promise((resolve) => {
+      chromeObject.permissions.remove({ origins: [permissionOrigin(baseUrl)] }, () => resolve());
+    });
   }
 
   function create(dependencies) {
@@ -88,8 +156,11 @@
       || (typeof chrome !== "undefined" ? chrome : null);
     const fetchFunction = dependencies && dependencies.fetch
       || (typeof fetch !== "undefined" ? fetch.bind(globalThis) : null);
-    if (!chromeObject || !fetchFunction) {
-      throw new Error("Chrome storage and fetch are required.");
+    const cryptoObject = dependencies && dependencies.crypto
+      || (typeof crypto !== "undefined" ? crypto : null);
+    const now = dependencies && dependencies.now || (() => Date.now());
+    if (!chromeObject || !fetchFunction || !cryptoObject) {
+      throw new Error("Chrome storage, identity, fetch, and Web Crypto are required.");
     }
 
     async function restrictCredentialStorage() {
@@ -110,37 +181,190 @@
       return await storageGet(chromeObject, AUTH_KEY) || null;
     }
 
-    async function rawRequest(baseUrl, path, options) {
-      const response = await fetchFunction(`${normalizeBaseUrl(baseUrl)}${path}`, options);
+    async function rawRequest(url, options) {
+      const response = await fetchFunction(url, options);
       const payload = await responsePayload(response);
       if (!response.ok) throw responseError(response, payload);
       return payload;
     }
 
+    async function discover(baseUrl) {
+      const normalizedBaseUrl = normalizeBaseUrl(baseUrl);
+      const expectedOrigin = new URL(normalizedBaseUrl).origin;
+      const configuration = await rawRequest(
+        `${normalizedBaseUrl}/integrations/helix/auth/config`,
+        { method: "GET", headers: { Accept: "application/json" } }
+      );
+      if (!configuration || !configuration.client_id || !Array.isArray(configuration.required_scopes)) {
+        throw new Error("Task Hub returned an invalid Helix OIDC configuration.");
+      }
+
+      const redirectUri = chromeObject.identity.getRedirectURL(CALLBACK_PATH);
+      if (configuration.redirect_uri !== redirectUri) {
+        throw new Error(
+          `This extension package is not registered with Task Hub. Expected redirect ${redirectUri}.`
+        );
+      }
+
+      const discoveryUrl = sameOriginUrl(
+        configuration.oidc_discovery_url,
+        expectedOrigin,
+        "OIDC discovery URL"
+      );
+      const discovery = await rawRequest(discoveryUrl, {
+        method: "GET",
+        headers: { Accept: "application/json" }
+      });
+      if (!discovery || !discovery.issuer) {
+        throw new Error("Task Hub returned an invalid OIDC discovery document.");
+      }
+
+      return {
+        baseUrl: normalizedBaseUrl,
+        clientId: String(configuration.client_id),
+        redirectUri,
+        scopes: configuration.required_scopes.map(String),
+        issuer: sameOriginUrl(discovery.issuer, expectedOrigin, "OIDC issuer").replace(/\/$/, ""),
+        authorizationEndpoint: sameOriginUrl(
+          discovery.authorization_endpoint,
+          expectedOrigin,
+          "OIDC authorization endpoint"
+        ),
+        tokenEndpoint: sameOriginUrl(discovery.token_endpoint, expectedOrigin, "OIDC token endpoint"),
+        revocationEndpoint: discovery.revocation_endpoint
+          ? sameOriginUrl(discovery.revocation_endpoint, expectedOrigin, "OIDC revocation endpoint")
+          : ""
+      };
+    }
+
+    async function exchangeCode(metadata, code, verifier) {
+      const body = new URLSearchParams({
+        grant_type: "authorization_code",
+        client_id: metadata.clientId,
+        code,
+        redirect_uri: metadata.redirectUri,
+        code_verifier: verifier
+      });
+      return rawRequest(metadata.tokenEndpoint, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/x-www-form-urlencoded",
+          Accept: "application/json"
+        },
+        body: body.toString()
+      });
+    }
+
+    function normalizedTokens(payload, previousRefreshToken) {
+      const accessToken = String(payload && payload.access_token || "");
+      const refreshToken = String(payload && payload.refresh_token || previousRefreshToken || "");
+      const expiresIn = Number(payload && payload.expires_in);
+      if (!accessToken || !refreshToken || !Number.isFinite(expiresIn) || expiresIn <= 0) {
+        throw new Error("TaskHub ID returned an invalid token response.");
+      }
+      return {
+        accessToken,
+        refreshToken,
+        expiresAt: now() + expiresIn * 1000
+      };
+    }
+
+    async function login({ baseUrl }) {
+      const metadata = await discover(baseUrl);
+      const state = randomValue(cryptoObject, 32);
+      const verifier = randomValue(cryptoObject, 64);
+      const challenge = await codeChallenge(cryptoObject, verifier);
+      const authorizationUrl = new URL(metadata.authorizationEndpoint);
+      authorizationUrl.search = new URLSearchParams({
+        response_type: "code",
+        client_id: metadata.clientId,
+        redirect_uri: metadata.redirectUri,
+        scope: metadata.scopes.join(" "),
+        state,
+        code_challenge: challenge,
+        code_challenge_method: "S256"
+      }).toString();
+
+      const callbackValue = await launchWebAuthFlow(chromeObject, authorizationUrl.toString());
+      const callback = new URL(callbackValue);
+      const expectedCallback = new URL(metadata.redirectUri);
+      if (callback.origin !== expectedCallback.origin || callback.pathname !== expectedCallback.pathname) {
+        throw new Error("TaskHub ID returned to an unexpected extension URL.");
+      }
+      if (callback.searchParams.get("error")) {
+        throw new Error(
+          callback.searchParams.get("error_description")
+          || callback.searchParams.get("error")
+          || "TaskHub ID sign-in failed."
+        );
+      }
+      if (callback.searchParams.get("state") !== state) {
+        throw new Error("TaskHub ID sign-in state did not match. Try again.");
+      }
+      const code = callback.searchParams.get("code");
+      if (!code) throw new Error("TaskHub ID did not return an authorization code.");
+
+      const tokenPayload = await exchangeCode(metadata, code, verifier);
+      const tokens = normalizedTokens(tokenPayload);
+      const user = await rawRequest(`${metadata.baseUrl}/integrations/helix/auth/session`, {
+        method: "GET",
+        headers: {
+          Accept: "application/json",
+          Authorization: `Bearer ${tokens.accessToken}`
+        }
+      });
+      if (!user || !user.id || !user.email) {
+        throw new Error("Task Hub returned an invalid extension session.");
+      }
+
+      const connectedAt = new Date(now()).toISOString();
+      await storageSet(chromeObject, SETTINGS_KEY, {
+        baseUrl: metadata.baseUrl,
+        autoSync: true,
+        connectedAt
+      });
+      await storageSet(chromeObject, AUTH_KEY, {
+        ...tokens,
+        clientId: metadata.clientId,
+        tokenEndpoint: metadata.tokenEndpoint,
+        revocationEndpoint: metadata.revocationEndpoint,
+        user
+      });
+      return { connected: true, baseUrl: metadata.baseUrl, user, autoSync: true, connectedAt };
+    }
+
     async function refreshCredentials(currentSettings, currentAuth) {
-      if (!currentSettings || !currentAuth || !currentAuth.refresh) {
+      if (
+        !currentSettings
+        || !currentAuth
+        || !currentAuth.refreshToken
+        || !currentAuth.tokenEndpoint
+        || !currentAuth.clientId
+      ) {
         throw new Error("Task Hub login has expired. Sign in again.");
       }
       try {
-        const payload = await rawRequest(
-          currentSettings.baseUrl,
-          "/integrations/helix/auth/refresh",
-          {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ refresh: currentAuth.refresh })
-          }
-        );
-        const nextAuth = {
-          access: String(payload.access || ""),
-          refresh: String(payload.refresh || currentAuth.refresh),
-          user: currentAuth.user
-        };
-        if (!nextAuth.access) throw new Error("Task Hub did not return a refreshed access token.");
+        const payload = await rawRequest(currentAuth.tokenEndpoint, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/x-www-form-urlencoded",
+            Accept: "application/json"
+          },
+          body: new URLSearchParams({
+            grant_type: "refresh_token",
+            client_id: currentAuth.clientId,
+            refresh_token: currentAuth.refreshToken
+          }).toString()
+        });
+        const nextTokens = normalizedTokens(payload, currentAuth.refreshToken);
+        const nextAuth = { ...currentAuth, ...nextTokens };
         await storageSet(chromeObject, AUTH_KEY, nextAuth);
         return nextAuth;
       } catch (error) {
         await storageRemove(chromeObject, AUTH_KEY);
+        if (error && error.code === "invalid_grant") {
+          throw new Error("Task Hub login has expired. Sign in again.");
+        }
         throw error;
       }
     }
@@ -148,15 +372,18 @@
     async function authenticatedRequest(path, options) {
       const currentSettings = await settings();
       let currentAuth = await auth();
-      if (!currentSettings || !currentAuth || !currentAuth.access) {
+      if (!currentSettings || !currentAuth || !currentAuth.accessToken) {
         throw new Error("Connect and sign in to Task Hub first.");
       }
-      const send = async (credentials) => rawRequest(currentSettings.baseUrl, path, {
+      if (!currentAuth.expiresAt || currentAuth.expiresAt <= now() + REFRESH_SKEW_MS) {
+        currentAuth = await refreshCredentials(currentSettings, currentAuth);
+      }
+      const send = async (credentials) => rawRequest(`${currentSettings.baseUrl}${path}`, {
         ...(options || {}),
         headers: {
           "Content-Type": "application/json",
           ...(options && options.headers ? options.headers : {}),
-          Authorization: `Bearer ${credentials.access}`
+          Authorization: `Bearer ${credentials.accessToken}`
         }
       });
       try {
@@ -168,38 +395,17 @@
       }
     }
 
-    async function login({ baseUrl, email, password }) {
-      const normalizedBaseUrl = normalizeBaseUrl(baseUrl);
-      const payload = await rawRequest(normalizedBaseUrl, "/integrations/helix/auth/login", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          email: String(email || "").trim(),
-          password: String(password || "")
-        })
-      });
-      if (!payload || !payload.access || !payload.refresh || !payload.user) {
-        throw new Error("Task Hub returned an invalid login response.");
-      }
-      const connectedAt = new Date().toISOString();
-      await storageSet(chromeObject, SETTINGS_KEY, {
-        baseUrl: normalizedBaseUrl,
-        autoSync: true,
-        connectedAt
-      });
-      await storageSet(chromeObject, AUTH_KEY, {
-        access: String(payload.access),
-        refresh: String(payload.refresh),
-        user: payload.user
-      });
-      return { connected: true, baseUrl: normalizedBaseUrl, user: payload.user, autoSync: true, connectedAt };
-    }
-
     async function status() {
       const currentSettings = await settings();
       const currentAuth = await auth();
       return {
-        connected: Boolean(currentSettings && currentAuth && currentAuth.refresh),
+        connected: Boolean(
+          currentSettings
+          && currentAuth
+          && currentAuth.accessToken
+          && currentAuth.refreshToken
+          && currentAuth.tokenEndpoint
+        ),
         baseUrl: currentSettings && currentSettings.baseUrl || "",
         autoSync: currentSettings ? currentSettings.autoSync !== false : true,
         connectedAt: currentSettings && currentSettings.connectedAt || null,
@@ -222,12 +428,24 @@
       const currentSettings = await settings();
       const currentAuth = await auth();
       try {
-        if (currentSettings && currentAuth && currentAuth.refresh) {
+        if (
+          currentAuth
+          && currentAuth.revocationEndpoint
+          && currentAuth.refreshToken
+          && currentAuth.clientId
+        ) {
           try {
-            await rawRequest(currentSettings.baseUrl, "/integrations/helix/auth/logout", {
+            await rawRequest(currentAuth.revocationEndpoint, {
               method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ refresh: currentAuth.refresh })
+              headers: {
+                "Content-Type": "application/x-www-form-urlencoded",
+                Accept: "application/json"
+              },
+              body: new URLSearchParams({
+                token: currentAuth.refreshToken,
+                token_type_hint: "refresh_token",
+                client_id: currentAuth.clientId
+              }).toString()
             });
           } catch (_error) {
             // Local disconnect must still work if the self-hosted server is offline.
@@ -235,6 +453,7 @@
         }
       } finally {
         await storageRemove(chromeObject, [AUTH_KEY, SETTINGS_KEY]);
+        await removePermission(chromeObject, currentSettings && currentSettings.baseUrl);
       }
       return { connected: false, baseUrl: "", user: null, autoSync: true };
     }
@@ -259,6 +478,7 @@
   return Object.freeze({
     SETTINGS_KEY,
     AUTH_KEY,
+    CALLBACK_PATH,
     normalizeBaseUrl,
     permissionOrigin,
     create

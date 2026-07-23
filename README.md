@@ -59,8 +59,9 @@ The extension works normally without Task Hub. To send the current **In court no
 self-hosted Task Hub:
 
 1. Open the extension's **Task Hub** settings from the Helix sidebar or Chrome's extension details.
-2. Enter the public HTTPS URL of the Task Hub deployment and sign in with an existing Task Hub
-   account. Plain HTTP is accepted only for `localhost` or `127.0.0.1` development.
+2. Enter the public HTTPS URL of the Task Hub deployment and select **Sign in with TaskHub ID**.
+   Chrome opens the deployment's Keycloak login using OIDC Authorization Code + PKCE. Plain HTTP is
+   accepted only for `localhost` or `127.0.0.1` development.
 3. Approve Chrome's host permission for that one server.
 4. Leave automatic sync enabled, or disable it and use **Sync** in the Helix sidebar.
 5. Choose **Only me**, a company scope, all people, or a custom set in the Open queue person filter.
@@ -72,10 +73,10 @@ and the earliest available due/review date. Repeated syncs update the same tasks
 archives synced items that are no longer in the selected current queue; a scan with Helix read
 warnings never archives missing items.
 
-The password is used only for the login request and is not stored. The extension stores revocable
-access/refresh tokens in extension-local storage restricted to trusted extension contexts, rotates
-them automatically, and removes them on disconnect. The optional connection never changes Helix
-records. See [PRIVACY.md](PRIVACY.md) for the exact fields sent.
+The extension never receives the TaskHub ID password. It stores revocable access/refresh tokens in
+extension-local storage restricted to trusted extension contexts, rotates them automatically, and
+revokes the refresh token when possible before removing it on disconnect. The optional connection
+never changes Helix records. See [PRIVACY.md](PRIVACY.md) for the exact fields sent.
 
 ## Install in Chrome
 
@@ -109,8 +110,9 @@ If older versions were loaded from separate folders, remove those duplicates fro
 
 ## Read-only and privacy guarantees
 
-- The extension has only `scripting` and local `storage` permissions, plus access to
-  `project.helixteam.com`. Access to a Task Hub host is optional and requested only when connecting.
+- The extension has only `scripting`, local `storage`, and OIDC `identity` permissions, plus access
+  to `project.helixteam.com`. Access to a Task Hub host is optional and requested only when
+  connecting.
 - It calls Helix's existing `readFromCollection` helper through a fixed operation bridge.
 - It contains no save, upload, delete, raw `fetch`, or `XMLHttpRequest` implementation.
 - The bridge cannot accept arbitrary collection names or arbitrary queries from the content script.

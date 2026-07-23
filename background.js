@@ -27,8 +27,21 @@ function isAllowedTab(tab) {
   }
 }
 
-function isExtensionPage(sender) {
-  return Boolean(sender && sender.id === chrome.runtime.id && !sender.tab);
+function isExtensionOptionsPage(sender) {
+  if (!sender || sender.id !== chrome.runtime.id || typeof sender.url !== "string") {
+    return false;
+  }
+  try {
+    const senderUrl = new URL(sender.url);
+    const expectedUrl = new URL(chrome.runtime.getURL("options/options.html"));
+    return senderUrl.protocol === expectedUrl.protocol
+      && senderUrl.host === expectedUrl.host
+      && senderUrl.pathname === expectedUrl.pathname
+      && !senderUrl.search
+      && !senderUrl.hash;
+  } catch (_error) {
+    return false;
+  }
 }
 
 function isValidNonce(value) {
@@ -116,28 +129,26 @@ async function handleMessage(message, sender) {
   }
 
   if (message.type === "HELIX_TASKHUB_STATUS") {
-    if (!isAllowedTab(sender.tab) && !isExtensionPage(sender)) {
+    if (!isAllowedTab(sender.tab) && !isExtensionOptionsPage(sender)) {
       throw new Error("Task Hub status is available only to this extension.");
     }
     return taskHubClient.status();
   }
 
-  if (message.type === "HELIX_TASKHUB_LOGIN") {
-    if (!isExtensionPage(sender)) throw new Error("Task Hub login must start from extension settings.");
+  if (message.type === "HELIX_TASKHUB_OIDC_LOGIN") {
+    if (!isExtensionOptionsPage(sender)) throw new Error("Task Hub login must start from extension settings.");
     return taskHubClient.login({
-      baseUrl: message.baseUrl,
-      email: message.email,
-      password: message.password
+      baseUrl: message.baseUrl
     });
   }
 
   if (message.type === "HELIX_TASKHUB_LOGOUT") {
-    if (!isExtensionPage(sender)) throw new Error("Task Hub logout must start from extension settings.");
+    if (!isExtensionOptionsPage(sender)) throw new Error("Task Hub logout must start from extension settings.");
     return taskHubClient.logout();
   }
 
   if (message.type === "HELIX_TASKHUB_UPDATE_SETTINGS") {
-    if (!isExtensionPage(sender)) throw new Error("Task Hub settings must be changed from extension settings.");
+    if (!isExtensionOptionsPage(sender)) throw new Error("Task Hub settings must be changed from extension settings.");
     return taskHubClient.updateSettings({ autoSync: message.autoSync });
   }
 

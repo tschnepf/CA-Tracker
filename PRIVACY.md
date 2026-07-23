@@ -17,9 +17,10 @@ and Helix login tokens are not sent. A scan containing Helix read warnings is ma
 cannot archive missing Task Hub tasks.
 
 Connecting is optional and requires a runtime Chrome host permission for the chosen Task Hub origin.
-Non-local servers must use HTTPS. The Task Hub password is used only for the sign-in request and is
-never stored. Revocable access and refresh tokens are stored in Chrome extension-local storage,
-restricted to trusted extension contexts, rotated automatically, and removed on disconnect.
+Non-local servers must use HTTPS. Sign-in uses the deployment's TaskHub ID provider through OIDC
+Authorization Code + PKCE, so the extension never receives the user's password. Revocable access and
+refresh tokens are stored in Chrome extension-local storage, restricted to trusted extension
+contexts, rotated automatically, and revoked when possible before being removed on disconnect.
 
 Successful scans are saved as a sanitized cache in Chrome's extension-local storage, scoped to the logged-in contact. Queue data is reused across supported pages and activity data is cached per project and feature. A cache is treated as fresh for 15 minutes; **Refresh** replaces it immediately. Cross-page item opening also stores a two-minute navigation handoff containing only item, type, and project identifiers; it is consumed on the matching destination page. Chrome may retain older cache entries until they are replaced, extension storage is cleared, or the extension is uninstalled. Removing or disabling the extension stops all processing.
 

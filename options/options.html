@@ -20,15 +20,7 @@
             <span>Self-hosted Task Hub URL</span>
             <input id="base-url" name="baseUrl" type="url" placeholder="https://tasks.example.com" required>
           </label>
-          <label>
-            <span>Email</span>
-            <input id="email" name="email" type="email" autocomplete="username" required>
-          </label>
-          <label>
-            <span>Password</span>
-            <input id="password" name="password" type="password" autocomplete="current-password" required>
-          </label>
-          <button id="connect" type="submit">Connect and sign in</button>
+          <button id="connect" type="submit">Sign in with TaskHub ID</button>
         </form>
 
         <div id="connected" hidden>
@@ -46,12 +38,11 @@
 
       <p id="message" role="status" aria-live="polite"></p>
       <p class="security-note">
-        Your password is used only for this sign-in request and is never saved. The extension stores
-        revocable login tokens in Chrome extension storage and refreshes them automatically.
+        Sign-in opens your self-hosted TaskHub ID provider. The extension never receives your password
+        and stores only revocable login tokens in trusted Chrome extension storage.
       </p>
     </main>
     <script src="../integrations/taskhub/client.js"></script>
     <script src="options.js"></script>
   </body>
 </html>
-

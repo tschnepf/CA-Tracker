@@ -5,6 +5,7 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
 const vm = require("node:vm");
+const { webcrypto } = require("node:crypto");
 const TaskHubClient = require("../integrations/taskhub/client.js");
 
 const source = fs.readFileSync(path.resolve(__dirname, "..", "background.js"), "utf8");
@@ -17,12 +18,20 @@ function loadBackground() {
     runtime: {
       id: "test-extension-id",
       lastError: null,
+      getURL(value) {
+        return `chrome-extension://test-extension-id/${value}`;
+      },
       onMessage: {
         addListener(value) {
           listener = value;
         }
       },
       async openOptionsPage() {}
+    },
+    identity: {
+      getRedirectURL(value) {
+        return `https://test-extension-id.chromiumapp.org/${value}`;
+      }
     },
     scripting: {
       async executeScript(options) {
@@ -59,6 +68,11 @@ function loadBackground() {
     Number,
     Error,
     JSON,
+    TextEncoder,
+    Uint8Array,
+    URLSearchParams,
+    btoa,
+    crypto: webcrypto,
     fetch: fetchStub,
     HelixTaskHubClient: TaskHubClient,
     importScripts() {}
@@ -124,4 +138,49 @@ test("background also allows the fixed Helix Overview route", async () => {
 
   assert.equal(response.ok, true);
   assert.equal(injections.length, 2);
+});
+
+test("background accepts Task Hub requests from the tab-based extension options page", async () => {
+  const { listener } = loadBackground();
+  const sender = {
+    id: "test-extension-id",
+    url: "chrome-extension://test-extension-id/options/options.html",
+    tab: { id: 99, url: "chrome-extension://test-extension-id/options/options.html" }
+  };
+
+  const status = await send(listener, { type: "HELIX_TASKHUB_STATUS" }, sender);
+  assert.equal(status.ok, true);
+  assert.equal(status.result.connected, false);
+
+  const login = await send(listener, {
+    type: "HELIX_TASKHUB_OIDC_LOGIN",
+    baseUrl: "https://tasks.example.com"
+  }, sender);
+  assert.equal(login.ok, false);
+  assert.doesNotMatch(login.error, /must start from extension settings/);
+});
+
+test("background rejects Task Hub login from Helix and unrelated extension pages", async () => {
+  const { listener } = loadBackground();
+  const helix = await send(listener, {
+    type: "HELIX_TASKHUB_OIDC_LOGIN",
+    baseUrl: "https://tasks.example.com"
+  }, {
+    id: "test-extension-id",
+    url: "https://project.helixteam.com/Projects/project-1/RFI",
+    tab: { id: 42, url: "https://project.helixteam.com/Projects/project-1/RFI" }
+  });
+  assert.equal(helix.ok, false);
+  assert.match(helix.error, /must start from extension settings/);
+
+  const unrelated = await send(listener, {
+    type: "HELIX_TASKHUB_OIDC_LOGIN",
+    baseUrl: "https://tasks.example.com"
+  }, {
+    id: "test-extension-id",
+    url: "chrome-extension://test-extension-id/other.html",
+    tab: { id: 100, url: "chrome-extension://test-extension-id/other.html" }
+  });
+  assert.equal(unrelated.ok, false);
+  assert.match(unrelated.error, /must start from extension settings/);
 });

@@ -1,5 +1,6 @@
 "use strict";
 
+const crypto = require("node:crypto");
 const fs = require("node:fs");
 const path = require("node:path");
 
@@ -29,5 +30,58 @@ if (manifest.manifest_version !== 3) {
 if (manifest.version !== packageMetadata.version) {
   throw new Error("manifest.json and package.json must use the same extension version.");
 }
+if (!manifest.key) {
+  throw new Error("The private package manifest must include a public key for a stable extension ID.");
+}
+if (!manifest.permissions.includes("identity")) {
+  throw new Error("The OIDC extension must declare Chrome's identity permission.");
+}
 
-console.log(`Validated Manifest V3 extension with ${requiredFiles.length} referenced files.`);
+const publicKey = Buffer.from(manifest.key, "base64");
+const extensionHex = crypto.createHash("sha256").update(publicKey).digest("hex").slice(0, 32);
+const extensionId = Array.from(
+  extensionHex,
+  (character) => String.fromCharCode(97 + Number.parseInt(character, 16))
+).join("");
+const redirectUri = `https://${extensionId}.chromiumapp.org/taskhub`;
+const repositoryRoot = path.resolve(root, "..", "..");
+const realm = JSON.parse(fs.readFileSync(
+  path.join(repositoryRoot, "tools", "keycloak", "realm-export", "taskhub-realm.json"),
+  "utf8"
+));
+const oidcClient = (realm.clients || []).find((client) => client.clientId === "taskhub-helix-extension");
+if (!oidcClient) {
+  throw new Error("Keycloak realm is missing the taskhub-helix-extension client.");
+}
+if (!Array.isArray(oidcClient.redirectUris) || !oidcClient.redirectUris.includes(redirectUri)) {
+  throw new Error(`Keycloak must register the pinned extension redirect URI: ${redirectUri}`);
+}
+if (
+  oidcClient.publicClient !== true
+  || oidcClient.standardFlowEnabled !== true
+  || oidcClient.directAccessGrantsEnabled !== false
+  || !oidcClient.attributes
+  || oidcClient.attributes["pkce.code.challenge.method"] !== "S256"
+) {
+  throw new Error("The Helix Keycloak client must be public, standard-flow-only, and require PKCE S256.");
+}
+const requiredDefaultScopes = ["profile", "email", "roles", "helix.sync", "taskhub-api-audience"];
+if (!requiredDefaultScopes.every((scope) => (oidcClient.defaultClientScopes || []).includes(scope))) {
+  throw new Error("The Helix Keycloak client is missing required default scopes.");
+}
+if (!(oidcClient.optionalClientScopes || []).includes("offline_access")) {
+  throw new Error("The Helix Keycloak client must allow the offline_access scope.");
+}
+if (!(realm.clientScopes || []).some((scope) => scope.name === "helix.sync")) {
+  throw new Error("The Keycloak realm is missing the helix.sync client scope.");
+}
+for (const environmentFile of [".env.example", ".env.unraid.production.example"]) {
+  const environment = fs.readFileSync(path.join(repositoryRoot, environmentFile), "utf8");
+  if (!environment.includes(`KEYCLOAK_HELIX_REDIRECT_URI=${redirectUri}`)) {
+    throw new Error(`${environmentFile} does not match the pinned extension redirect URI.`);
+  }
+}
+
+console.log(
+  `Validated Manifest V3 extension ${extensionId} with ${requiredFiles.length} referenced files.`
+);

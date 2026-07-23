@@ -4,8 +4,6 @@
   const form = document.getElementById("login-form");
   const connected = document.getElementById("connected");
   const baseUrl = document.getElementById("base-url");
-  const email = document.getElementById("email");
-  const password = document.getElementById("password");
   const connectButton = document.getElementById("connect");
   const disconnectButton = document.getElementById("disconnect");
   const autoSync = document.getElementById("auto-sync");
@@ -59,18 +57,14 @@
         origins: [HelixTaskHubClient.permissionOrigin(normalized)]
       });
       if (!granted) throw new Error("Chrome did not grant access to that Task Hub server.");
-      showMessage("Signing in…");
+      showMessage("Opening TaskHub ID…");
       const status = await runtimeMessage({
-        type: "HELIX_TASKHUB_LOGIN",
-        baseUrl: normalized,
-        email: email.value,
-        password: password.value
+        type: "HELIX_TASKHUB_OIDC_LOGIN",
+        baseUrl: normalized
       });
-      password.value = "";
       render(status);
       showMessage("Connected. Return to Helix and refresh the activity queue to sync.");
     } catch (error) {
-      password.value = "";
       showMessage(error.message, true);
     } finally {
       connectButton.disabled = false;
@@ -103,4 +97,3 @@
 
   void loadStatus();
 })();
-

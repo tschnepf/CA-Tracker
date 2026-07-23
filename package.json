@@ -1,6 +1,6 @@
 {
   "name": "helix-my-activity",
-  "version": "1.8.0",
+  "version": "1.8.1",
   "private": true,
   "description": "Read-only Helix activity extension with optional self-hosted Task Hub sync.",
   "scripts": {
