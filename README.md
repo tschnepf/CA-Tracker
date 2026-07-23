@@ -80,8 +80,12 @@ never changes Helix records. See [PRIVACY.md](PRIVACY.md) for the exact fields s
 
 ## Install in Chrome
 
-Run the portable packaging command once to validate the extension and create the permanent unpacked
-folder:
+For a deployed Task Hub, open **Settings → Browser Extensions**, download the Helix ZIP, extract it
+into a permanent folder, and use that folder in the steps below. Task Hub also shows whether the
+current account has connected or synced the extension.
+
+For local development, run the portable packaging command once to validate the extension and create
+the same ZIP plus the permanent unpacked folder:
 
 ```bash
 npm run package

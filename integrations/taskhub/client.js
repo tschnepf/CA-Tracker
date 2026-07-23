@@ -11,6 +11,7 @@
   const AUTH_KEY = "helix-taskhub-auth-v1";
   const CALLBACK_PATH = "taskhub";
   const REFRESH_SKEW_MS = 60 * 1000;
+  const VERSION_HEADER = "X-TaskHub-Extension-Version";
 
   function normalizeBaseUrl(value) {
     const raw = String(value || "").trim();
@@ -162,6 +163,12 @@
     if (!chromeObject || !fetchFunction || !cryptoObject) {
       throw new Error("Chrome storage, identity, fetch, and Web Crypto are required.");
     }
+    const extensionVersion = String(
+      chromeObject.runtime
+      && typeof chromeObject.runtime.getManifest === "function"
+      && chromeObject.runtime.getManifest().version
+      || ""
+    ).trim();
 
     async function restrictCredentialStorage() {
       const storage = chromeObject.storage && chromeObject.storage.local;
@@ -310,7 +317,8 @@
         method: "GET",
         headers: {
           Accept: "application/json",
-          Authorization: `Bearer ${tokens.accessToken}`
+          Authorization: `Bearer ${tokens.accessToken}`,
+          [VERSION_HEADER]: extensionVersion
         }
       });
       if (!user || !user.id || !user.email) {
@@ -383,7 +391,8 @@
         headers: {
           "Content-Type": "application/json",
           ...(options && options.headers ? options.headers : {}),
-          Authorization: `Bearer ${credentials.accessToken}`
+          Authorization: `Bearer ${credentials.accessToken}`,
+          [VERSION_HEADER]: extensionVersion
         }
       });
       try {
@@ -428,6 +437,16 @@
       const currentSettings = await settings();
       const currentAuth = await auth();
       try {
+        if (currentSettings && currentAuth && currentAuth.accessToken) {
+          try {
+            await authenticatedRequest("/integrations/helix/auth/disconnect", {
+              method: "POST",
+              body: "{}"
+            });
+          } catch (_error) {
+            // The local connection must still be removable while Task Hub is offline.
+          }
+        }
         if (
           currentAuth
           && currentAuth.revocationEndpoint

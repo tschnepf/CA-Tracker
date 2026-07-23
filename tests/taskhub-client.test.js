@@ -43,7 +43,12 @@ function chromeStorage(initial, authFlow) {
   const removedPermissions = [];
   let accessLevel = null;
   const chrome = {
-    runtime: { lastError: null },
+    runtime: {
+      lastError: null,
+      getManifest() {
+        return { version: "1.8.1" };
+      }
+    },
     identity: {
       getRedirectURL(path) {
         return `https://${EXTENSION_ID}.chromiumapp.org/${path}`;
@@ -150,6 +155,10 @@ test("OIDC login uses PKCE, validates the session, and stores no password", asyn
   assert.equal(JSON.stringify(requests).toLowerCase().includes("password"), false);
   assert.equal(storage.data[TaskHubClient.AUTH_KEY].refreshToken, "refresh-token");
   assert.equal(storage.data[TaskHubClient.AUTH_KEY].expiresAt, 1_300_000);
+  assert.equal(
+    requests[3].options.headers["X-TaskHub-Extension-Version"],
+    "1.8.1"
+  );
 });
 
 test("OIDC login rejects a state mismatch without exchanging the code", async () => {
@@ -242,6 +251,7 @@ test("sync rotates an expired refresh token and retries once after a 401", async
   assert.equal(refreshBody.get("grant_type"), "refresh_token");
   assert.equal(refreshBody.get("refresh_token"), "old-refresh");
   assert.equal(requests[2].options.headers.Authorization, "Bearer new-access");
+  assert.equal(requests[2].options.headers["X-TaskHub-Extension-Version"], "1.8.1");
   assert.equal(storage.data[TaskHubClient.AUTH_KEY].refreshToken, "new-refresh");
 });
 
@@ -275,4 +285,41 @@ test("disconnect clears local tokens and host permission after revocation failur
   assert.equal(storage.data[TaskHubClient.SETTINGS_KEY], undefined);
   assert.equal(storage.data[TaskHubClient.AUTH_KEY], undefined);
   assert.deepEqual(storage.removedPermissions, ["https://tasks.example.com/*"]);
+});
+
+test("disconnect updates Task Hub before revoking local credentials", async () => {
+  const storage = chromeStorage({
+    [TaskHubClient.SETTINGS_KEY]: { baseUrl: "https://tasks.example.com" },
+    [TaskHubClient.AUTH_KEY]: {
+      accessToken: "access",
+      refreshToken: "refresh",
+      expiresAt: 9_999_999,
+      clientId: "taskhub-helix-extension",
+      tokenEndpoint: "https://tasks.example.com/idp/realms/taskhub/protocol/openid-connect/token",
+      revocationEndpoint: "https://tasks.example.com/idp/realms/taskhub/protocol/openid-connect/revoke",
+      user: {}
+    }
+  });
+  const requests = [];
+  const client = TaskHubClient.create({
+    chrome: storage.chrome,
+    crypto: webcrypto,
+    now: () => 1_000_000,
+    fetch: async (url, options) => {
+      requests.push({ url, options });
+      return response(200, {});
+    }
+  });
+
+  await client.logout();
+
+  assert.equal(
+    requests[0].url,
+    "https://tasks.example.com/integrations/helix/auth/disconnect"
+  );
+  assert.equal(requests[0].options.headers["X-TaskHub-Extension-Version"], "1.8.1");
+  assert.equal(
+    requests[1].url,
+    "https://tasks.example.com/idp/realms/taskhub/protocol/openid-connect/revoke"
+  );
 });
