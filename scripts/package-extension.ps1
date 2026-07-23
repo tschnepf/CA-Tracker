@@ -34,6 +34,15 @@ foreach ($file in $files) {
     Copy-Item -LiteralPath (Join-Path $root $file) -Destination (Join-Path $install $file)
 }
 
+$directories = @(
+    'integrations',
+    'options'
+)
+
+foreach ($directory in $directories) {
+    Copy-Item -LiteralPath (Join-Path $root $directory) -Destination (Join-Path $install $directory) -Recurse
+}
+
 Compress-Archive -Path (Join-Path $install '*') -DestinationPath $versionedArchive -CompressionLevel Optimal -Force
 Copy-Item -LiteralPath $versionedArchive -Destination $currentArchive -Force
 

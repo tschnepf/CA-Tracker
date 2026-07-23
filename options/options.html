@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>My Helix Activity — Task Hub</title>
+    <link rel="stylesheet" href="options.css">
+  </head>
+  <body>
+    <main>
+      <header>
+        <p class="eyebrow">My Helix Activity</p>
+        <h1>Task Hub connection</h1>
+        <p>Helix continues to work locally when Task Hub is not connected.</p>
+      </header>
+
+      <section id="connection-card">
+        <form id="login-form">
+          <label>
+            <span>Self-hosted Task Hub URL</span>
+            <input id="base-url" name="baseUrl" type="url" placeholder="https://tasks.example.com" required>
+          </label>
+          <label>
+            <span>Email</span>
+            <input id="email" name="email" type="email" autocomplete="username" required>
+          </label>
+          <label>
+            <span>Password</span>
+            <input id="password" name="password" type="password" autocomplete="current-password" required>
+          </label>
+          <button id="connect" type="submit">Connect and sign in</button>
+        </form>
+
+        <div id="connected" hidden>
+          <dl>
+            <div><dt>Server</dt><dd id="connected-url"></dd></div>
+            <div><dt>Account</dt><dd id="connected-user"></dd></div>
+          </dl>
+          <label class="toggle">
+            <input id="auto-sync" type="checkbox" checked>
+            <span>Automatically sync after each fresh Helix scan</span>
+          </label>
+          <button id="disconnect" type="button" class="secondary">Disconnect</button>
+        </div>
+      </section>
+
+      <p id="message" role="status" aria-live="polite"></p>
+      <p class="security-note">
+        Your password is used only for this sign-in request and is never saved. The extension stores
+        revocable login tokens in Chrome extension storage and refreshes them automatically.
+      </p>
+    </main>
+    <script src="../integrations/taskhub/client.js"></script>
+    <script src="options.js"></script>
+  </body>
+</html>
+

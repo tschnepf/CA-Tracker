@@ -5,28 +5,64 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
 const vm = require("node:vm");
+const TaskHubClient = require("../integrations/taskhub/client.js");
 
 const source = fs.readFileSync(path.resolve(__dirname, "..", "background.js"), "utf8");
 
 function loadBackground() {
   let listener = null;
   const injections = [];
+  const storageData = {};
   const chrome = {
     runtime: {
+      id: "test-extension-id",
+      lastError: null,
       onMessage: {
         addListener(value) {
           listener = value;
         }
-      }
+      },
+      async openOptionsPage() {}
     },
     scripting: {
       async executeScript(options) {
         injections.push(options);
         return [];
       }
+    },
+    storage: {
+      local: {
+        get(key, callback) {
+          callback({ [key]: storageData[key] });
+        },
+        set(value, callback) {
+          Object.assign(storageData, value);
+          if (callback) callback();
+        },
+        remove(keys, callback) {
+          (Array.isArray(keys) ? keys : [keys]).forEach((key) => delete storageData[key]);
+          if (callback) callback();
+        },
+        async setAccessLevel() {}
+      }
     }
   };
-  vm.runInNewContext(source, { chrome, URL, Number, Error });
+  const fetchStub = async () => ({
+    ok: true,
+    status: 200,
+    headers: { get: () => "application/json" },
+    async json() { return {}; }
+  });
+  vm.runInNewContext(source, {
+    chrome,
+    URL,
+    Number,
+    Error,
+    JSON,
+    fetch: fetchStub,
+    HelixTaskHubClient: TaskHubClient,
+    importScripts() {}
+  });
   return { listener, injections };
 }
 
@@ -54,14 +90,12 @@ test("background injects only the fixed bridge files into an allowed Helix RFI t
   assert.deepEqual(Array.from(injections[1].files), ["bridge-core.js", "page-bridge.js"]);
 });
 
-test("background rejects non-Helix pages and malformed nonces before injection", () => {
+test("background rejects non-Helix pages and malformed nonces before injection", async () => {
   const { listener, injections } = loadBackground();
-  let response = null;
-  const keepAlive = listener({ type: "HELIX_ACTIVITY_INJECT_BRIDGE", nonce: "short" }, {
+  const response = await send(listener, { type: "HELIX_ACTIVITY_INJECT_BRIDGE", nonce: "short" }, {
     tab: { id: 7, url: "https://example.com/Projects/project-1/RFI" }
-  }, (value) => { response = value; });
+  });
 
-  assert.equal(keepAlive, false);
   assert.equal(response.ok, false);
   assert.equal(injections.length, 0);
 });

@@ -28,26 +28,32 @@
   let uiPreferences = null;
   let uiPreferencesPromise = null;
   let viewStateWritePromise = Promise.resolve();
+  let activeViewState = null;
 
-  function storageGet(key) {
+  function runtimeMessage(message) {
     return new Promise((resolve) => {
-      chrome.storage.local.get(key, (value) => {
-        if (chrome.runtime.lastError) resolve(null);
-        else resolve(value && value[key] ? value[key] : null);
+      chrome.runtime.sendMessage(message, (response) => {
+        if (chrome.runtime.lastError) {
+          resolve({ ok: false, error: chrome.runtime.lastError.message });
+          return;
+        }
+        resolve(response);
       });
     });
   }
 
-  function storageSet(key, value) {
-    return new Promise((resolve) => {
-      chrome.storage.local.set({ [key]: value }, () => resolve());
-    });
+  async function storageGet(key) {
+    const response = await runtimeMessage({ type: "HELIX_ACTIVITY_STORAGE_GET", key });
+    return response && response.ok ? response.result : null;
   }
 
-  function storageRemove(key) {
-    return new Promise((resolve) => {
-      chrome.storage.local.remove(key, () => resolve());
-    });
+  async function storageSet(key, value) {
+    const response = await runtimeMessage({ type: "HELIX_ACTIVITY_STORAGE_SET", key, value });
+    if (!response || !response.ok) throw new Error(response && response.error || "Unable to save extension data.");
+  }
+
+  async function storageRemove(key) {
+    await runtimeMessage({ type: "HELIX_ACTIVITY_STORAGE_REMOVE", key });
   }
 
   function currentCacheKey() {
@@ -170,13 +176,18 @@
   const ui = HelixActivityUI.mount({
     onPanelChange: (open) => { void saveUiPreferences({ panelOpen: Boolean(open) }); },
     onWidthChange: (width) => { void saveUiPreferences({ sidebarWidth: Number(width) }); },
-    onViewStateChange: (state) => { void saveViewState(state); },
+    onViewStateChange: (state) => {
+      activeViewState = state;
+      void saveViewState(state);
+    },
     onOpen: () => {
       if (!restoringNavigation && !hasScanned && !scanPromise) {
         void runScan().catch(() => {});
       }
     },
     onRefresh: () => { void runScan(true).catch(() => {}); },
+    onTaskHubSettings: () => { void runtimeMessage({ type: "HELIX_ACTIVITY_OPEN_OPTIONS" }); },
+    onTaskHubSync: () => { void runScan(true, true).catch(() => {}); },
     onOpenItem: async (item, button) => {
       try {
         button.disabled = true;
@@ -208,16 +219,26 @@
     }
   });
 
-  function runtimeMessage(message) {
-    return new Promise((resolve, reject) => {
-      chrome.runtime.sendMessage(message, (response) => {
-        if (chrome.runtime.lastError) {
-          reject(new Error(chrome.runtime.lastError.message));
-          return;
-        }
-        resolve(response);
-      });
-    });
+  async function taskHubStatus() {
+    const response = await runtimeMessage({ type: "HELIX_TASKHUB_STATUS" });
+    if (!response || !response.ok) return { connected: false };
+    return response.result || { connected: false };
+  }
+
+  async function syncTaskHub(index, force) {
+    const status = await taskHubStatus();
+    ui.setTaskHubStatus(status);
+    if (!status.connected || (!force && status.autoSync === false)) return null;
+    const snapshot = HelixTaskHubMapper.buildSnapshot(index, activeViewState);
+    ui.setTaskHubSyncing(snapshot.items.length);
+    const response = await runtimeMessage({ type: "HELIX_TASKHUB_SYNC", snapshot });
+    if (!response || !response.ok) {
+      const error = new Error(response && response.error || "Task Hub sync failed.");
+      ui.setTaskHubSyncError(error.message);
+      throw error;
+    }
+    ui.setTaskHubSyncResult(response.result, snapshot.items.length);
+    return response.result;
   }
 
   function rpc(operation, payload, onProgress, timeoutMs) {
@@ -270,7 +291,7 @@
     throw lastError || new Error("Helix did not finish loading the current user.");
   }
 
-  async function runScan(force) {
+  async function runScan(force, forceTaskHubSync) {
     if (scanPromise && !force) return scanPromise;
     scanPromise = (async () => {
       ui.setLoading("Confirming the current Helix login…");
@@ -282,6 +303,11 @@
       ui.setData(index);
       hasScanned = true;
       await saveCachedIndex(index);
+      try {
+        await syncTaskHub(index, forceTaskHubSync === true);
+      } catch (_error) {
+        // Helix remains fully usable when the optional Task Hub connection fails.
+      }
       return index;
     })().catch((error) => {
       ui.setError(error.message);
@@ -323,6 +349,35 @@
     }
   }
 
+  async function resumeTaskHubNavigation() {
+    const match = String(window.location.hash || "").match(/^#helix-activity-open=([^&]+)$/);
+    if (!match) return false;
+    let itemId;
+    try {
+      itemId = decodeURIComponent(match[1]);
+    } catch (_error) {
+      return false;
+    }
+    if (!itemId || itemId.length > 255 || !/^[a-zA-Z0-9_-]+$/.test(itemId)) {
+      return false;
+    }
+    if (window.history && typeof window.history.replaceState === "function") {
+      window.history.replaceState(null, "", `${window.location.pathname}${window.location.search || ""}`);
+    }
+    ui.setPanelOpen(true);
+    try {
+      await rpc("openItem", {
+        itemId,
+        itemType: context.itemType,
+        projectId: context.projectId
+      }, null, 30000);
+      return true;
+    } catch (error) {
+      ui.setError(`The Task Hub item could not be opened: ${error.message}`);
+      return false;
+    }
+  }
+
   (async () => {
     try {
       const injected = await runtimeMessage({ type: "HELIX_ACTIVITY_INJECT_BRIDGE", nonce });
@@ -333,13 +388,16 @@
       const preferences = await loadUiPreferences();
       if (preferences.sidebarWidth) ui.setWidth(preferences.sidebarWidth);
       const savedViewState = await loadViewState();
+      activeViewState = savedViewState;
       if (savedViewState && typeof ui.setViewState === "function") ui.setViewState(savedViewState);
       const cached = await loadCachedIndex();
       if (cached) {
         ui.setData(cached.index);
         hasScanned = cached.fresh;
       }
-      const resumedNavigation = await resumePendingNavigation();
+      ui.setTaskHubStatus(await taskHubStatus());
+      const resumedTaskHubNavigation = await resumeTaskHubNavigation();
+      const resumedNavigation = resumedTaskHubNavigation || await resumePendingNavigation();
       if (!resumedNavigation && preferences.panelOpen === true) ui.setPanelOpen(true);
     } catch (error) {
       ui.setError(error.message);

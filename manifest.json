@@ -1,14 +1,19 @@
 {
   "manifest_version": 3,
   "name": "My Helix Activity",
-  "version": "1.7.5",
-  "description": "Review personal RFI and Submittal activity and person-specific open queues from Helix project pages.",
+  "version": "1.8.0",
+  "description": "Review Helix RFI and Submittal activity, with optional sync to a self-hosted Task Hub.",
   "permissions": [
     "scripting",
     "storage"
   ],
   "host_permissions": [
     "https://project.helixteam.com/*"
+  ],
+  "optional_host_permissions": [
+    "https://*/*",
+    "http://localhost/*",
+    "http://127.0.0.1/*"
   ],
   "background": {
     "service_worker": "background.js"
@@ -22,6 +27,7 @@
       ],
       "js": [
         "activity-core.js",
+        "integrations/taskhub/mapper.js",
         "ui.js",
         "content-script.js"
       ],
@@ -30,5 +36,9 @@
   ],
   "action": {
     "default_title": "My Helix Activity"
+  },
+  "options_ui": {
+    "page": "options/options.html",
+    "open_in_tab": true
   }
 }

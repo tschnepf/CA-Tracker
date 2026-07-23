@@ -7,6 +7,10 @@ const path = require("node:path");
 
 const root = path.resolve(__dirname, "..");
 const packageSource = fs.readFileSync(path.join(root, "scripts", "package-extension.ps1"), "utf8");
+const portablePackageSource = fs.readFileSync(
+  path.join(root, "scripts", "package-extension.js"),
+  "utf8"
+);
 const readme = fs.readFileSync(path.join(root, "README.md"), "utf8");
 
 test("packaging preserves a stable unpacked folder and stable-name archive", () => {
@@ -20,4 +24,10 @@ test("packaging preserves a stable unpacked folder and stable-name archive", () 
   );
   assert.match(readme, /select \*\*Reload\*\* on the existing extension/);
   assert.match(readme, /Do not select \*\*Load unpacked\*\* again/);
+  assert.match(packageSource, /'integrations'/);
+  assert.match(packageSource, /'options'/);
+  assert.match(packageSource, /-Recurse/);
+  assert.match(portablePackageSource, /"integrations", "options"/);
+  assert.match(portablePackageSource, /helix-my-activity-\$\{manifest\.version\}\.zip/);
+  assert.match(readme, /npm run package/);
 });

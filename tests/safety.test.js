@@ -20,8 +20,23 @@ test("manifest uses only scripting and local cache permissions", () => {
   assert.equal(manifest.manifest_version, 3);
   assert.deepEqual(manifest.permissions, ["scripting", "storage"]);
   assert.deepEqual(manifest.host_permissions, ["https://project.helixteam.com/*"]);
+  assert.deepEqual(manifest.optional_host_permissions, [
+    "https://*/*",
+    "http://localhost/*",
+    "http://127.0.0.1/*"
+  ]);
   assert.equal(manifest.permissions.includes("webRequest"), false);
   assert.equal(manifest.permissions.includes("downloads"), false);
+});
+
+test("network access is isolated to the optional Task Hub client", () => {
+  const client = fs.readFileSync(
+    path.join(root, "integrations", "taskhub", "client.js"),
+    "utf8"
+  );
+  assert.match(client, /\bfetchFunction\s*\(/);
+  assert.doesNotMatch(client, /project\.helixteam\.com/);
+  assert.match(client, /\/integrations\/helix\/sync/);
 });
 
 test("runtime code contains no Helix write, upload, delete, or generic network primitives", () => {

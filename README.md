@@ -53,9 +53,40 @@ The launcher shows the open count for the selected people, projects, and types s
 
 Successful results are cached in Chrome's extension-local storage for 15 minutes, scoped to the logged-in contact. The queue is reused across supported Helix project pages, while activity results are cached per project and feature. Use **Refresh** whenever an immediate rebuild is needed.
 
+## Optional Task Hub connection
+
+The extension works normally without Task Hub. To send the current **In court now** selection to a
+self-hosted Task Hub:
+
+1. Open the extension's **Task Hub** settings from the Helix sidebar or Chrome's extension details.
+2. Enter the public HTTPS URL of the Task Hub deployment and sign in with an existing Task Hub
+   account. Plain HTTP is accepted only for `localhost` or `127.0.0.1` development.
+3. Approve Chrome's host permission for that one server.
+4. Leave automatic sync enabled, or disable it and use **Sync** in the Helix sidebar.
+5. Choose **Only me**, a company scope, all people, or a custom set in the Open queue person filter.
+   A fresh scan sends only the selected people whose assignment is currently **In court**.
+
+Task Hub creates a **CA** subsection under **Work**, groups the RFIs and Submittals by Helix project,
+and shows the Helix added date, the best available date the item entered the selected person's court,
+and the earliest available due/review date. Repeated syncs update the same tasks. A complete scan
+archives synced items that are no longer in the selected current queue; a scan with Helix read
+warnings never archives missing items.
+
+The password is used only for the login request and is not stored. The extension stores revocable
+access/refresh tokens in extension-local storage restricted to trusted extension contexts, rotates
+them automatically, and removes them on disconnect. The optional connection never changes Helix
+records. See [PRIVACY.md](PRIVACY.md) for the exact fields sent.
+
 ## Install in Chrome
 
-Run the packaging script once to create the permanent unpacked folder:
+Run the portable packaging command once to validate the extension and create the permanent unpacked
+folder:
+
+```bash
+npm run package
+```
+
+The existing Windows PowerShell entry point remains available:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File scripts/package-extension.ps1
@@ -64,7 +95,7 @@ powershell -ExecutionPolicy Bypass -File scripts/package-extension.ps1
 1. Open `chrome://extensions`.
 2. Enable **Developer mode**.
 3. Select **Load unpacked**.
-4. Choose this folder once: `C:\Users\tim\source\HelixHelper\dist\helix-my-activity`.
+4. Choose this folder once: `extensions\HelixHelper\dist\helix-my-activity` inside this repository.
 5. Open a Helix project Overview, RFI, or Submittals page and refresh it once.
 6. Select the **My Helix Activity** launcher in the lower-right corner.
 
@@ -78,12 +109,15 @@ If older versions were loaded from separate folders, remove those duplicates fro
 
 ## Read-only and privacy guarantees
 
-- The extension has only `scripting` and local `storage` permissions, plus access to `project.helixteam.com`.
+- The extension has only `scripting` and local `storage` permissions, plus access to
+  `project.helixteam.com`. Access to a Task Hub host is optional and requested only when connecting.
 - It calls Helix's existing `readFromCollection` helper through a fixed operation bridge.
 - It contains no save, upload, delete, raw `fetch`, or `XMLHttpRequest` implementation.
 - The bridge cannot accept arbitrary collection names or arbitrary queries from the content script.
 - It does not read cookies, authentication tokens, attachment contents, or local files.
-- It stores a sanitized 15-minute cache in Chrome's extension-local storage. The cache is not sent anywhere else and is removed when extension storage is cleared or the extension is uninstalled.
+- It stores a sanitized 15-minute cache in Chrome's extension-local storage. When Task Hub is
+  connected, the selected current-assignment subset is sent only to that configured host. Without a
+  connection, the cache is not sent anywhere.
 - Sidebar width and open/hidden preferences are stored locally; they contain no Helix record data.
 - **Open in Helix** opens Helix's existing detail viewer. For another project or item type, a short-lived local handoff carries only the item, type, and project identifiers to the destination page so it can open the same read-only detail viewer.
 

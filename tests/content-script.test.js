@@ -6,6 +6,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 const vm = require("node:vm");
 const ActivityCore = require("../activity-core.js");
+const TaskHubMapper = require("../integrations/taskhub/mapper.js");
 
 const source = fs.readFileSync(path.resolve(__dirname, "..", "content-script.js"), "utf8");
 const origin = "https://project.helixteam.com";
@@ -22,7 +23,15 @@ async function waitFor(predicate, message) {
 function createHarness(options = {}) {
   const listeners = [];
   const operations = [];
-  const uiState = { loading: [], progress: [], contexts: [], panel: [], widths: [], viewStates: [] };
+  const uiState = {
+    loading: [],
+    progress: [],
+    contexts: [],
+    panel: [],
+    widths: [],
+    viewStates: [],
+    taskHubStatuses: []
+  };
   let uiCallbacks = null;
   const ui = {
     setPanelOpen(value) { uiState.panel.push(value); },
@@ -33,6 +42,10 @@ function createHarness(options = {}) {
     setProgress(value) { uiState.progress.push(value); },
     setError(value) { uiState.error = value; },
     setData(value) { uiState.data = value; },
+    setTaskHubStatus(value) { uiState.taskHubStatuses.push(value); },
+    setTaskHubSyncing(value) { uiState.taskHubSyncing = value; },
+    setTaskHubSyncResult(value) { uiState.taskHubSyncResult = value; },
+    setTaskHubSyncError(value) { uiState.taskHubSyncError = value; },
     notifyOpenFailure(_button, value) { uiState.openFailure = value; }
   };
   const sessionContext = options.sessionContext || {
@@ -55,8 +68,12 @@ function createHarness(options = {}) {
   const windowObject = {
     location: {
       origin,
+      hash: "",
+      pathname: "/Projects/project-dynamic/RFI",
+      search: "",
       assign(value) { assignedLocations.push(value); }
     },
+    history: { replaceState() {} },
     __HELIX_ACTIVITY_CONTENT_STARTED: false,
     addEventListener(type, listener) {
       if (type === "message") listeners.push(listener);
@@ -121,8 +138,42 @@ function createHarness(options = {}) {
     runtime: {
       lastError: null,
       sendMessage(message, callback) {
-        assert.equal(message.type, "HELIX_ACTIVITY_INJECT_BRIDGE");
-        setImmediate(() => callback({ ok: true }));
+        if (message.type === "HELIX_ACTIVITY_INJECT_BRIDGE") {
+          setImmediate(() => callback({ ok: true, result: { injected: true } }));
+          return;
+        }
+        if (message.type === "HELIX_ACTIVITY_STORAGE_GET") {
+          setImmediate(() => callback({ ok: true, result: storageData[message.key] || null }));
+          return;
+        }
+        if (message.type === "HELIX_ACTIVITY_STORAGE_SET") {
+          storageData[message.key] = message.value;
+          setImmediate(() => callback({ ok: true, result: true }));
+          return;
+        }
+        if (message.type === "HELIX_ACTIVITY_STORAGE_REMOVE") {
+          delete storageData[message.key];
+          setImmediate(() => callback({ ok: true, result: true }));
+          return;
+        }
+        if (message.type === "HELIX_TASKHUB_STATUS") {
+          setImmediate(() => callback({ ok: true, result: options.taskHubStatus || { connected: false } }));
+          return;
+        }
+        if (message.type === "HELIX_TASKHUB_SYNC") {
+          uiState.taskHubSnapshot = message.snapshot;
+          setImmediate(() => callback({
+            ok: true,
+            result: { created: message.snapshot.items.length, updated: 0, archived: 0 }
+          }));
+          return;
+        }
+        if (message.type === "HELIX_ACTIVITY_OPEN_OPTIONS") {
+          uiState.openedOptions = true;
+          setImmediate(() => callback({ ok: true, result: true }));
+          return;
+        }
+        setImmediate(() => callback({ ok: false, error: "Unexpected message" }));
       }
     },
     storage: {
@@ -155,6 +206,7 @@ function createHarness(options = {}) {
     crypto: { randomUUID: () => "content_nonce_123456789" },
     HelixActivityUI,
     HelixActivityCore: ActivityCore,
+    HelixTaskHubMapper: TaskHubMapper,
     setTimeout,
     clearTimeout,
     setImmediate,

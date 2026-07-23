@@ -36,11 +36,19 @@
     .resize-handle:focus-visible { outline: 3px solid #9dd7ff; outline-offset: -3px; }
     .header { padding: 18px 18px 14px; background: linear-gradient(145deg,#183047,#132230); border-bottom: 1px solid #334555; }
     .header-row { display: flex; align-items: flex-start; justify-content: space-between; gap: 14px; }
+    .header-actions { display: flex; gap: 7px; align-items: center; }
     h1 { margin: 0; color: #fff; font-size: 21px; line-height: 1.2; }
     .subtitle { margin: 5px 0 0; color: #a9bfd0; font-size: 12px; }
     .close { border: 1px solid #50738d; border-radius: 6px; background: #1d3a50; color: #dff3ff; font-size: 11px; line-height: 1; cursor: pointer; padding: 7px 10px; }
     .privacy { margin-top: 12px; display: flex; gap: 7px; align-items: center; color: #9dd7ff; font-size: 11px; }
     .privacy-dot { width: 7px; height: 7px; border-radius: 50%; background: #57d6a4; box-shadow: 0 0 0 3px rgba(87,214,164,.14); }
+    .taskhub { margin-top: 11px; padding-top: 10px; border-top: 1px solid #334555; display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+    .taskhub-copy { min-width: 0; color: #a9bfd0; font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .taskhub-copy.connected { color: #8fe2be; }
+    .taskhub-copy.error { color: #ffb1a9; }
+    .taskhub-actions { display: flex; gap: 6px; flex: none; }
+    .taskhub-button { border: 1px solid #50738d; border-radius: 6px; padding: 6px 9px; color: #dff3ff; background: #1d3a50; cursor: pointer; font-size: 11px; }
+    .taskhub-button:disabled { opacity: .55; cursor: wait; }
     .toolbar { padding: 14px 16px; border-bottom: 1px solid #2c3b48; background: #14212c; }
     .view-switch { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-bottom: 10px; padding: 3px; border-radius: 9px; background: #0e1720; }
     .view-button { border: 0; border-radius: 7px; padding: 8px 10px; color: #9db2c1; background: transparent; cursor: pointer; font-size: 12px; }
@@ -181,13 +189,26 @@
     const heading = element(documentObject, "h1", "", "My Helix Activity");
     const subtitle = element(documentObject, "p", "subtitle", "Waiting for Helix…");
     headingWrap.append(heading, subtitle);
+    const headerActions = element(documentObject, "div", "header-actions");
+    const taskHubSettings = element(documentObject, "button", "close", "Task Hub");
+    taskHubSettings.type = "button";
+    taskHubSettings.setAttribute("aria-label", "Open Task Hub connection settings");
     const close = element(documentObject, "button", "close", "Hide");
     close.type = "button";
     close.setAttribute("aria-label", "Hide My Helix Activity");
-    headerRow.append(headingWrap, close);
+    headerActions.append(taskHubSettings, close);
+    headerRow.append(headingWrap, headerActions);
     const privacy = element(documentObject, "div", "privacy");
     privacy.append(element(documentObject, "span", "privacy-dot"), element(documentObject, "span", "", "Read-only • Current login • Cached locally"));
-    header.append(headerRow, privacy);
+    const taskHub = element(documentObject, "div", "taskhub");
+    const taskHubCopy = element(documentObject, "span", "taskhub-copy", "Task Hub not connected");
+    const taskHubActions = element(documentObject, "div", "taskhub-actions");
+    const taskHubSync = element(documentObject, "button", "taskhub-button", "Sync");
+    taskHubSync.type = "button";
+    taskHubSync.hidden = true;
+    taskHubActions.appendChild(taskHubSync);
+    taskHub.append(taskHubCopy, taskHubActions);
+    header.append(headerRow, privacy, taskHub);
     panel.appendChild(header);
 
     const toolbar = element(documentObject, "section", "toolbar");
@@ -782,6 +803,12 @@
     setPanelWidth(panelWidth, false);
     launcher.addEventListener("click", () => setPanelOpen(true));
     close.addEventListener("click", () => setPanelOpen(false));
+    taskHubSettings.addEventListener("click", () => {
+      if (typeof callbacks.onTaskHubSettings === "function") callbacks.onTaskHubSettings();
+    });
+    taskHubSync.addEventListener("click", () => {
+      if (typeof callbacks.onTaskHubSync === "function") callbacks.onTaskHubSync();
+    });
     refresh.addEventListener("click", () => {
       if (typeof callbacks.onRefresh === "function") callbacks.onRefresh();
     });
@@ -962,6 +989,41 @@
       setError(message) {
         refresh.disabled = false;
         setState("Unable to build the index", message || "Please reload the Helix page and try again.", false);
+      },
+      setTaskHubStatus(value) {
+        const connected = Boolean(value && value.connected);
+        taskHubSync.hidden = !connected;
+        taskHubSync.disabled = false;
+        taskHubCopy.className = connected ? "taskhub-copy connected" : "taskhub-copy";
+        taskHubCopy.textContent = connected
+          ? `Task Hub • ${value.user && (value.user.display_name || value.user.email) || "Connected"}`
+          : "Task Hub not connected";
+      },
+      setTaskHubSyncing(count) {
+        taskHubSync.hidden = false;
+        taskHubSync.disabled = true;
+        taskHubSync.textContent = "Syncing…";
+        taskHubCopy.className = "taskhub-copy connected";
+        taskHubCopy.textContent = `Sending ${Number(count) || 0} current assignment${Number(count) === 1 ? "" : "s"}…`;
+      },
+      setTaskHubSyncResult(value, count) {
+        taskHubSync.hidden = false;
+        taskHubSync.disabled = false;
+        taskHubSync.textContent = "Sync";
+        taskHubCopy.className = "taskhub-copy connected";
+        const changes = Number(value && value.created || 0)
+          + Number(value && value.updated || 0)
+          + Number(value && value.archived || 0);
+        taskHubCopy.textContent = changes
+          ? `Task Hub updated • ${changes} change${changes === 1 ? "" : "s"}`
+          : `Task Hub current • ${Number(count) || 0} assignment${Number(count) === 1 ? "" : "s"}`;
+      },
+      setTaskHubSyncError(message) {
+        taskHubSync.hidden = false;
+        taskHubSync.disabled = false;
+        taskHubSync.textContent = "Retry";
+        taskHubCopy.className = "taskhub-copy error";
+        taskHubCopy.textContent = message || "Task Hub sync failed";
       },
       setData(value) {
         const restoredState = pendingViewState;
