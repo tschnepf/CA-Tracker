@@ -1,0 +1,34 @@
+{
+  "manifest_version": 3,
+  "name": "My Helix Activity",
+  "version": "1.7.5",
+  "description": "Review personal RFI and Submittal activity and person-specific open queues from Helix project pages.",
+  "permissions": [
+    "scripting",
+    "storage"
+  ],
+  "host_permissions": [
+    "https://project.helixteam.com/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://project.helixteam.com/Projects/*/Overview*",
+        "https://project.helixteam.com/Projects/*/RFI*",
+        "https://project.helixteam.com/Projects/*/Submittals*"
+      ],
+      "js": [
+        "activity-core.js",
+        "ui.js",
+        "content-script.js"
+      ],
+      "run_at": "document_idle"
+    }
+  ],
+  "action": {
+    "default_title": "My Helix Activity"
+  }
+}

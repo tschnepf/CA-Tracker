@@ -1,0 +1,13 @@
+{
+  "name": "helix-my-activity",
+  "version": "1.7.5",
+  "private": true,
+  "description": "Read-only Chrome extension for personal RFI/Submittal activity and current or upcoming workflow assignments.",
+  "scripts": {
+    "test": "node --test tests/*.test.js",
+    "check": "node scripts/validate-extension.js && node --test tests/*.test.js"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
