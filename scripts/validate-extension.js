@@ -36,6 +36,9 @@ if (!manifest.key) {
 if (!manifest.permissions.includes("identity")) {
   throw new Error("The OIDC extension must declare Chrome's identity permission.");
 }
+if (manifest.permissions.includes("unlimitedStorage")) {
+  throw new Error("The Helix extension must remain within its bounded local-storage budget.");
+}
 
 const publicKey = Buffer.from(manifest.key, "base64");
 const extensionHex = crypto.createHash("sha256").update(publicKey).digest("hex").slice(0, 32);

@@ -10,6 +10,11 @@
   const connectedUrl = document.getElementById("connected-url");
   const connectedUser = document.getElementById("connected-user");
   const message = document.getElementById("message");
+  const cacheUsage = document.getElementById("cache-usage");
+  const cacheCount = document.getElementById("cache-count");
+  const clearCacheButton = document.getElementById("clear-cache");
+  const cacheMessage = document.getElementById("cache-message");
+  let cacheEntryCount = 0;
 
   function runtimeMessage(value) {
     return new Promise((resolve, reject) => {
@@ -24,6 +29,28 @@
   function showMessage(value, isError) {
     message.textContent = value || "";
     message.classList.toggle("error", Boolean(isError));
+  }
+
+  function showCacheMessage(value, isError) {
+    cacheMessage.textContent = value || "";
+    cacheMessage.classList.toggle("error", Boolean(isError));
+  }
+
+  function formatBytes(value) {
+    const bytes = Math.max(0, Number(value) || 0);
+    if (bytes < 1024) return `${bytes} B`;
+    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  }
+
+  function renderCacheStatus(status) {
+    const bytesInUse = Number(status && status.bytesInUse) || 0;
+    const budgetBytes = Number(status && status.budgetBytes) || 5 * 1024 * 1024;
+    const entryCount = Number(status && status.entryCount) || 0;
+    cacheEntryCount = entryCount;
+    cacheUsage.textContent = `${formatBytes(bytesInUse)} of ${formatBytes(budgetBytes)}`;
+    cacheCount.textContent = `${entryCount} cached Helix ${entryCount === 1 ? "identity" : "identities"}`;
+    clearCacheButton.disabled = entryCount === 0;
   }
 
   function render(status) {
@@ -44,6 +71,18 @@
       render(await runtimeMessage({ type: "HELIX_TASKHUB_STATUS" }));
     } catch (error) {
       showMessage(error.message, true);
+    }
+  }
+
+  async function loadCacheStatus() {
+    try {
+      renderCacheStatus(await runtimeMessage({ type: "HELIX_ACTIVITY_CACHE_STATUS" }));
+    } catch (error) {
+      cacheUsage.textContent = "Unavailable";
+      cacheCount.textContent = "";
+      cacheEntryCount = 0;
+      clearCacheButton.disabled = true;
+      showCacheMessage(error.message, true);
     }
   }
 
@@ -95,5 +134,24 @@
     }
   });
 
+  clearCacheButton.addEventListener("click", async () => {
+    clearCacheButton.disabled = true;
+    showCacheMessage("Clearing cached Helix data…");
+    try {
+      const result = await runtimeMessage({ type: "HELIX_ACTIVITY_CACHE_CLEAR" });
+      renderCacheStatus(result);
+      const entries = Number(result && result.entriesCleared) || 0;
+      showCacheMessage(
+        `Cleared ${entries} cached ${entries === 1 ? "entry" : "entries"} (${formatBytes(result && result.bytesCleared)}). Open Helix and refresh to rebuild.`
+      );
+    } catch (error) {
+      showCacheMessage(error.message, true);
+      await loadCacheStatus();
+    } finally {
+      clearCacheButton.disabled = cacheEntryCount === 0;
+    }
+  });
+
   void loadStatus();
+  void loadCacheStatus();
 })();

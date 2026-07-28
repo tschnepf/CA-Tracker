@@ -51,7 +51,7 @@ Queue classifications are:
 
 The launcher shows the open count for the selected people, projects, and types so pending work is visible without opening the panel.
 
-Successful results are cached in Chrome's extension-local storage for 15 minutes, scoped to the logged-in contact. The queue is reused across supported Helix project pages, while activity results are cached per project and feature. Use **Refresh** whenever an immediate rebuild is needed.
+Successful results are considered fresh in Chrome's extension-local storage for 15 minutes and are scoped to the logged-in contact. Each refresh replaces the cached open queue and retains only the three most recently accessed project/feature views. Cache entries expire after 24 hours and the extension enforces a 5 MB total cache budget without requesting unlimited storage. Use **Refresh** whenever an immediate rebuild is needed, or open extension settings to inspect and clear only the local Helix cache.
 
 ## Optional Task Hub connection
 
@@ -121,7 +121,7 @@ If older versions were loaded from separate folders, remove those duplicates fro
 - It contains no save, upload, delete, raw `fetch`, or `XMLHttpRequest` implementation.
 - The bridge cannot accept arbitrary collection names or arbitrary queries from the content script.
 - It does not read cookies, authentication tokens, attachment contents, or local files.
-- It stores a sanitized 15-minute cache in Chrome's extension-local storage. When Task Hub is
+- It stores a sanitized, bounded local cache in Chrome's extension-local storage. When Task Hub is
   connected, the selected current-assignment subset is sent only to that configured host. Without a
   connection, the cache is not sent anywhere.
 - Sidebar width and open/hidden preferences are stored locally; they contain no Helix record data.

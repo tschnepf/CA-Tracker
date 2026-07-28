@@ -77,6 +77,7 @@
     .summary { padding: 10px 16px; display: flex; justify-content: space-between; gap: 12px; border-bottom: 1px solid #2c3b48; color: #a9bfd0; font-size: 12px; }
     .summary strong { color: #fff; }
     .warnings { margin: 10px 16px 0; padding: 9px 10px; border: 1px solid #8a6634; border-radius: 7px; color: #ffdba6; background: #342716; font-size: 12px; }
+    .cache-warning { margin: 10px 16px 0; padding: 9px 10px; border: 1px solid #49677d; border-radius: 7px; color: #c7e7fa; background: #172b39; font-size: 12px; }
     .state { flex: 1; display: grid; place-items: center; padding: 32px; text-align: center; color: #a9bfd0; }
     .state strong { display: block; color: #eef7fd; font-size: 16px; margin-bottom: 5px; }
     .spinner { width: 28px; height: 28px; margin: 0 auto 14px; border: 3px solid #2c4354; border-top-color: #9dd7ff; border-radius: 50%; animation: spin .8s linear infinite; }
@@ -343,6 +344,8 @@
     panel.appendChild(summary);
     const warnings = element(documentObject, "div", "warnings hidden");
     panel.appendChild(warnings);
+    const cacheWarning = element(documentObject, "div", "cache-warning hidden");
+    panel.appendChild(cacheWarning);
     const state = element(documentObject, "div", "state");
     state.append(element(documentObject, "div", "", "Open the panel to build your read-only activity index."));
     panel.appendChild(state);
@@ -989,6 +992,10 @@
       setError(message) {
         refresh.disabled = false;
         setState("Unable to build the index", message || "Please reload the Helix page and try again.", false);
+      },
+      setCacheWarning(message) {
+        cacheWarning.textContent = message || "";
+        cacheWarning.classList.toggle("hidden", !message);
       },
       setTaskHubStatus(value) {
         const connected = Boolean(value && value.connected);

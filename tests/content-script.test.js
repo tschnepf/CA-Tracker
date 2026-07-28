@@ -30,7 +30,8 @@ function createHarness(options = {}) {
     panel: [],
     widths: [],
     viewStates: [],
-    taskHubStatuses: []
+    taskHubStatuses: [],
+    cacheWarnings: []
   };
   let uiCallbacks = null;
   const ui = {
@@ -46,6 +47,7 @@ function createHarness(options = {}) {
     setTaskHubSyncing(value) { uiState.taskHubSyncing = value; },
     setTaskHubSyncResult(value) { uiState.taskHubSyncResult = value; },
     setTaskHubSyncError(value) { uiState.taskHubSyncError = value; },
+    setCacheWarning(value) { uiState.cacheWarnings.push(value); },
     notifyOpenFailure(_button, value) { uiState.openFailure = value; }
   };
   const sessionContext = options.sessionContext || {
@@ -64,6 +66,7 @@ function createHarness(options = {}) {
   };
   const storageData = Object.assign({}, options.storageData);
   const assignedLocations = [];
+  const runtimeMessages = [];
 
   const windowObject = {
     location: {
@@ -138,6 +141,7 @@ function createHarness(options = {}) {
     runtime: {
       lastError: null,
       sendMessage(message, callback) {
+        runtimeMessages.push(message.type);
         if (message.type === "HELIX_ACTIVITY_INJECT_BRIDGE") {
           setImmediate(() => callback({ ok: true, result: { injected: true } }));
           return;
@@ -149,6 +153,16 @@ function createHarness(options = {}) {
         if (message.type === "HELIX_ACTIVITY_STORAGE_SET") {
           storageData[message.key] = message.value;
           setImmediate(() => callback({ ok: true, result: true }));
+          return;
+        }
+        if (message.type === "HELIX_ACTIVITY_CACHE_WRITE") {
+          if (!options.cacheWriteFailure) storageData[message.key] = message.value;
+          setImmediate(() => callback({
+            ok: true,
+            result: options.cacheWriteFailure
+              ? { cached: false, reason: options.cacheWriteFailure }
+              : { cached: true, reason: null, bytesInUse: 1000, budgetBytes: 5 * 1024 * 1024, entryCount: 1 }
+          }));
           return;
         }
         if (message.type === "HELIX_ACTIVITY_STORAGE_REMOVE") {
@@ -220,6 +234,7 @@ function createHarness(options = {}) {
     operations,
     storageData,
     assignedLocations,
+    runtimeMessages,
     get callbacks() { return uiCallbacks; }
   };
 }
@@ -236,9 +251,9 @@ test("content script completes startup, dynamic scan, rendering, and open-detail
   assert.equal(harness.uiState.data.results[0].id, "rfi-dynamic");
   assert.equal(harness.uiState.error, undefined);
   assert.ok(harness.uiState.progress.length > 0);
-  await waitFor(() => Boolean(harness.storageData["helix-activity-cache-v3:contact-dynamic"]), "scan was not cached");
-  const cached = harness.storageData["helix-activity-cache-v3:contact-dynamic"];
-  assert.equal(cached.version, 3);
+  await waitFor(() => Boolean(harness.storageData["helix-activity-cache-v4:contact-dynamic"]), "scan was not cached");
+  const cached = harness.storageData["helix-activity-cache-v4:contact-dynamic"];
+  assert.equal(cached.version, 4);
   assert.equal(cached.activities["project-dynamic:rfi"].results[0].id, "rfi-dynamic");
 
   const button = { disabled: false, textContent: "Open in Helix" };
@@ -247,12 +262,76 @@ test("content script completes startup, dynamic scan, rendering, and open-detail
   assert.equal(harness.uiState.panel.includes(false), false);
 });
 
-test("content script reuses a fresh person-scoped cache without rebuilding on panel open", async () => {
-  const cacheKey = "helix-activity-cache-v3:contact-dynamic";
+test("refresh replaces the queue and retains only three recent activity contexts", async () => {
+  const cacheKey = "helix-activity-cache-v4:contact-dynamic";
+  const activity = (scannedAt, id) => ({ scannedAt, warnings: [], results: [{ id }] });
   const harness = createHarness({
     storageData: {
       [cacheKey]: {
-        version: 3,
+        version: 4,
+        storedAt: Date.now(),
+        queue: {
+          scannedAt: "2026-07-20T00:00:00.000Z",
+          warnings: [],
+          openQueue: [{ id: "stale-queue-item" }],
+          projects: [],
+          people: [],
+          currentPersonKey: null
+        },
+        activities: {
+          "project-a:rfi": activity("2026-07-20T00:00:00.000Z", "a"),
+          "project-b:rfi": activity("2026-07-19T00:00:00.000Z", "b"),
+          "project-c:rfi": activity("2026-07-18T00:00:00.000Z", "c"),
+          "project-d:rfi": activity("2026-07-17T00:00:00.000Z", "d")
+        }
+      }
+    }
+  });
+
+  await waitFor(() => harness.uiState.data && harness.uiState.data.cached, "cached index did not render");
+  harness.callbacks.onRefresh();
+  await waitFor(() => {
+    const cache = harness.storageData[cacheKey];
+    return cache && cache.queue.scannedAt === "2026-07-21T00:00:00.000Z";
+  }, "refreshed cache was not saved");
+
+  const cache = harness.storageData[cacheKey];
+  assert.deepEqual(cache.queue.openQueue, []);
+  assert.deepEqual(Object.keys(cache.activities).sort(), [
+    "project-a:rfi",
+    "project-b:rfi",
+    "project-dynamic:rfi"
+  ]);
+});
+
+test("a cache quota failure remains separate from scan completeness and does not stop Task Hub sync", async () => {
+  const harness = createHarness({
+    cacheWriteFailure: "quota",
+    taskHubStatus: {
+      connected: true,
+      autoSync: true,
+      user: { email: "dynamic@example.com" }
+    }
+  });
+  await waitFor(() => harness.uiState.contexts.length > 0, "bootstrap did not finish");
+
+  harness.callbacks.onOpen();
+  await waitFor(() => Boolean(harness.uiState.taskHubSnapshot), "Task Hub sync did not run");
+  assert.equal(harness.uiState.taskHubSnapshot.complete, true);
+  assert.deepEqual(harness.uiState.data.warnings, []);
+  assert.match(harness.uiState.cacheWarnings.at(-1), /Chrome could not save/);
+  assert.ok(
+    harness.runtimeMessages.indexOf("HELIX_ACTIVITY_CACHE_WRITE")
+      < harness.runtimeMessages.indexOf("HELIX_TASKHUB_SYNC")
+  );
+});
+
+test("content script reuses a fresh person-scoped cache without rebuilding on panel open", async () => {
+  const cacheKey = "helix-activity-cache-v4:contact-dynamic";
+  const harness = createHarness({
+    storageData: {
+      [cacheKey]: {
+        version: 4,
         storedAt: Date.now(),
         queue: {
           scannedAt: "2026-07-21T00:00:00.000Z",

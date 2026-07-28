@@ -12,8 +12,12 @@ const portablePackageSource = fs.readFileSync(
   "utf8"
 );
 const readme = fs.readFileSync(path.join(root, "README.md"), "utf8");
+const manifest = JSON.parse(fs.readFileSync(path.join(root, "manifest.json"), "utf8"));
+const packageMetadata = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8"));
 
 test("packaging preserves a stable unpacked folder and stable-name archive", () => {
+  assert.equal(manifest.version, "1.8.2");
+  assert.equal(packageMetadata.version, "1.8.2");
   assert.match(packageSource, /\$install = Join-Path \$dist 'helix-my-activity'/);
   assert.match(packageSource, /\$currentArchive = Join-Path \$dist 'helix-my-activity\.zip'/);
   assert.match(packageSource, /InstallFolder = \$install/);

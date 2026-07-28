@@ -16,10 +16,10 @@
     histories: "HelixProjectHistories"
   });
   const ALLOWED_COLLECTIONS = new Set(Object.values(COLLECTIONS));
-  const PAGE_SIZE = 750;
+  const PAGE_SIZE = 250;
   const MAX_RECORDS = 20000;
   const HISTORY_BATCH_SIZE = 20;
-  const HISTORY_CONCURRENCY = 4;
+  const SCAN_READ_CONCURRENCY = 3;
 
   const RFI_FIELDS = [
     "_id",
@@ -121,12 +121,7 @@
     "isActive"
   ];
 
-  let itemRecordCache = {
-    itemType: null,
-    projectId: null,
-    records: new Map(),
-    queueRecords: new Map()
-  };
+  let itemNavigationCache = new Map();
 
   function parsePageContext(urlValue) {
     try {
@@ -421,7 +416,33 @@
     return JSON.parse(JSON.stringify(query || {}));
   }
 
-  async function readAll(master, collectionName, queryOptions) {
+  function createConcurrencyLimiter(concurrency) {
+    const maximum = Math.max(1, Number(concurrency) || 1);
+    const pendingReads = [];
+    let activeReads = 0;
+
+    function startNext() {
+      if (activeReads >= maximum || pendingReads.length === 0) return;
+      const pendingRead = pendingReads.shift();
+      activeReads += 1;
+      Promise.resolve()
+        .then(pendingRead.reader)
+        .then(pendingRead.resolve, pendingRead.reject)
+        .finally(() => {
+          activeReads -= 1;
+          startNext();
+        });
+    }
+
+    return function limitRead(reader) {
+      return new Promise((resolve, reject) => {
+        pendingReads.push({ reader, resolve, reject });
+        startNext();
+      });
+    };
+  }
+
+  async function readAll(master, collectionName, queryOptions, readLimiter) {
     if (!ALLOWED_COLLECTIONS.has(collectionName)) {
       throw new Error("Collection is not permitted by the read-only bridge.");
     }
@@ -433,7 +454,9 @@
     const records = [];
     for (let skip = 0; skip < MAX_RECORDS; skip += PAGE_SIZE) {
       const pageQuery = Object.assign({}, baseQuery, { limit: PAGE_SIZE, skip });
-      const page = await master.readFromCollection(collectionName, pageQuery);
+      const page = await (typeof readLimiter === "function"
+        ? readLimiter(() => master.readFromCollection(collectionName, pageQuery))
+        : master.readFromCollection(collectionName, pageQuery));
       if (!Array.isArray(page)) {
         throw new Error(`Helix returned an unexpected ${collectionName} response.`);
       }
@@ -664,6 +687,7 @@
   async function scan(windowObject, onProgress) {
     const context = getContext(windowObject);
     const master = resolveMaster(windowObject);
+    const limitRead = createConcurrencyLimiter(SCAN_READ_CONCURRENCY);
     const warnings = [];
     const progress = typeof onProgress === "function" ? onProgress : function noop() {};
 
@@ -677,7 +701,7 @@
           filter: { "refProject._id": context.projectId },
           fields: config.fields,
           sort: { _id: 1 }
-        });
+        }, limitRead);
       } catch (error) {
         if (context.itemType !== "overview") throw error;
         warnings.push({ collection: `current-project ${config.plural}`, message: safeMessage(error) });
@@ -689,12 +713,6 @@
       }).map((record) => ({ itemType, record }));
     }));
     const projectDescriptors = currentPages.flat();
-    itemRecordCache = {
-      itemType: context.itemType,
-      projectId: context.projectId,
-      records: new Map(projectDescriptors.map((entry) => [String(entry.record._id), entry.record])),
-      queueRecords: new Map()
-    };
     const itemIds = projectDescriptors.map((entry) => String(entry.record._id));
     const itemIdSet = new Set(itemIds);
 
@@ -713,7 +731,7 @@
         filter: { "refContact._id": context.contactId, isActive: true },
         fields: DIRECTORY_FIELDS,
         sort: { "refProject.name": 1 }
-      }))
+      }, limitRead))
       : [];
     if (!context.contactId) {
       warnings.push({
@@ -745,7 +763,7 @@
     const projectNames = new Map(projects.map((project) => [project.id, project.name]));
 
     async function readOpenAcrossProjects(label, collection, fields) {
-      const pages = await mapWithConcurrency(projects, HISTORY_CONCURRENCY, async (project, index) => {
+      const pages = await mapWithConcurrency(projects, SCAN_READ_CONCURRENCY, async (project, index) => {
         progress({
           phase: "queue",
           message: `Checking ${label} in project ${index + 1} of ${projects.length}…`,
@@ -760,7 +778,7 @@
             },
             fields,
             sort: { _id: 1 }
-          });
+          }, limitRead);
         } catch (error) {
           warnings.push({ collection: `${label} — ${project.name}`, message: safeMessage(error) });
           return [];
@@ -778,7 +796,7 @@
       filter: { idProject: context.projectId, "refDirectory._id": context.user.id },
       fields: COMMENT_FIELDS,
       sort: { "_kmd.ect": -1 }
-    }));
+    }, limitRead));
     const attachmentsPromise = optionalRead("attachments", () => readAll(master, COLLECTIONS.attachments, {
       filter: {
         idProject: context.projectId,
@@ -789,11 +807,11 @@
       },
       fields: ATTACHMENT_FIELDS,
       sort: { "_kmd.ect": -1 }
-    }));
+    }, limitRead));
 
     const historyBatches = chunks(itemIds, HISTORY_BATCH_SIZE);
     const historyPromise = optionalRead("history", async () => {
-      const pages = await mapWithConcurrency(historyBatches, HISTORY_CONCURRENCY, async (batch, index) => {
+      const pages = await mapWithConcurrency(historyBatches, SCAN_READ_CONCURRENCY, async (batch, index) => {
         progress({
           phase: "history",
           message: `Checking edit history ${index + 1} of ${historyBatches.length}…`,
@@ -812,7 +830,7 @@
           },
           fields: HISTORY_FIELDS,
           sort: { "_kmd.lmt": -1 }
-        });
+        }, limitRead);
       });
       return pages.flat();
     });
@@ -863,12 +881,12 @@
       projectNames,
       context
     ));
-    itemRecordCache.queueRecords = new Map([...queueDescriptors, ...projectDescriptors].map((entry) => [
+    itemNavigationCache = new Map([...queueDescriptors, ...projectDescriptors].map((entry) => [
       `${entry.itemType}:${String(entry.record._id)}`,
       {
         itemType: entry.itemType,
-        projectId: String(entry.record.refProject._id),
-        record: entry.record
+        itemId: String(entry.record._id),
+        projectId: String(entry.record.refProject._id)
       }
     ]));
     progress({ phase: "complete", message: "Building your activity index…" });
@@ -906,17 +924,12 @@
       throw new Error("The requested Helix item type is not supported.");
     }
     const samePage = page.itemType === targetType && page.projectId === targetProjectId;
-    const cachedQueueItem = itemRecordCache.queueRecords.get(`${targetType}:${String(itemId)}`);
-    const cachedRecord = samePage && page.itemType === itemRecordCache.itemType
-      && page.projectId === itemRecordCache.projectId
-      ? itemRecordCache.records.get(String(itemId)) || (cachedQueueItem && cachedQueueItem.record)
-      : cachedQueueItem && cachedQueueItem.record;
+    const cachedItem = itemNavigationCache.get(`${targetType}:${String(itemId)}`);
     if (!samePage) {
-      if (!cachedRecord) {
+      if (!cachedItem) {
         throw new Error("This item could not be found on the current Helix page.");
       }
-      const cachedProject = cachedRecord.refProject && cachedRecord.refProject._id;
-      if (cachedProject && String(cachedProject) !== targetProjectId) {
+      if (String(cachedItem.projectId) !== targetProjectId) {
         throw new Error("This item does not belong to the requested project.");
       }
       const route = targetType === "rfi" ? "RFI" : "Submittals";
@@ -967,8 +980,9 @@
       closeOtherDetailView,
       findPageGridNamespace,
       normalizeDetailRecord,
+      navigationDescriptors: () => Array.from(itemNavigationCache.values()).map((value) => Object.assign({}, value)),
       resetCache: () => {
-        itemRecordCache = { itemType: null, projectId: null, records: new Map(), queueRecords: new Map() };
+        itemNavigationCache = new Map();
       }
     })
   });

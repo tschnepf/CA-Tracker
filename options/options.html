@@ -41,6 +41,19 @@
         Sign-in opens your self-hosted TaskHub ID provider. The extension never receives your password
         and stores only revocable login tokens in trusted Chrome extension storage.
       </p>
+
+      <section id="cache-card" aria-labelledby="cache-heading">
+        <div class="section-heading">
+          <div>
+            <h2 id="cache-heading">Local Helix cache</h2>
+            <p>Recent sanitized activity makes the sidebar reopen quickly. It is automatically bounded and expires after 24 hours.</p>
+          </div>
+          <strong id="cache-usage">Calculating…</strong>
+        </div>
+        <p id="cache-count"></p>
+        <button id="clear-cache" type="button" class="secondary">Clear cached Helix data</button>
+        <p id="cache-message" role="status" aria-live="polite"></p>
+      </section>
     </main>
     <script src="../integrations/taskhub/client.js"></script>
     <script src="options.js"></script>

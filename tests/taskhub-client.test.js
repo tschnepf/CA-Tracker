@@ -46,7 +46,7 @@ function chromeStorage(initial, authFlow) {
     runtime: {
       lastError: null,
       getManifest() {
-        return { version: "1.8.1" };
+        return { version: "1.8.2" };
       }
     },
     identity: {
@@ -157,7 +157,7 @@ test("OIDC login uses PKCE, validates the session, and stores no password", asyn
   assert.equal(storage.data[TaskHubClient.AUTH_KEY].expiresAt, 1_300_000);
   assert.equal(
     requests[3].options.headers["X-TaskHub-Extension-Version"],
-    "1.8.1"
+    "1.8.2"
   );
 });
 
@@ -251,7 +251,7 @@ test("sync rotates an expired refresh token and retries once after a 401", async
   assert.equal(refreshBody.get("grant_type"), "refresh_token");
   assert.equal(refreshBody.get("refresh_token"), "old-refresh");
   assert.equal(requests[2].options.headers.Authorization, "Bearer new-access");
-  assert.equal(requests[2].options.headers["X-TaskHub-Extension-Version"], "1.8.1");
+  assert.equal(requests[2].options.headers["X-TaskHub-Extension-Version"], "1.8.2");
   assert.equal(storage.data[TaskHubClient.AUTH_KEY].refreshToken, "new-refresh");
 });
 
@@ -317,7 +317,7 @@ test("disconnect updates Task Hub before revoking local credentials", async () =
     requests[0].url,
     "https://tasks.example.com/integrations/helix/auth/disconnect"
   );
-  assert.equal(requests[0].options.headers["X-TaskHub-Extension-Version"], "1.8.1");
+  assert.equal(requests[0].options.headers["X-TaskHub-Extension-Version"], "1.8.2");
   assert.equal(
     requests[1].url,
     "https://tasks.example.com/idp/realms/taskhub/protocol/openid-connect/revoke"

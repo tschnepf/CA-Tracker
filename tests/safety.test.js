@@ -27,6 +27,7 @@ test("manifest uses only the required bridge, storage, and OIDC permissions", ()
   ]);
   assert.equal(manifest.permissions.includes("webRequest"), false);
   assert.equal(manifest.permissions.includes("downloads"), false);
+  assert.equal(manifest.permissions.includes("unlimitedStorage"), false);
   assert.ok(manifest.key);
 });
 
@@ -45,9 +46,14 @@ test("network access is isolated to the optional Task Hub client", () => {
 
 test("Task Hub settings contain no direct credential fields", () => {
   const options = fs.readFileSync(path.join(root, "options", "options.html"), "utf8");
+  const optionsScript = fs.readFileSync(path.join(root, "options", "options.js"), "utf8");
   assert.doesNotMatch(options, /type=["']password["']/i);
   assert.doesNotMatch(options, /name=["']email["']/i);
   assert.match(options, /Sign in with TaskHub ID/);
+  assert.match(options, /Local Helix cache/);
+  assert.match(options, /Clear cached Helix data/);
+  assert.match(optionsScript, /HELIX_ACTIVITY_CACHE_STATUS/);
+  assert.match(optionsScript, /HELIX_ACTIVITY_CACHE_CLEAR/);
 });
 
 test("runtime code contains no Helix write, upload, delete, or generic network primitives", () => {

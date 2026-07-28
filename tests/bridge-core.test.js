@@ -193,13 +193,53 @@ test("readAll paginates and rejects collections outside the allowlist", async ()
   const master = {
     async readFromCollection() {
       callCount += 1;
-      return callCount === 1 ? Array.from({ length: 750 }, (_, index) => ({ index })) : [{ index: 750 }];
+      return callCount === 1 ? Array.from({ length: 250 }, (_, index) => ({ index })) : [{ index: 250 }];
     }
   };
   const records = await Bridge.readAll(master, Bridge.COLLECTIONS.rfis, { filter: {} });
-  assert.equal(records.length, 751);
+  assert.equal(records.length, 251);
   assert.equal(callCount, 2);
   await assert.rejects(() => Bridge.readAll(master, "UnknownCollection", { filter: {} }), /not permitted/);
+});
+
+test("scan limits all collection reads to three concurrent requests", async () => {
+  Bridge._test.resetCache();
+  const directories = Array.from({ length: 6 }, (_value, index) => ({
+    _id: `directory-${index}`,
+    refContact: { _id: "contact-current" },
+    refProject: { _id: index === 0 ? projectId : `project-${index}`, name: `Project ${index}` },
+    isActive: true
+  }));
+  const windowObject = mockWindow({
+    HelixProjectRFIs: [{
+      _id: "rfi-current",
+      refProject: { _id: projectId },
+      title: "Current",
+      status: { name: "Review", rank: 800 }
+    }],
+    HelixProjectSubmittalPackages: [],
+    HelixProjectDirectory: directories,
+    HelixProjectComments: [],
+    HelixProjectAttachments: [],
+    HelixProjectHistories: []
+  });
+  const readFromCollection = windowObject.Master.readFromCollection;
+  let activeReads = 0;
+  let maximumReads = 0;
+  windowObject.Master.readFromCollection = async (...args) => {
+    activeReads += 1;
+    maximumReads = Math.max(maximumReads, activeReads);
+    await new Promise((resolve) => setTimeout(resolve, 4));
+    try {
+      return await readFromCollection(...args);
+    } finally {
+      activeReads -= 1;
+    }
+  };
+
+  await Bridge.scan(windowObject);
+  assert.ok(maximumReads > 1, "Expected the scan to retain bounded parallel reads");
+  assert.ok(maximumReads <= 3, `Observed ${maximumReads} simultaneous Helix reads`);
 });
 
 test("openItem opens current-page records and returns a safe route for a scanned cross-project item", async () => {
@@ -225,6 +265,10 @@ test("openItem opens current-page records and returns a safe route for a scanned
   assert.equal(navigation.opened, false);
   assert.equal(navigation.navigateTo, "https://project.helixteam.com/Projects/project-other/RFI");
   assert.deepEqual(windowObject.opened, ["rfi-current"]);
+  assert.ok(Bridge._test.navigationDescriptors().every((descriptor) => {
+    assert.deepEqual(Object.keys(descriptor).sort(), ["itemId", "itemType", "projectId"]);
+    return true;
+  }));
   await assert.rejects(() => Bridge.openItem(windowObject, "unknown-rfi"), /could not be found/);
 });
 

@@ -9,9 +9,10 @@
   const SOURCE = "helix-activity-extension";
   const TO_PAGE = "to-page";
   const FROM_PAGE = "from-page";
-  const CACHE_VERSION = 3;
+  const CACHE_VERSION = 4;
   const CACHE_TTL_MS = 15 * 60 * 1000;
-  const CACHE_PREFIX = "helix-activity-cache-v3:";
+  const CACHE_PREFIX = "helix-activity-cache-v4:";
+  const MAX_ACTIVITY_CONTEXTS = 3;
   const NAVIGATION_VERSION = 1;
   const NAVIGATION_TTL_MS = 2 * 60 * 1000;
   const NAVIGATION_PREFIX = "helix-activity-navigation-v1:";
@@ -144,7 +145,7 @@
   async function saveCachedIndex(index) {
     const key = currentCacheKey();
     const currentActivityKey = activityCacheKey();
-    if (!key || !currentActivityKey) return;
+    if (!key || !currentActivityKey) return { cached: false, reason: "storage_error" };
     const previous = await storageGet(key);
     const activities = previous && previous.version === CACHE_VERSION && previous.activities
       ? Object.assign({}, previous.activities)
@@ -156,21 +157,39 @@
     };
     const recentActivityKeys = Object.keys(activities)
       .sort((a, b) => String(activities[b].scannedAt || "").localeCompare(String(activities[a].scannedAt || "")))
-      .slice(0, 20);
+      .slice(0, MAX_ACTIVITY_CONTEXTS);
     const prunedActivities = Object.fromEntries(recentActivityKeys.map((activityKey) => [activityKey, activities[activityKey]]));
-    await storageSet(key, {
-      version: CACHE_VERSION,
-      storedAt: Date.now(),
-      queue: {
-        scannedAt: index.scannedAt,
-        warnings: index.warnings,
-        openQueue: index.openQueue,
-        projects: index.projects,
-        people: index.people,
-        currentPersonKey: index.currentPersonKey
-      },
-      activities: prunedActivities
+    const response = await runtimeMessage({
+      type: "HELIX_ACTIVITY_CACHE_WRITE",
+      key,
+      value: {
+        version: CACHE_VERSION,
+        storedAt: Date.now(),
+        queue: {
+          scannedAt: index.scannedAt,
+          warnings: index.warnings,
+          openQueue: index.openQueue,
+          projects: index.projects,
+          people: index.people,
+          currentPersonKey: index.currentPersonKey
+        },
+        activities: prunedActivities
+      }
     });
+    return response && response.ok
+      ? response.result
+      : { cached: false, reason: "storage_error" };
+  }
+
+  function cacheWarningMessage(result) {
+    if (!result || result.cached !== false) return null;
+    if (result.reason === "too_large") {
+      return "These Helix results are too large to cache. They remain available until this page closes.";
+    }
+    if (result.reason === "quota") {
+      return "Chrome could not save the local Helix cache. Task Hub sync continued; clear cached data in settings if this repeats.";
+    }
+    return "The local Helix cache could not be saved. Current results and Task Hub sync are still available.";
   }
 
   const ui = HelixActivityUI.mount({
@@ -302,7 +321,15 @@
       const index = HelixActivityCore.buildActivityIndex(raw);
       ui.setData(index);
       hasScanned = true;
-      await saveCachedIndex(index);
+      let cacheResult;
+      try {
+        cacheResult = await saveCachedIndex(index);
+      } catch (_error) {
+        cacheResult = { cached: false, reason: "storage_error" };
+      }
+      if (typeof ui.setCacheWarning === "function") {
+        ui.setCacheWarning(cacheWarningMessage(cacheResult));
+      }
       try {
         await syncTaskHub(index, forceTaskHubSync === true);
       } catch (_error) {
