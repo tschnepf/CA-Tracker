@@ -237,6 +237,36 @@ test("open queue defaults to the logged-in person while allowing coworkers to be
   assert.deepEqual(Core.filterOpenQueue(index.openQueue, { people: [colleague.key] }).map((item) => item.id), ["submittal-company"]);
 });
 
+test("current queue assignments include the date the item entered the current court", () => {
+  const queueUser = { id: "alice", contactId: "contact-alice", fullName: "Alice Example" };
+  const index = Core.buildActivityIndex({
+    scannedAt: "2026-08-10T18:00:00Z",
+    context: { projectId: "project-1", itemType: "rfi", user: queueUser },
+    items: [{
+      id: "rfi-court-date",
+      number: "000700",
+      title: "Court date test",
+      status: "Review",
+      statusRank: 800,
+      dates: { review: "2026-08-08T09:00:00Z" },
+      workflow: {
+        required: [
+          { assigned: bob, reviewed: true, reviewedAt: "2026-08-09T14:30:00Z" },
+          { assigned: queueUser, reviewed: false, reviewedAt: null }
+        ],
+        optional: [],
+        notify: []
+      }
+    }],
+    comments: [],
+    attachments: [],
+    histories: []
+  });
+
+  assert.equal(index.openQueue[0].queueState.courtStartedAt, "2026-08-09T14:30:00.000Z");
+  assert.equal(index.openQueue[0].queueState.courtDateSource, "helix_workflow");
+});
+
 test("filters combine search, status, activity reason, and sorting", () => {
   const items = [
     { number: "00010", itemType: "rfi", title: "Zulu", status: "Review", searchText: "00010 zulu roofing commented", latestActivityAt: "2026-02-01", reasons: [{ code: "commented" }] },

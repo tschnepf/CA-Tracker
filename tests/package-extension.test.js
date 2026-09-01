@@ -6,6 +6,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 
 const root = path.resolve(__dirname, "..");
+const repositoryRoot = path.resolve(root, "..", "..");
 const packageSource = fs.readFileSync(path.join(root, "scripts", "package-extension.ps1"), "utf8");
 const portablePackageSource = fs.readFileSync(
   path.join(root, "scripts", "package-extension.js"),
@@ -14,10 +15,12 @@ const portablePackageSource = fs.readFileSync(
 const readme = fs.readFileSync(path.join(root, "README.md"), "utf8");
 const manifest = JSON.parse(fs.readFileSync(path.join(root, "manifest.json"), "utf8"));
 const packageMetadata = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8"));
+const webDockerfile = fs.readFileSync(path.join(repositoryRoot, "infra", "web", "Dockerfile"), "utf8");
+const nginxConfiguration = fs.readFileSync(path.join(repositoryRoot, "infra", "web", "nginx.conf"), "utf8");
 
 test("packaging preserves a stable unpacked folder and stable-name archive", () => {
-  assert.equal(manifest.version, "1.8.2");
-  assert.equal(packageMetadata.version, "1.8.2");
+  assert.equal(manifest.version, "1.9.8");
+  assert.equal(packageMetadata.version, "1.9.8");
   assert.match(packageSource, /\$install = Join-Path \$dist 'helix-my-activity'/);
   assert.match(packageSource, /\$currentArchive = Join-Path \$dist 'helix-my-activity\.zip'/);
   assert.match(packageSource, /InstallFolder = \$install/);
@@ -34,4 +37,13 @@ test("packaging preserves a stable unpacked folder and stable-name archive", () 
   assert.match(portablePackageSource, /"integrations", "options"/);
   assert.match(portablePackageSource, /helix-my-activity-\$\{manifest\.version\}\.zip/);
   assert.match(readme, /npm run package/);
+});
+
+test("web packaging publishes no-cache metadata from the same manifest as the ZIP", () => {
+  assert.match(
+    webDockerfile,
+    /dist\/helix-my-activity\/manifest\.json \/usr\/share\/nginx\/html\/browser-extensions\/helix-my-activity\.json/
+  );
+  assert.match(nginxConfiguration, /location = \/browser-extensions\/helix-my-activity\.json/);
+  assert.match(nginxConfiguration, /Cache-Control "private, no-cache"/);
 });

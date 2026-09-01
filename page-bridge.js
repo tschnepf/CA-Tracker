@@ -5,7 +5,7 @@
   const TO_PAGE = "to-page";
   const FROM_PAGE = "from-page";
   const PROGRESS = "progress";
-  const ALLOWED_OPERATIONS = new Set(["bootstrap", "scan", "openItem"]);
+  const ALLOWED_OPERATIONS = new Set(["bootstrap", "scan", "openItem", "prepareItemDownload"]);
 
   if (!window.HelixBridgeCore || window.__HELIX_ACTIVITY_PAGE_BRIDGE_INSTALLED) {
     return;
@@ -52,14 +52,18 @@
         result = await window.HelixBridgeCore.scan(window, (update) => {
           send({ kind: PROGRESS, requestId: message.requestId, update });
         });
-      } else {
+      } else if (message.operation === "openItem" || message.operation === "prepareItemDownload") {
         const itemId = message.payload && message.payload.itemId;
         if (typeof itemId !== "string" || !itemId) {
           throw new Error("A valid item identifier is required.");
         }
         const itemType = message.payload && message.payload.itemType;
         const projectId = message.payload && message.payload.projectId;
-        result = await window.HelixBridgeCore.openItem(window, itemId, itemType, projectId);
+        result = message.operation === "openItem"
+          ? await window.HelixBridgeCore.openItem(window, itemId, itemType, projectId)
+          : await window.HelixBridgeCore.prepareItemDownload(window, itemId, itemType, projectId);
+      } else {
+        throw new Error("The requested operation is not supported.");
       }
       send({ kind: "response", requestId: message.requestId, ok: true, result });
     } catch (error) {

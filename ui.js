@@ -92,6 +92,9 @@
     .queue-badge { border-radius: 999px; padding: 4px 8px; font-size: 10px; text-transform: uppercase; letter-spacing: .04em; }
     .queue-badge.current { color: #241300; background: #ffbe69; }
     .queue-badge.upcoming { color: #071b29; background: #80d4ff; }
+    .court-date-column { margin-top: 7px; color: #91a7b7; font-size: 11px; }
+    .court-date-column span { display: block; }
+    .court-date-label { color: #b9cfdd; font-size: 10px; }
     .title { margin: 6px 0 4px; color: #fff; }
     .contract { color: #91a7b7; font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     .item-context { display: flex; flex-wrap: wrap; gap: 5px; margin: 7px 0 0; color: #b9cfdd; font-size: 11px; }
@@ -99,8 +102,10 @@
     .reason { border-radius: 4px; padding: 3px 6px; color: #bce6ff; background: #203b4d; font-size: 10px; }
     .status-column { display: flex; align-items: center; margin-top: 9px; }
     .card-bottom { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 11px; }
+    .card-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 5px; }
     .date { color: #91a7b7; font-size: 11px; }
-    .open-rfi { border: 1px solid #50738d; border-radius: 6px; padding: 6px 9px; color: #e7f6ff; background: #1d3a50; cursor: pointer; font-size: 11px; }
+    .item-action { border: 1px solid #50738d; border-radius: 6px; padding: 6px 9px; color: #e7f6ff; background: #1d3a50; cursor: pointer; font-size: 11px; }
+    .item-action:disabled { opacity: .65; cursor: wait; }
     .more { display: block; width: 100%; border: 1px solid #50738d; border-radius: 8px; padding: 10px; color: #dff3ff; background: #1d3a50; cursor: pointer; }
     .hidden { display: none !important; }
     @container (min-width: 720px) {
@@ -120,11 +125,12 @@
         gap: 4px 12px; align-items: center; padding: 9px 11px; margin-bottom: 7px;
       }
       .queue-card {
-        grid-template-columns: minmax(80px, .65fr) minmax(130px, 1.8fr) minmax(95px, 1.1fr) minmax(120px, 1.5fr) minmax(75px, .7fr) minmax(100px, .8fr);
-        grid-template-areas: "top title contract reasons status bottom" "top context contract reasons status bottom";
+        grid-template-columns: minmax(80px, .65fr) minmax(90px, .7fr) minmax(130px, 1.8fr) minmax(95px, 1.1fr) minmax(120px, 1.5fr) minmax(75px, .7fr) minmax(100px, .8fr);
+        grid-template-areas: "top courtDate title contract reasons status bottom" "top courtDate context contract reasons status bottom";
       }
       .card-top { grid-area: top; flex-direction: column; align-items: flex-start; gap: 4px; }
       .badge-stack { justify-content: flex-start; }
+      .court-date-column { grid-area: courtDate; margin-top: 0; }
       .title { grid-area: title; margin: 0; line-height: 1.25; }
       .contract { grid-area: contract; }
       .item-context { grid-area: context; margin: 0; }
@@ -134,7 +140,7 @@
     }
     @container (min-width: 980px) {
       .card { grid-template-columns: minmax(105px, .7fr) minmax(210px, 2fr) minmax(155px, 1.2fr) minmax(220px, 1.7fr) minmax(140px, .8fr); }
-      .queue-card { grid-template-columns: minmax(105px, .7fr) minmax(190px, 2fr) minmax(135px, 1.2fr) minmax(190px, 1.7fr) minmax(90px, .7fr) minmax(130px, .8fr); }
+      .queue-card { grid-template-columns: minmax(105px, .7fr) minmax(105px, .7fr) minmax(190px, 2fr) minmax(135px, 1.2fr) minmax(190px, 1.7fr) minmax(90px, .7fr) minmax(130px, .8fr); }
     }
     @media (max-width: 420px) { .resize-handle { display: none; } }
     @media (prefers-reduced-motion: reduce) { .panel { transition: none; } .spinner { animation: none; } }
@@ -712,6 +718,16 @@
         }
         if (!queueMode) badgeStack.appendChild(element(documentObject, "span", "status-badge", item.status));
         cardTop.append(itemIdentity, badgeStack);
+        const courtDateColumn = queueMode ? element(documentObject, "div", "court-date-column") : null;
+        if (courtDateColumn) {
+          const courtStartedAt = item.queueState && item.queueState.code === "current"
+            ? item.queueState.courtStartedAt
+            : null;
+          courtDateColumn.append(
+            element(documentObject, "span", "court-date-label", "Entered current court"),
+            element(documentObject, "span", "", courtStartedAt ? Core.formatDate(courtStartedAt) : "—")
+          );
+        }
         const titleNode = element(documentObject, "div", "title", item.title);
         const contract = element(documentObject, "div", "contract", item.contract || "No contract listed");
         contract.title = item.contract || "No contract listed";
@@ -738,13 +754,32 @@
             : "Target date unavailable";
           cardBottom.appendChild(element(documentObject, "span", "date", dateText));
         }
-        const openButton = element(documentObject, "button", "open-rfi", "Open in Helix");
+        const cardActions = element(documentObject, "div", "card-actions");
+        const downloadButton = element(documentObject, "button", "item-action download-package", "Download package");
+        downloadButton.type = "button";
+        const browseFolderButton = element(documentObject, "button", "item-action browse-package-folder", "Browse folder");
+        browseFolderButton.type = "button";
+        browseFolderButton.hidden = true;
+        downloadButton.addEventListener("click", () => {
+          if (typeof callbacks.onDownloadItem === "function") {
+            callbacks.onDownloadItem(item, downloadButton, browseFolderButton);
+          }
+        });
+        browseFolderButton.addEventListener("click", () => {
+          if (typeof callbacks.onBrowseDownloadedFolder === "function") {
+            callbacks.onBrowseDownloadedFolder(item, browseFolderButton);
+          }
+        });
+        const openButton = element(documentObject, "button", "item-action open-rfi", "Open in Helix");
         openButton.type = "button";
         openButton.addEventListener("click", () => {
           if (typeof callbacks.onOpenItem === "function") callbacks.onOpenItem(item, openButton);
         });
-        cardBottom.appendChild(openButton);
-        card.append(cardTop, titleNode, contract);
+        cardActions.append(downloadButton, browseFolderButton, openButton);
+        cardBottom.appendChild(cardActions);
+        card.append(cardTop);
+        if (courtDateColumn) card.appendChild(courtDateColumn);
+        card.append(titleNode, contract);
         if (queueMode) card.appendChild(itemContext);
         card.appendChild(reasonList);
         if (statusColumn) card.appendChild(statusColumn);

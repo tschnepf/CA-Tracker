@@ -67,6 +67,64 @@ function createHarness(options = {}) {
   const storageData = Object.assign({}, options.storageData);
   const assignedLocations = [];
   const runtimeMessages = [];
+  const selectedDirectories = new Map();
+  const pickerCalls = [];
+  const broadcastChannels = new Map();
+
+  class BroadcastChannelMock {
+    constructor(name) {
+      this.name = name;
+      this.onmessage = null;
+      const entries = broadcastChannels.get(name) || new Set();
+      entries.add(this);
+      broadcastChannels.set(name, entries);
+    }
+    close() {
+      const entries = broadcastChannels.get(this.name);
+      if (entries) entries.delete(this);
+    }
+    static emit(name, data) {
+      (broadcastChannels.get(name) || []).forEach((channel) => {
+        if (typeof channel.onmessage === "function") channel.onmessage({ data });
+      });
+    }
+  }
+
+  function fileDirectory(files) {
+    return {
+      async getFileHandle(filename, handleOptions = {}) {
+        if (!files.has(filename) && !handleOptions.create) {
+          const error = new Error("Not found");
+          error.name = "NotFoundError";
+          throw error;
+        }
+        if (!files.has(filename)) files.set(filename, null);
+        return {
+          async createWritable() {
+            let value;
+            return {
+              async write(blob) { value = blob; },
+              async close() { files.set(filename, value); }
+            };
+          }
+        };
+      }
+    };
+  }
+
+  const directoryHandle = {
+    async getDirectoryHandle(directoryName, handleOptions = {}) {
+      if (!selectedDirectories.has(directoryName) && !handleOptions.create) {
+        const error = new Error("Not found");
+        error.name = "NotFoundError";
+        throw error;
+      }
+      if (!selectedDirectories.has(directoryName)) {
+        selectedDirectories.set(directoryName, new Map());
+      }
+      return fileDirectory(selectedDirectories.get(directoryName));
+    }
+  };
 
   const windowObject = {
     location: {
@@ -78,6 +136,11 @@ function createHarness(options = {}) {
     },
     history: { replaceState() {} },
     __HELIX_ACTIVITY_CONTENT_STARTED: false,
+    async showDirectoryPicker(pickerOptions) {
+      pickerCalls.push(pickerOptions);
+      if (options.directoryPickerError) throw options.directoryPickerError;
+      return directoryHandle;
+    },
     addEventListener(type, listener) {
       if (type === "message") listeners.push(listener);
     },
@@ -115,9 +178,20 @@ function createHarness(options = {}) {
                 attachments: [],
                 histories: []
               }
-            : typeof options.openItemResult === "function"
-              ? options.openItemResult(message.payload)
-              : { opened: true, itemId: message.payload.itemId };
+            : message.operation === "prepareItemDownload"
+              ? (typeof options.prepareItemDownloadResult === "function"
+                  ? options.prepareItemDownloadResult(message.payload)
+                  : {
+                      prepared: true,
+                      report: {
+                        kind: "client",
+                        url: `${origin}/Reports/clientReportViewer?rid=report-1&helixActivityDownload=1`
+                      },
+                      attachments: []
+                    })
+              : typeof options.openItemResult === "function"
+                ? options.openItemResult(message.payload)
+                : { opened: true, itemId: message.payload.itemId };
         dispatch({
           source: message.source,
           direction: "from-page",
@@ -187,6 +261,23 @@ function createHarness(options = {}) {
           setImmediate(() => callback({ ok: true, result: true }));
           return;
         }
+        if (message.type === "HELIX_ACTIVITY_DOWNLOAD_PACKAGE") {
+          uiState.downloadPackage = message.package;
+          setImmediate(() => {
+            callback({ ok: true, result: { queued: true } });
+            BroadcastChannelMock.emit(message.channelName, {
+              type: "helix-report-ready",
+              filename: message.package.report.filename || "RFI 0001 - Details.pdf",
+              blob: { kind: "report" }
+            });
+          });
+          return;
+        }
+        if (message.type === "HELIX_ACTIVITY_REPORT_SAVED"
+          || message.type === "HELIX_ACTIVITY_REPORT_FAILED") {
+          setImmediate(() => callback({ ok: true, result: { finished: true } }));
+          return;
+        }
         setImmediate(() => callback({ ok: false, error: "Unexpected message" }));
       }
     },
@@ -225,7 +316,14 @@ function createHarness(options = {}) {
     clearTimeout,
     setImmediate,
     Promise,
-    Error
+    Error,
+    URL,
+    BroadcastChannel: BroadcastChannelMock,
+    fetch: async (url) => ({
+      ok: true,
+      status: 200,
+      async blob() { return { kind: "attachment", url }; }
+    })
   });
 
   return {
@@ -235,6 +333,8 @@ function createHarness(options = {}) {
     storageData,
     assignedLocations,
     runtimeMessages,
+    selectedDirectories,
+    pickerCalls,
     get callbacks() { return uiCallbacks; }
   };
 }
@@ -260,6 +360,195 @@ test("content script completes startup, dynamic scan, rendering, and open-detail
   await harness.callbacks.onOpenItem({ id: "rfi-dynamic", itemType: "rfi", projectId: "project-dynamic" }, button);
   assert.equal(harness.operations.at(-1), "openItem");
   assert.equal(harness.uiState.panel.includes(false), false);
+});
+
+test("content script creates an item-named folder inside the selected destination", async () => {
+  const harness = createHarness({
+    prepareItemDownloadResult: () => ({
+      prepared: true,
+      report: {
+        kind: "client",
+        filename: "RFI 0001 - Details.pdf",
+        url: `${origin}/Reports/clientReportViewer?rid=report-1&helixActivityDownload=1`
+      },
+      attachments: [{
+        filename: "Review markup.pdf",
+        uploadedAt: "2026-08-03T18:45:00.000Z",
+        url: "https://storage.googleapis.com/example/signed-file"
+      }]
+    })
+  });
+  await waitFor(() => harness.uiState.contexts.length > 0, "bootstrap did not finish");
+  const button = { disabled: false, textContent: "Download package" };
+  const browseButton = { disabled: false, hidden: true, textContent: "Browse folder" };
+  const item = {
+    id: "rfi-dynamic",
+    itemType: "rfi",
+    projectId: "project-dynamic",
+    projectName: "CMH04 - Hospital Expansion",
+    number: "P000210",
+    title: "CMH04 - Overhead Coiling Doors - Overhead Coiling - SD"
+  };
+  await harness.callbacks.onDownloadItem(item, button, browseButton);
+
+  assert.equal(harness.operations.at(-1), "prepareItemDownload");
+  assert.ok(harness.uiState.downloadPackage);
+  assert.equal(harness.pickerCalls.length, 1);
+  assert.equal(harness.pickerCalls[0].mode, "readwrite");
+  assert.equal(harness.pickerCalls[0].startIn, "downloads");
+  assert.match(harness.pickerCalls[0].id, /^helix_project-dynamic_[0-9a-f]{8}$/);
+  const expectedFolder = "P000210 - Overhead Coiling Doors - Overhead Coiling - SD";
+  assert.deepEqual(Array.from(harness.selectedDirectories.keys()), [expectedFolder]);
+  assert.deepEqual(Array.from(harness.selectedDirectories.get(expectedFolder).keys()).sort(), [
+    "2026-08-03 Review markup.pdf",
+    "RFI 0001 - Details.pdf",
+  ]);
+  assert.equal(harness.runtimeMessages.includes("HELIX_ACTIVITY_REPORT_SAVED"), true);
+  assert.equal(button.textContent, "Downloaded 2 files");
+  assert.equal(button.disabled, false);
+  assert.equal(browseButton.hidden, false);
+  assert.equal(browseButton.disabled, false);
+
+  await harness.callbacks.onBrowseDownloadedFolder(item, browseButton);
+  assert.equal(harness.pickerCalls.length, 2);
+  assert.match(harness.pickerCalls[1].id, /^helix_browse_[0-9a-f]{8}$/);
+  assert.equal(harness.pickerCalls[1].mode, "read");
+  assert.equal(typeof harness.pickerCalls[1].startIn.getFileHandle, "function");
+  assert.equal(browseButton.textContent, "Browse folder");
+});
+
+test("package downloads prefix only PDF attachments that have a Helix upload date", async () => {
+  const harness = createHarness({
+    prepareItemDownloadResult: () => ({
+      prepared: true,
+      report: {
+        kind: "client",
+        filename: "RFI 0001 - Details.pdf",
+        url: `${origin}/Reports/clientReportViewer?rid=report-1&helixActivityDownload=1`
+      },
+      attachments: [
+        {
+          filename: "Drawing.PDF",
+          uploadedAt: "2026-08-04T01:15:00.000Z",
+          url: "https://storage.googleapis.com/example/drawing"
+        },
+        {
+          filename: "2026-08-04 Existing date.pdf",
+          uploadedAt: "2026-08-04T10:00:00.000Z",
+          url: "https://storage.googleapis.com/example/existing"
+        },
+        {
+          filename: "Unknown date.pdf",
+          uploadedAt: null,
+          url: "https://storage.googleapis.com/example/unknown"
+        },
+        {
+          filename: "Checklist.docx",
+          uploadedAt: "2026-08-04T10:00:00.000Z",
+          url: "https://storage.googleapis.com/example/checklist"
+        }
+      ]
+    })
+  });
+  await waitFor(() => harness.uiState.contexts.length > 0, "bootstrap did not finish");
+  const button = { disabled: false, textContent: "Download package" };
+
+  await harness.callbacks.onDownloadItem({
+    id: "rfi-dynamic",
+    itemType: "rfi",
+    projectId: "project-dynamic",
+    projectName: "Dynamic Project",
+    number: "0001",
+    title: "Dynamic Project - Coordination"
+  }, button);
+
+  const files = harness.selectedDirectories.get("0001 - Coordination");
+  assert.deepEqual(Array.from(files.keys()).sort(), [
+    "2026-08-04 Drawing.PDF",
+    "2026-08-04 Existing date.pdf",
+    "Checklist.docx",
+    "RFI 0001 - Details.pdf",
+    "Unknown date.pdf"
+  ]);
+});
+
+test("folder naming matches an embedded project code and removes repeated dash separators", async () => {
+  const harness = createHarness();
+  await waitFor(() => harness.uiState.contexts.length > 0, "bootstrap did not finish");
+  const button = { disabled: false, textContent: "Download package" };
+
+  await harness.callbacks.onDownloadItem({
+    id: "submittal-cmh02",
+    itemType: "submittal",
+    projectId: "project-cmh02",
+    projectName: "Aligned CMH02",
+    number: "P000211",
+    title: "CMH02 -  - Overhead Coiling Doors -- Electrical"
+  }, button);
+
+  assert.deepEqual(Array.from(harness.selectedDirectories.keys()), [
+    "P000211 - Overhead Coiling Doors - Electrical"
+  ]);
+});
+
+test("folder pickers remember one starting location per project across RFIs and Submittals", async () => {
+  const harness = createHarness();
+  await waitFor(() => harness.uiState.contexts.length > 0, "bootstrap did not finish");
+  const download = (item) => harness.callbacks.onDownloadItem(
+    item,
+    { disabled: false, textContent: "Download package" }
+  );
+
+  await download({
+    id: "rfi-one",
+    itemType: "rfi",
+    projectId: "project-shared",
+    projectName: "Shared Project",
+    number: "0001",
+    title: "First item"
+  });
+  await download({
+    id: "submittal-one",
+    itemType: "submittal",
+    projectId: "project-shared",
+    projectName: "Shared Project",
+    number: "0002",
+    title: "Second item"
+  });
+  await download({
+    id: "rfi-other",
+    itemType: "rfi",
+    projectId: "project-other",
+    projectName: "Other Project",
+    number: "0003",
+    title: "Third item"
+  });
+
+  assert.equal(harness.pickerCalls.length, 3);
+  assert.equal(harness.pickerCalls[0].id, harness.pickerCalls[1].id);
+  assert.notEqual(harness.pickerCalls[0].id, harness.pickerCalls[2].id);
+  assert.equal(harness.pickerCalls.every((call) => call.startIn === "downloads"), true);
+});
+
+test("cancelling the destination prompt does not read or download the selected item", async () => {
+  const cancellation = new Error("The user aborted a request.");
+  cancellation.name = "AbortError";
+  const harness = createHarness({ directoryPickerError: cancellation });
+  await waitFor(() => harness.uiState.contexts.length > 0, "bootstrap did not finish");
+  const button = { disabled: false, textContent: "Download package" };
+
+  await harness.callbacks.onDownloadItem({
+    id: "rfi-dynamic",
+    itemType: "rfi",
+    projectId: "project-dynamic"
+  }, button);
+
+  assert.equal(harness.pickerCalls.length, 1);
+  assert.equal(harness.operations.includes("prepareItemDownload"), false);
+  assert.equal(harness.runtimeMessages.includes("HELIX_ACTIVITY_DOWNLOAD_PACKAGE"), false);
+  assert.equal(harness.uiState.openFailure, undefined);
+  assert.equal(button.textContent, "Download package");
+  assert.equal(button.disabled, false);
 });
 
 test("refresh replaces the queue and retains only three recent activity contexts", async () => {
@@ -391,6 +680,35 @@ test("cross-page item opening stores a short-lived handoff without closing the p
   assert.equal(handoff.itemId, "submittal-other");
   assert.equal(handoff.itemType, "submittal");
   assert.equal(harness.uiState.panel.includes(false), false);
+});
+
+test("cross-project package download keeps the selected directory handle in the current tab", async () => {
+  const harness = createHarness({
+    prepareItemDownloadResult: () => ({
+      prepared: true,
+      report: {
+        kind: "client",
+        filename: "Submittal P000210 - Details.pdf",
+        url: `${origin}/Reports/clientReportViewer?rid=report-2&helixActivityDownload=1`
+      },
+      attachments: []
+    })
+  });
+  await waitFor(() => harness.uiState.contexts.length > 0, "bootstrap did not finish");
+  const button = { disabled: false, textContent: "Download package" };
+  await harness.callbacks.onDownloadItem({
+    id: "submittal-other",
+    itemType: "submittal",
+    projectId: "project-other",
+    projectName: "Other Project",
+    number: "P000210",
+    title: "Other Project - Cooling door package"
+  }, button);
+
+  assert.equal(harness.storageData["helix-activity-navigation-v1:contact-dynamic"], undefined);
+  assert.deepEqual(harness.assignedLocations, []);
+  const files = harness.selectedDirectories.get("P000210 - Cooling door package");
+  assert.equal(files.has("Submittal P000210 - Details.pdf"), true);
 });
 
 test("destination page consumes the handoff, reopens the panel, and opens the item", async () => {

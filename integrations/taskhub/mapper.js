@@ -26,22 +26,13 @@
   }
 
   function courtDate(item, assignment, scannedAt) {
-    const required = item && item.workflow && Array.isArray(item.workflow.required)
-      ? item.workflow.required
-      : [];
-    const position = Number(assignment && assignment.state && assignment.state.position);
-    const index = Number.isFinite(position) && position > 0
-      ? position - 1
-      : required.findIndex((entry) => Core.personKey(entry && entry.assigned) === assignment.personKey);
-    if (index > 0) {
-      const previousReviewed = validDate(required[index - 1] && required[index - 1].reviewedAt);
-      if (previousReviewed) {
-        return { value: previousReviewed, source: "helix_workflow" };
-      }
+    if (assignment && assignment.state && assignment.state.courtStartedAt) {
+      return {
+        value: validDate(assignment.state.courtStartedAt),
+        source: assignment.state.courtDateSource || "observed"
+      };
     }
-    const reviewDate = validDate(item && item.dates && item.dates.review);
-    if (reviewDate) return { value: reviewDate, source: "helix_review" };
-    return { value: validDate(scannedAt) || new Date().toISOString(), source: "observed" };
+    return Core.courtDate(item, assignment, scannedAt);
   }
 
   function selectedPersonKeys(index, viewState) {

@@ -218,6 +218,25 @@
       });
   }
 
+  function courtDate(item, assignment, observedAt) {
+    const required = item && item.workflow && Array.isArray(item.workflow.required)
+      ? item.workflow.required
+      : [];
+    const position = Number(assignment && assignment.state && assignment.state.position);
+    const index = Number.isFinite(position) && position > 0
+      ? position - 1
+      : required.findIndex((entry) => personKey(entry && entry.assigned) === assignment.personKey);
+    if (index > 0) {
+      const previousReviewed = normalizeDate(required[index - 1] && required[index - 1].reviewedAt);
+      if (previousReviewed) {
+        return { value: previousReviewed, source: "helix_workflow" };
+      }
+    }
+    const reviewDate = normalizeDate(item && item.dates && item.dates.review);
+    if (reviewDate) return { value: reviewDate, source: "helix_review" };
+    return { value: normalizeDate(observedAt) || new Date().toISOString(), source: "observed" };
+  }
+
   function matchesDueFilter(item, filter, nowValue) {
     const value = filter && typeof filter === "object" && !Array.isArray(filter)
       ? filter
@@ -308,6 +327,7 @@
       throw new Error("A valid Helix scan result is required.");
     }
     const user = scanResult.context.user;
+    const scannedAt = scanResult.scannedAt || new Date().toISOString();
     const commentsByItem = groupByItem(scanResult.comments);
     const attachmentsByItem = groupByItem(scanResult.attachments);
     const historiesByItem = groupByItem(scanResult.histories);
@@ -423,7 +443,16 @@
       }
       const queueAssignments = Array.from(candidatePeople.values()).map((person) => {
         const state = classifyOpenQueue(item, person);
-        return state ? { personKey: person.key, person, state } : null;
+        if (!state) return null;
+        const assignment = { personKey: person.key, person, state };
+        if (state.code === "current") {
+          const enteredCourt = courtDate(item, assignment, scannedAt);
+          assignment.state = Object.assign({}, state, {
+            courtStartedAt: enteredCourt.value,
+            courtDateSource: enteredCourt.source
+          });
+        }
+        return assignment;
       }).filter(Boolean);
       if (queueAssignments.length === 0) continue;
       const currentAssignment = currentPerson
@@ -468,7 +497,7 @@
 
     return {
       context: scanResult.context,
-      scannedAt: scanResult.scannedAt || new Date().toISOString(),
+      scannedAt,
       warnings: Array.isArray(scanResult.warnings) ? scanResult.warnings : [],
       results: sortResults(results, "latest"),
       openQueue: sortOpenQueue(openQueue),
@@ -646,6 +675,7 @@
     personKey,
     companyPersonKeys,
     classifyOpenQueue,
+    courtDate,
     buildActivityIndex,
     filterResults,
     filterOpenQueue,

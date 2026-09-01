@@ -23,6 +23,43 @@ Search, status filters, activity filters, and sorting all run locally after the 
 - **Hide** moves the sidebar out of the way without clearing its index or stopping an in-progress scan. The launcher restores it immediately.
 - The chosen width, open/hidden state, My activity/Open queue page, and all active search, sort, status, project, person, item-type, activity, timing, and due-date filters are stored locally and restored on supported Helix pages, including after Chrome restarts.
 
+## Download packages
+
+Select **Download package** on an RFI or Submittal card to download Helix's available **Details** PDF
+and every current attachment without opening the detail viewer. Chrome first asks you to choose the
+parent destination. Inside it, the extension creates a folder named `<item number> - <item name>`—for
+example, `P000210 - Overhead Coiling Doors - Overhead Coiling - SD`. A matching leading project name
+or project code is removed from the item name using alternative matches. For example, a Helix project
+named `Aligned CMH02` removes either `Aligned CMH02 -` or `CMH02 -` from the beginning of the item
+name. Repeated separators such as `--`, `- -`, and `-  -` are collapsed to one dash. Downloaded PDF
+attachments are prefixed with their Helix upload date, for example `2026-08-03 Review markup.pdf`.
+Other files preserve their Helix filenames, unsafe filename characters are sanitized, and a number is
+added instead of overwriting an existing file. The generated Details PDF keeps its report filename
+because it has no Helix upload date. Items from another assigned project can be downloaded without
+navigating away.
+
+The parent-folder picker has separate history for each Helix project, shared by that project's RFIs
+and Submittals. On the first CMH04 download, select the CMH04 folder. Chrome then opens future CMH04
+package pickers at that remembered starting location. Selecting a different folder updates the
+remembered location for CMH04 only; other projects keep their own locations. Before a project has a
+remembered location, its picker starts in Downloads.
+
+After a package finishes, that card shows **Browse folder**. Selecting it reopens Chrome's native
+directory chooser at the newly created item folder. This is browser-only browsing; it does not launch
+Finder or Windows Explorer. The action remains available while that card and Helix page stay open.
+
+The Details PDF is rendered by Helix in an inactive report tab. The extension starts the report's PDF
+export, writes it to the generated item folder, and closes that temporary tab when the download
+finishes. Deleted and archived attachments are not included; this matches Helix's default **Show
+Archives: No** view. The selected parent-folder handle is used only for that click and is never saved in
+extension storage; Chrome maintains the project-specific picker location.
+
+Both Helix Details export implementations are supported: standard client-rendered PDFs and paginated
+Kendo PDFs. The package is successful only after the official **Details (RFI)** or **Details
+(Submittal)** printed copy has been saved alongside the attachments. If Helix cannot export that PDF,
+the temporary report tab closes and the item card reports the failure instead of opening the report in
+Chrome.
+
 ## Open queue
 
 The **Open queue** view provides a separate work list alongside **My activity**. It first reads Helix's active **My Projects** assignments for the current contact, then reads open RFIs and Submittals within each assigned project. This means the project selector includes assigned projects even when they currently have no open items. It lets you combine:
@@ -117,10 +154,14 @@ If older versions were loaded from separate folders, remove those duplicates fro
 - The extension has only `scripting`, local `storage`, and OIDC `identity` permissions, plus access
   to `project.helixteam.com`. Access to a Task Hub host is optional and requested only when
   connecting.
-- It calls Helix's existing `readFromCollection` helper through a fixed operation bridge.
-- It contains no save, upload, delete, raw `fetch`, or `XMLHttpRequest` implementation.
+- It calls Helix's existing `readFromCollection` and protected-download helpers through a fixed
+  operation bridge.
+- It contains no Helix save, upload, or delete implementation. Network reads used by an explicit
+  package download are limited to Helix-provided HTTPS attachment and report URLs.
 - The bridge cannot accept arbitrary collection names or arbitrary queries from the content script.
-- It does not read cookies, authentication tokens, attachment contents, or local files.
+- It does not read cookies, authentication tokens, or local files. Attachment URLs are resolved only
+  after an explicit **Download package** selection, used to write the requested files into the
+  user-selected folder, and are not cached.
 - It stores a sanitized, bounded local cache in Chrome's extension-local storage. When Task Hub is
   connected, the selected current-assignment subset is sent only to that configured host. Without a
   connection, the cache is not sent anywhere.

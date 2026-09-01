@@ -1,12 +1,20 @@
 # Privacy
 
-My Helix Activity reads Helix data only through the active Helix browser tab and processes it locally in Chrome. When you select **Open in Helix**, it reads a fresh copy of that requested item so Helix's own detail viewer receives a complete record; this copy is not added to the extension's persistent cache.
+My Helix Activity reads Helix data only through the active Helix browser tab and processes it locally in Chrome. When you select **Open in Helix**, it reads a fresh copy of that requested item so Helix's own detail viewer receives a complete record; this copy is not added to the extension's persistent cache. When you explicitly select **Download package**, it reads the requested item's current attachment metadata and available Details-report metadata, then asks Helix for permission-checked, short-lived attachment URLs.
 
 It reads the current Helix directory identity and current-project activity needed for **My activity**. For **Open queue**, it also reads active project assignments from Helix's project directory, followed by open RFI and Submittal metadata within those assigned projects. This information is used only to render the local sidebar and its project/type filters.
 
-The extension does not collect analytics, inspect Helix credentials or authentication storage, or
-download attachment contents. It does not transmit Helix data unless the user explicitly connects a
-self-hosted Task Hub.
+The extension does not collect analytics or inspect Helix credentials or authentication storage. A
+**Download package** request prompts the user to choose a destination folder, reads Helix's protected
+attachment URLs, and opens an inactive, same-origin Helix report tab long enough to render the official
+Details PDF. The extension captures Helix's client-rendered or paginated PDF save operation and closes
+the temporary report tab after success or failure. The files are written into an automatically named item folder inside the selected parent
+folder. The generated folder handle remains only in page memory so the user can select **Browse
+folder** after a successful download; it is discarded when that card or page closes. The URLs, handles,
+and file contents are not stored in extension storage or sent to Task
+Hub. The extension provides Chrome with a project-specific picker identifier so Chrome can remember a
+separate last-used starting location for each project. Other Helix data is not transmitted unless the
+user explicitly connects a self-hosted Task Hub.
 
 When Task Hub is connected, a fresh scan can send the current selected-person **In court** queue to
 that configured server. Each item includes its Helix item/project identifiers and names, RFI or
@@ -22,7 +30,7 @@ Authorization Code + PKCE, so the extension never receives the user's password. 
 refresh tokens are stored in Chrome extension-local storage, restricted to trusted extension
 contexts, rotated automatically, and revoked when possible before being removed on disconnect.
 
-Successful scans are saved as a sanitized cache in Chrome's extension-local storage, scoped to the logged-in contact. Queue data is reused across supported pages and activity data is cached per project and feature. A cache is treated as fresh for 15 minutes; **Refresh** replaces it immediately. Cross-page item opening also stores a two-minute navigation handoff containing only item, type, and project identifiers; it is consumed on the matching destination page. Chrome may retain older cache entries until they are replaced, extension storage is cleared, or the extension is uninstalled. Removing or disabling the extension stops all processing.
+Successful scans are saved as a sanitized cache in Chrome's extension-local storage, scoped to the logged-in contact. Queue data is reused across supported pages and activity data is cached per project and feature. A cache is treated as fresh for 15 minutes; **Refresh** replaces it immediately. Cross-page opening stores a two-minute navigation handoff containing only the item, type, and project identifiers; it is consumed on the matching destination page. Package downloads remain in the current tab so the selected folder handle never needs to be persisted. Chrome may retain older cache entries until they are replaced, extension storage is cleared, or the extension is uninstalled. Removing or disabling the extension stops all processing.
 
 The extension also stores the sidebar width, whether it was open or hidden, the selected My activity/Open queue page, and the active search, sort, status, project, person, item-type, activity, timing, and due-date filters. Filter state is scoped to the logged-in contact and can include search text plus Helix project and person identifiers, but not complete Helix records.
 

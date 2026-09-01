@@ -482,6 +482,77 @@ test("Submittals use their fixed package collection and preserve searchable regi
   assert.deepEqual(windowObject.opened, ["submittal-current"]);
 });
 
+test("prepareItemDownload resolves the official Details report and current protected attachments", async () => {
+  Bridge._test.resetCache();
+  const windowObject = mockWindow({
+    HelixProjectRFIs: [{
+      _id: "rfi-download",
+      refProject: { _id: projectId },
+      displayNumber: "P000210",
+      title: "Cooling door coordination",
+      status: { name: "Review", rank: 800 }
+    }],
+    HelixProjectAttachments: [{
+      _id: "attachment-current",
+      idItem: "rfi-download",
+      idProject: projectId,
+      description: "Review markup.pdf",
+      isActive: true,
+      isCurrent: true,
+      _kmd: { ect: "2026-08-03T18:45:00.000Z" }
+    }],
+    HelixProjectReports: [{
+      _id: "details-rfis",
+      reportName: "Details (RFIs)",
+      functionName: "DetailView",
+      featureName: "RFIs",
+      isActive: true,
+      isV4: true,
+      isClientReport: true,
+      settingsParams: [{
+        propName: "itemID",
+        remoteProp: "DetailEdit.loadedModel._id"
+      }]
+    }]
+  }, "rfi");
+  const protectedCalls = [];
+  windowObject.Master.callCustomEndpoint = async (...args) => {
+    protectedCalls.push(args);
+    return { downloadURL: "https://storage.googleapis.com/example/signed-file" };
+  };
+
+  const result = await Bridge.prepareItemDownload(
+    windowObject,
+    "rfi-download",
+    "rfi",
+    projectId
+  );
+  assert.equal(result.prepared, true);
+  assert.equal(result.report.kind, "client");
+  assert.match(result.report.url, /\/Reports\/clientReportViewer\?/);
+  assert.match(result.report.url, /rid=details-rfis/);
+  assert.match(result.report.url, /itemID=rfi-download/);
+  assert.match(result.report.url, /helixActivityDownload=1/);
+  assert.deepEqual(result.attachments, [{
+    id: "attachment-current",
+    filename: "Review markup.pdf",
+    uploadedAt: "2026-08-03T18:45:00.000Z",
+    url: "https://storage.googleapis.com/example/signed-file"
+  }]);
+  assert.deepEqual(protectedCalls, [["getDownloadURL", {
+    collectionName: "HelixProjectAttachments",
+    _id: "attachment-current",
+    propName: "file",
+    preferThumbnail: true,
+    idProject: projectId
+  }]]);
+  const attachmentRead = windowObject.calls.find((call) => (
+    call.collection === Bridge.COLLECTIONS.attachments
+      && call.query.filter && call.query.filter.idItem === "rfi-download"
+  ));
+  assert.ok(attachmentRead.query.fields.includes("_kmd"));
+});
+
 test("history batches stay below Helix's read URL length guard", async () => {
   Bridge._test.resetCache();
   const rfis = Array.from({ length: 20 }, (_value, index) => ({

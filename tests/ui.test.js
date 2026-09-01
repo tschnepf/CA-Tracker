@@ -21,9 +21,29 @@ test("cards place the plain item type above the number and omit the My Activity 
 });
 
 test("wide queue cards place status between assignment reasons and the open action", () => {
-  assert.match(source, /grid-template-areas: "top title contract reasons status bottom"/);
+  assert.match(source, /grid-template-areas: "top courtDate title contract reasons status bottom"/);
   assert.match(source, /if \(!queueMode\) badgeStack\.appendChild\(element\(documentObject, "span", "status-badge", item\.status\)\)/);
   assert.match(source, /statusColumn\.appendChild\(element\(documentObject, "span", "status-badge", item\.status\)\)/);
+});
+
+test("queue cards show the current-court entry date immediately after the court status", () => {
+  const cardTopPosition = source.indexOf("card.append(cardTop)");
+  const courtDatePosition = source.indexOf("card.appendChild(courtDateColumn)", cardTopPosition);
+  const titlePosition = source.indexOf("card.append(titleNode, contract)", cardTopPosition);
+
+  assert.ok(cardTopPosition >= 0);
+  assert.ok(courtDatePosition > cardTopPosition);
+  assert.ok(titlePosition > courtDatePosition);
+  assert.match(source, /"Entered current court"/);
+  assert.match(source, /courtStartedAt \? Core\.formatDate\(courtStartedAt\) : "—"/);
+});
+
+test("each card exposes the one-click package download action", () => {
+  assert.match(source, /"Download package"/);
+  assert.match(source, /callbacks\.onDownloadItem\(item, downloadButton, browseFolderButton\)/);
+  assert.match(source, /"Browse folder"/);
+  assert.match(source, /browseFolderButton\.hidden = true/);
+  assert.match(source, /callbacks\.onBrowseDownloadedFolder\(item, browseFolderButton\)/);
 });
 
 test("the sidebar does not use bold typography", () => {
