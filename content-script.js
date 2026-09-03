@@ -30,6 +30,8 @@
   let uiPreferencesPromise = null;
   let viewStateWritePromise = Promise.resolve();
   let activeViewState = null;
+  const downloadedDirectoryHandles = new WeakMap();
+  const activeReportTransfers = new Map();
 
   function runtimeMessage(message) {
     return new Promise((resolve) => {
@@ -40,6 +42,204 @@
         }
         resolve(response);
       });
+    });
+  }
+
+  function safeFileName(value, fallback) {
+    const parts = String(value || "").split(/[\\/]/);
+    let cleaned = String(parts[parts.length - 1] || "")
+      .replace(/[<>:"/\\|?*\u0000-\u001f]/g, "-")
+      .replace(/\s+/g, " ")
+      .replace(/[. ]+$/g, "")
+      .trim()
+      .slice(0, 180);
+    if (/^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)/i.test(cleaned)) cleaned = `_${cleaned}`;
+    return cleaned || fallback;
+  }
+
+  function safeDirectoryName(value, fallback) {
+    let cleaned = String(value || "")
+      .replace(/[<>:"/\\|?*\u0000-\u001f]/g, "-")
+      .replace(/(?:\s*[-–—]\s*){2,}/g, " - ")
+      .replace(/\s+/g, " ")
+      .replace(/[. ]+$/g, "")
+      .trim()
+      .slice(0, 180);
+    if (/^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)/i.test(cleaned)) cleaned = `_${cleaned}`;
+    return cleaned || fallback;
+  }
+
+  function escapeRegularExpression(value) {
+    return String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  }
+
+  function titleWithoutProjectPrefix(title, projectName) {
+    const value = String(title || "").trim();
+    const project = String(projectName || "").trim();
+    if (!value) return value;
+    const cleanSeparators = (text) => String(text || "")
+      .replace(/(?:\s*[-–—]\s*){2,}/g, " - ")
+      .replace(/^(?:\s*[-–—:|]\s*)+|(?:\s*[-–—:|]\s*)+$/g, "")
+      .replace(/\s+/g, " ")
+      .trim();
+    if (!project) return cleanSeparators(value);
+    const projectCodes = project
+      .split(/[^a-zA-Z0-9._-]+/)
+      .filter((candidate) => /[a-zA-Z]/.test(candidate) && /\d/.test(candidate));
+    const candidates = [
+      project,
+      project.split(/\s+(?:-|–|—|\||:)\s+/)[0],
+      ...projectCodes
+    ]
+      .map((candidate) => String(candidate || "").trim())
+      .filter((candidate, index, values) => candidate && values.indexOf(candidate) === index)
+      .sort((left, right) => right.length - left.length);
+    const match = candidates.find((candidate) => new RegExp(
+      `^${escapeRegularExpression(candidate)}(?:(?:\\s*[-–—:|]\\s*)+|\\s+)`,
+      "i"
+    ).test(value));
+    const withoutPrefix = match
+      ? value.replace(new RegExp(
+        `^${escapeRegularExpression(match)}(?:(?:\\s*[-–—:|]\\s*)+|\\s+)`,
+        "i"
+      ), "").trim()
+      : value;
+    return cleanSeparators(withoutPrefix);
+  }
+
+  function packageFolderName(item) {
+    const number = String(item && (item.number || item.id) || "Helix item").trim();
+    const title = titleWithoutProjectPrefix(item && item.title, item && item.projectName);
+    return safeDirectoryName(title ? `${number} - ${title}` : number, "Helix item");
+  }
+
+  function projectFolderPickerId(item) {
+    const projectId = String(item && item.projectId || "default-project");
+    let hash = 2166136261;
+    for (let index = 0; index < projectId.length; index += 1) {
+      hash ^= projectId.charCodeAt(index);
+      hash = Math.imul(hash, 16777619);
+    }
+    const readable = projectId.replace(/[^a-zA-Z0-9_-]/g, "_").slice(0, 15) || "project";
+    return `helix_${readable}_${(hash >>> 0).toString(16).padStart(8, "0")}`;
+  }
+
+  function browseFolderPickerId(item) {
+    return `helix_browse_${projectFolderPickerId(item).slice(-8)}`;
+  }
+
+  function numberedFileName(filename, number) {
+    if (number <= 1) return filename;
+    const dot = filename.lastIndexOf(".");
+    return dot > 0
+      ? `${filename.slice(0, dot)} (${number})${filename.slice(dot)}`
+      : `${filename} (${number})`;
+  }
+
+  function attachmentPackageFileName(attachment) {
+    const filename = String(attachment && attachment.filename || "");
+    if (!/\.pdf$/i.test(filename)) return filename;
+    const dateMatch = String(attachment && attachment.uploadedAt || "")
+      .match(/^(\d{4}-\d{2}-\d{2})(?:T|$)/);
+    if (!dateMatch) return filename;
+    const datePrefix = dateMatch[1];
+    const nextCharacter = filename.slice(datePrefix.length, datePrefix.length + 1);
+    if (filename.startsWith(datePrefix) && (!nextCharacter || /[\s_-]/.test(nextCharacter))) {
+      return filename;
+    }
+    return `${datePrefix} ${filename}`;
+  }
+
+  async function fileAlreadyExists(directoryHandle, filename) {
+    try {
+      await directoryHandle.getFileHandle(filename);
+      return true;
+    } catch (error) {
+      if (error && error.name === "NotFoundError") return false;
+      throw error;
+    }
+  }
+
+  async function writePackageFile(directoryHandle, requestedName, fallback, blob, usedNames) {
+    const baseName = safeFileName(requestedName, fallback);
+    let sequence = 1;
+    let filename = numberedFileName(baseName, sequence);
+    while (usedNames.has(filename.toLocaleLowerCase()) || await fileAlreadyExists(directoryHandle, filename)) {
+      sequence += 1;
+      filename = numberedFileName(baseName, sequence);
+    }
+    usedNames.add(filename.toLocaleLowerCase());
+    const fileHandle = await directoryHandle.getFileHandle(filename, { create: true });
+    const writable = await fileHandle.createWritable();
+    try {
+      await writable.write(blob);
+    } finally {
+      await writable.close();
+    }
+    return filename;
+  }
+
+  async function downloadAttachment(attachment) {
+    let url;
+    try {
+      url = new URL(String(attachment && attachment.url));
+    } catch (_error) {
+      throw new Error("Helix returned an invalid attachment URL.");
+    }
+    if (url.protocol !== "https:") throw new Error("Helix returned an unsafe attachment URL.");
+    const response = await fetch(url.href);
+    if (!response.ok) {
+      throw new Error(`Helix returned ${response.status} while downloading ${attachment.filename || "an attachment"}.`);
+    }
+    return response.blob();
+  }
+
+  function createReportTransfer(channelName) {
+    const channel = new BroadcastChannel(channelName);
+    let timer;
+    let rejectTransfer;
+    const close = () => {
+      clearTimeout(timer);
+      channel.close();
+      activeReportTransfers.delete(channelName);
+    };
+    const promise = new Promise((resolve, reject) => {
+      rejectTransfer = reject;
+      timer = setTimeout(() => {
+        close();
+        reject(new Error("The Helix Details report did not finish in time. The temporary report tab was closed."));
+      }, 165000);
+      channel.onmessage = (event) => {
+        const message = event && event.data;
+        if (!message || !["helix-report-ready", "helix-report-error"].includes(message.type)) return;
+        close();
+        if (message.type === "helix-report-error") {
+          reject(new Error(message.error || "Helix could not create the Details report."));
+        } else if (!message.blob) {
+          reject(new Error("Helix returned an empty Details report."));
+        } else {
+          resolve({ blob: message.blob, filename: message.filename });
+        }
+      };
+    });
+    void promise.catch(() => {});
+    const fail = (error) => {
+      close();
+      rejectTransfer(error instanceof Error ? error : new Error(String(error || "The report transfer failed.")));
+    };
+    activeReportTransfers.set(channelName, { fail });
+    return {
+      promise,
+      cancel: fail
+    };
+  }
+
+  if (chrome.runtime.onMessage && typeof chrome.runtime.onMessage.addListener === "function") {
+    chrome.runtime.onMessage.addListener((message) => {
+      if (!message || message.type !== "HELIX_ACTIVITY_REPORT_ERROR") return false;
+      const transfer = activeReportTransfers.get(message.channelName);
+      if (transfer) transfer.fail(new Error(message.error || "Helix could not export the Details PDF."));
+      return false;
     });
   }
 
@@ -233,6 +433,112 @@
       } catch (error) {
         ui.notifyOpenFailure(button, error.message);
       } finally {
+        button.disabled = false;
+      }
+    },
+    onDownloadItem: async (item, button, browseFolderButton) => {
+      const originalLabel = button.textContent;
+      let channelName = null;
+      let reportTransfer = null;
+      try {
+        button.disabled = true;
+        if (browseFolderButton) browseFolderButton.disabled = true;
+        if (typeof window.showDirectoryPicker !== "function") {
+          throw new Error("This Chrome version does not support choosing a download folder.");
+        }
+        button.textContent = "Choose folder…";
+        const parentDirectoryHandle = await window.showDirectoryPicker({
+          id: projectFolderPickerId(item),
+          mode: "readwrite",
+          startIn: "downloads"
+        });
+        button.textContent = "Preparing…";
+        const result = await rpc("prepareItemDownload", {
+          itemId: item.id,
+          itemType: item.itemType,
+          projectId: item.projectId
+        }, null, 120000);
+        const directoryHandle = await parentDirectoryHandle.getDirectoryHandle(
+          packageFolderName(item),
+          { create: true }
+        );
+        channelName = `helix-activity-report-${crypto.randomUUID().replace(/-/g, "_")}`;
+        reportTransfer = createReportTransfer(channelName);
+        const queued = await runtimeMessage({
+          type: "HELIX_ACTIVITY_DOWNLOAD_PACKAGE",
+          channelName,
+          package: { report: result.report }
+        });
+        if (!queued || !queued.ok) {
+          throw new Error(queued && queued.error || "Chrome could not start the Helix report.");
+        }
+
+        const usedNames = new Set();
+        const attachments = Array.isArray(result.attachments) ? result.attachments : [];
+        for (let index = 0; index < attachments.length; index += 1) {
+          button.textContent = `Downloading ${index + 1}/${attachments.length + 1}…`;
+          const blob = await downloadAttachment(attachments[index]);
+          await writePackageFile(
+            directoryHandle,
+            attachmentPackageFileName(attachments[index]),
+            `Attachment ${index + 1}`,
+            blob,
+            usedNames
+          );
+        }
+
+        button.textContent = `Downloading ${attachments.length + 1}/${attachments.length + 1}…`;
+        const reportFile = await reportTransfer.promise;
+        reportTransfer = null;
+        await writePackageFile(
+          directoryHandle,
+          reportFile.filename || result.report.filename,
+          "Details.pdf",
+          reportFile.blob,
+          usedNames
+        );
+        await runtimeMessage({ type: "HELIX_ACTIVITY_REPORT_SAVED", channelName });
+        if (browseFolderButton) {
+          downloadedDirectoryHandles.set(browseFolderButton, directoryHandle);
+          browseFolderButton.hidden = false;
+        }
+        button.textContent = `Downloaded ${attachments.length + 1} file${attachments.length === 0 ? "" : "s"}`;
+      } catch (error) {
+        if (reportTransfer) reportTransfer.cancel(error);
+        if (channelName) {
+          await runtimeMessage({ type: "HELIX_ACTIVITY_REPORT_FAILED", channelName });
+        }
+        if (error && error.name === "AbortError") {
+          button.textContent = originalLabel;
+        } else {
+          ui.notifyOpenFailure(button, error.message);
+        }
+      } finally {
+        button.disabled = false;
+        if (browseFolderButton) browseFolderButton.disabled = false;
+      }
+    },
+    onBrowseDownloadedFolder: async (item, button) => {
+      const directoryHandle = downloadedDirectoryHandles.get(button);
+      if (!directoryHandle) {
+        ui.notifyOpenFailure(button, "Download the package before browsing its folder.");
+        return;
+      }
+      const originalLabel = button.textContent;
+      try {
+        button.disabled = true;
+        button.textContent = "Opening…";
+        await window.showDirectoryPicker({
+          id: browseFolderPickerId(item),
+          mode: "read",
+          startIn: directoryHandle
+        });
+      } catch (error) {
+        if (!error || error.name !== "AbortError") {
+          ui.notifyOpenFailure(button, error && error.message || "Chrome could not browse the downloaded folder.");
+        }
+      } finally {
+        button.textContent = originalLabel;
         button.disabled = false;
       }
     }

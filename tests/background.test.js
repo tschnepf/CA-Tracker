@@ -12,7 +12,12 @@ const source = fs.readFileSync(path.resolve(__dirname, "..", "background.js"), "
 
 function loadBackground(options = {}) {
   let listener = null;
+  let tabUpdatedListener = null;
+  let tabRemovedListener = null;
   const injections = [];
+  const createdTabs = [];
+  const removedTabs = [];
+  let nextTabId = 200;
   const storageData = Object.assign({}, options.storageData);
   let remainingCacheWriteFailures = Number(options.cacheWriteFailures) || 0;
   function requestedKeys(keys) {
@@ -46,9 +51,31 @@ function loadBackground(options = {}) {
       }
     },
     scripting: {
-      async executeScript(options) {
-        injections.push(options);
-        return [];
+      async executeScript(scriptOptions) {
+        injections.push(scriptOptions);
+        return options.reportExportResult && typeof scriptOptions.func === "function"
+          ? [{ result: { started: true, kind: scriptOptions.args[0] } }]
+          : [];
+      }
+    },
+    tabs: {
+      create(tabOptions, callback) {
+        const tab = { id: nextTabId += 1, url: tabOptions.url, active: tabOptions.active };
+        createdTabs.push(tab);
+        callback(tab);
+      },
+      remove(tabId, callback) {
+        removedTabs.push(tabId);
+        if (callback) callback();
+      },
+      update(_tabId, _options, callback) {
+        if (callback) callback();
+      },
+      onUpdated: {
+        addListener(value) { tabUpdatedListener = value; }
+      },
+      onRemoved: {
+        addListener(value) { tabRemovedListener = value; }
       }
     },
     storage: {
@@ -93,9 +120,10 @@ function loadBackground(options = {}) {
     ok: true,
     status: 200,
     headers: { get: () => "application/json" },
-    async json() { return {}; }
+    async json() { return {}; },
+    async blob() { return new Blob(["pdf"], { type: "application/pdf" }); }
   });
-  vm.runInNewContext(source, {
+  vm.runInNewContext(source, Object.assign({
     chrome,
     URL,
     Number,
@@ -107,10 +135,20 @@ function loadBackground(options = {}) {
     btoa,
     crypto: webcrypto,
     fetch: fetchStub,
+    Blob,
+    setTimeout,
     HelixTaskHubClient: TaskHubClient,
     importScripts() {}
-  });
-  return { listener, injections, storageData };
+  }, options.reportGlobals || {}));
+  return {
+    listener,
+    injections,
+    storageData,
+    createdTabs,
+    removedTabs,
+    get tabUpdatedListener() { return tabUpdatedListener; },
+    get tabRemovedListener() { return tabRemovedListener; }
+  };
 }
 
 function send(listener, message, sender) {
@@ -207,6 +245,147 @@ test("background also allows the fixed Helix Overview route", async () => {
 
   assert.equal(response.ok, true);
   assert.equal(injections.length, 2);
+});
+
+test("background opens a hidden Details report and closes it after the selected-folder write succeeds", async () => {
+  const harness = loadBackground({ reportExportResult: true });
+  const channelName = "helix-activity-report-content_nonce_123456789";
+  const response = await send(harness.listener, {
+    type: "HELIX_ACTIVITY_DOWNLOAD_PACKAGE",
+    channelName,
+    package: {
+      report: {
+        name: "Details (RFIs)",
+        kind: "client",
+        filename: "RFI 0001 - Details.pdf",
+        url: "https://project.helixteam.com/Reports/clientReportViewer?rid=report-1&helixActivityDownload=1"
+      }
+    }
+  }, helixSender);
+
+  assert.equal(response.ok, true);
+  assert.equal(harness.createdTabs.length, 1);
+  assert.equal(harness.createdTabs[0].active, false);
+
+  harness.tabUpdatedListener(harness.createdTabs[0].id, { status: "complete" });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(Array.from(harness.injections.at(-1).args), [
+    "client",
+    channelName,
+    "RFI 0001 - Details.pdf"
+  ]);
+
+  const finished = await send(harness.listener, {
+    type: "HELIX_ACTIVITY_REPORT_SAVED",
+    channelName
+  }, helixSender);
+  assert.equal(finished.ok, true);
+  assert.equal(finished.result.finished, true);
+  assert.deepEqual(harness.removedTabs, [harness.createdTabs[0].id]);
+});
+
+test("Details export capture waits for Helix and handles standard and paginated Kendo PDF saves", async () => {
+  const posted = [];
+  let exportMode = "standard";
+  const originalKendoSaveAs = function originalKendoSaveAs() {};
+  const originalPdfSaveAs = function originalPdfSaveAs() {};
+  const reportWindow = {
+    getComputedStyle() { return { display: "none" }; },
+    kendo: {
+      saveAs: originalKendoSaveAs,
+      drawing: {
+        exportPDF: async () => "data:application/pdf;base64,cGRm",
+        pdf: { saveAs: originalPdfSaveAs }
+      }
+    }
+  };
+  const jquery = function jquery() {};
+  jquery._data = () => ({ click: [{}] });
+  reportWindow.jQuery = jquery;
+  const exportButton = {
+    disabled: false,
+    textContent: "Download",
+    click() {
+      if (exportMode === "paginated") {
+        reportWindow.kendo.saveAs({
+          dataURI: "data:application/pdf;base64,cGRm",
+          fileName: "Paginated Details.pdf"
+        });
+      } else {
+        reportWindow.kendo.drawing.pdf.saveAs({}, "Standard Details.pdf");
+      }
+    }
+  };
+  const reportDocument = {
+    getElementById(id) {
+      if (id === "loadingMask") return {};
+      if (id === "export") return exportButton;
+      return null;
+    },
+    querySelector() { return null; },
+    querySelectorAll() { return []; }
+  };
+  class BroadcastChannelMock {
+    constructor(name) { this.name = name; }
+    postMessage(message) { posted.push({ channelName: this.name, message }); }
+    close() {}
+  }
+  const harness = loadBackground({
+    reportExportResult: true,
+    reportGlobals: {
+      window: reportWindow,
+      document: reportDocument,
+      BroadcastChannel: BroadcastChannelMock
+    }
+  });
+  const channelName = "helix-activity-report-capture_nonce_123456789";
+  await send(harness.listener, {
+    type: "HELIX_ACTIVITY_DOWNLOAD_PACKAGE",
+    channelName,
+    package: {
+      report: {
+        kind: "client",
+        filename: "Details.pdf",
+        url: "https://project.helixteam.com/Reports/clientReportViewer?rid=report-1&helixActivityDownload=1"
+      }
+    }
+  }, helixSender);
+  harness.tabUpdatedListener(harness.createdTabs[0].id, { status: "complete" });
+  await new Promise((resolve) => setImmediate(resolve));
+  const capture = harness.injections.at(-1).func;
+
+  await capture("client", channelName, "Details.pdf");
+  await new Promise((resolve) => setImmediate(resolve));
+  exportMode = "paginated";
+  await capture("client", `${channelName}_page`, "Details.pdf");
+  await new Promise((resolve) => setImmediate(resolve));
+
+  assert.deepEqual(posted.map((entry) => entry.message.type), [
+    "helix-report-ready",
+    "helix-report-ready"
+  ]);
+  assert.deepEqual(posted.map((entry) => entry.message.filename), [
+    "Standard Details.pdf",
+    "Paginated Details.pdf"
+  ]);
+  assert.equal(reportWindow.kendo.saveAs, originalKendoSaveAs);
+  assert.equal(reportWindow.kendo.drawing.pdf.saveAs, originalPdfSaveAs);
+});
+
+test("background rejects package downloads with an untrusted report URL or transfer channel", async () => {
+  const { listener, createdTabs } = loadBackground();
+  const response = await send(listener, {
+    type: "HELIX_ACTIVITY_DOWNLOAD_PACKAGE",
+    channelName: "bad-channel",
+    package: {
+      report: {
+        kind: "client",
+        url: "https://example.com/Reports/clientReportViewer?helixActivityDownload=1"
+      }
+    }
+  }, helixSender);
+  assert.equal(response.ok, false);
+  assert.equal(createdTabs.length, 0);
 });
 
 test("background accepts Task Hub requests from the tab-based extension options page", async () => {

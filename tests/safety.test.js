@@ -56,19 +56,24 @@ test("Task Hub settings contain no direct credential fields", () => {
   assert.match(optionsScript, /HELIX_ACTIVITY_CACHE_CLEAR/);
 });
 
-test("runtime code contains no Helix write, upload, delete, or generic network primitives", () => {
+test("runtime code contains no Helix write, upload, delete, or persistent browser storage primitives", () => {
   const source = runtimeFiles.map((file) => fs.readFileSync(path.join(root, file), "utf8")).join("\n");
   const forbiddenPatterns = [
     /\.saveToCollection\s*\(/,
     /\.removeByIdFromCollection\s*\(/,
     /\.uploadFile\s*\(/,
-    /\bfetch\s*\(/,
     /new\s+XMLHttpRequest\s*\(/,
     /\bindexedDB\b/,
     /\blocalStorage\b/,
     /\bsessionStorage\b/
   ];
   forbiddenPatterns.forEach((pattern) => assert.doesNotMatch(source, pattern));
+  const bridgeSource = ["bridge-core.js", "page-bridge.js", "activity-core.js", "ui.js"]
+    .map((file) => fs.readFileSync(path.join(root, file), "utf8"))
+    .join("\n");
+  assert.doesNotMatch(bridgeSource, /\bfetch\s*\(/);
+  assert.match(fs.readFileSync(path.join(root, "content-script.js"), "utf8"), /fetch\(url\.href\)/);
+  assert.match(fs.readFileSync(path.join(root, "background.js"), "utf8"), /fetch\(source\)/);
 });
 
 test("page bridge exposes only fixed operations", () => {
@@ -76,5 +81,5 @@ test("page bridge exposes only fixed operations", () => {
   const match = source.match(/ALLOWED_OPERATIONS\s*=\s*new Set\(\[([^\]]+)\]\)/);
   assert.ok(match, "Expected an explicit operation allowlist");
   const operations = Array.from(match[1].matchAll(/"([^"]+)"/g), (item) => item[1]);
-  assert.deepEqual(operations, ["bootstrap", "scan", "openItem"]);
+  assert.deepEqual(operations, ["bootstrap", "scan", "openItem", "prepareItemDownload"]);
 });

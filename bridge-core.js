@@ -13,7 +13,8 @@
     directories: "HelixProjectDirectory",
     comments: "HelixProjectComments",
     attachments: "HelixProjectAttachments",
-    histories: "HelixProjectHistories"
+    histories: "HelixProjectHistories",
+    reports: "HelixProjectReports"
   });
   const ALLOWED_COLLECTIONS = new Set(Object.values(COLLECTIONS));
   const PAGE_SIZE = 250;
@@ -101,6 +102,30 @@
     "isActive",
     "isCurrent",
     "_kmd"
+  ];
+  const DOWNLOAD_ATTACHMENT_FIELDS = [
+    "_id",
+    "idItem",
+    "idProject",
+    "filename",
+    "description",
+    "isActive",
+    "isCurrent",
+    "_kmd"
+  ];
+  const REPORT_FIELDS = [
+    "_id",
+    "reportName",
+    "fileName",
+    "functionName",
+    "featureName",
+    "subFeatureName",
+    "refFeature",
+    "refFeatures",
+    "isActive",
+    "isV4",
+    "isClientReport",
+    "settingsParams"
   ];
   const HISTORY_FIELDS = [
     "_id",
@@ -410,6 +435,160 @@
     });
     return records.find((candidate) => candidate && String(candidate._id) === String(itemId)
       && (!candidate.refProject || String(candidate.refProject._id) === String(projectId))) || null;
+  }
+
+  function itemRoute(itemType, projectId) {
+    const route = itemType === "rfi" ? "RFI" : "Submittals";
+    return `https://project.helixteam.com/Projects/${encodeURIComponent(projectId)}/${route}`;
+  }
+
+  function getDownloadTarget(windowObject, itemId, itemType, projectId) {
+    const page = parsePageContext(windowObject.location && windowObject.location.href);
+    if (!page) {
+      throw new Error("The current tab is no longer on a supported Helix activity page.");
+    }
+    const targetType = itemType || page.itemType;
+    const targetProjectId = String(projectId || page.projectId);
+    if (!ITEM_TYPES[targetType]) {
+      throw new Error("The requested Helix item type is not supported.");
+    }
+    const samePage = page.itemType === targetType && page.projectId === targetProjectId;
+    const cachedItem = itemNavigationCache.get(`${targetType}:${String(itemId)}`);
+    if (!samePage) {
+      if (!cachedItem) {
+        throw new Error("This item could not be found on the current Helix page.");
+      }
+      if (String(cachedItem.projectId) !== targetProjectId) {
+        throw new Error("This item does not belong to the requested project.");
+      }
+      return {
+        itemId: String(itemId),
+        itemType: targetType,
+        projectId: targetProjectId,
+        navigateTo: itemRoute(targetType, targetProjectId)
+      };
+    }
+    return {
+      itemId: String(itemId),
+      itemType: targetType,
+      projectId: targetProjectId,
+      navigateTo: null
+    };
+  }
+
+  function getPackageTarget(windowObject, itemId, itemType, projectId) {
+    const page = parsePageContext(windowObject.location && windowObject.location.href);
+    if (!page) {
+      throw new Error("The current tab is no longer on a supported Helix activity page.");
+    }
+    const targetType = itemType || page.itemType;
+    if (!ITEM_TYPES[targetType]) {
+      throw new Error("The requested Helix item type is not supported.");
+    }
+    return {
+      itemId: String(itemId),
+      itemType: targetType,
+      projectId: String(projectId || page.projectId)
+    };
+  }
+
+  function reportFeatureFilter(featureName) {
+    return {
+      $or: [
+        { featureName },
+        { "refFeature.displayName": featureName },
+        { "refFeature.referenceName": featureName },
+        { "refFeature.name": featureName },
+        { "refFeatures.displayName": featureName },
+        { "refFeatures.referenceName": featureName },
+        { "refFeatures.name": featureName },
+        {
+          refFeatures: {
+            $elemMatch: {
+              $or: [
+                { displayName: featureName },
+                { referenceName: featureName },
+                { name: featureName }
+              ]
+            }
+          }
+        }
+      ]
+    };
+  }
+
+  function chooseDetailsReport(reports, featureName) {
+    const feature = normalizeName(featureName);
+    const exactNames = feature === "rfis"
+      ? new Set(["details (rfis)", "details (rfi)"])
+      : new Set(["details (submittals)", "details (submittal)"]);
+    const active = reports.filter((report) => report && report._id && report.isActive !== false);
+    return active.find((report) => exactNames.has(normalizeName(report.reportName)))
+      || active.find((report) => {
+        const name = normalizeName(report.reportName);
+        return name.includes("details") && name.includes(feature === "rfis" ? "rfi" : "submittal");
+      })
+      || null;
+  }
+
+  function primitiveReportSetting(record, remoteProp, itemId, projectId) {
+    const expression = String(remoteProp || "").replace(/^window\.[^.]+\./, "");
+    if (expression === "DetailEdit.loadedModel._id") return itemId;
+    if (expression === "Master.projectID") return projectId;
+    const match = expression.match(/^DetailEdit\.loadedModel\.([a-zA-Z0-9_.]+)$/);
+    if (!match) return null;
+    const value = match[1].split(".").reduce((current, key) => (
+      current && typeof current === "object" ? current[key] : null
+    ), record);
+    return ["string", "number", "boolean"].includes(typeof value) ? value : null;
+  }
+
+  function buildReportDownload(report, record, context, target) {
+    const reportName = String(report.reportName || "Details");
+    const params = new URLSearchParams();
+    if (report.isV4 && report.isClientReport) {
+      params.set("rid", String(report._id));
+      (Array.isArray(report.settingsParams) ? report.settingsParams : []).forEach((setting) => {
+        if (!setting || !setting.propName || !setting.remoteProp) return;
+        const value = primitiveReportSetting(
+          record,
+          setting.remoteProp,
+          target.itemId,
+          target.projectId
+        );
+        if (value !== null) params.set(String(setting.propName), String(value));
+      });
+      params.set("helixActivityDownload", "1");
+      return {
+        name: reportName,
+        kind: "client",
+        filename: `${target.itemType === "rfi" ? "RFI" : "Submittal"} ${record.displayNumber || record.number || target.itemId} - Details.pdf`,
+        url: `https://project.helixteam.com/Reports/clientReportViewer?${params.toString()}`
+      };
+    }
+
+    if (!report.fileName) {
+      throw new Error(`Helix's ${reportName} report is missing its report file.`);
+    }
+    params.set("reportFile", String(report.fileName));
+    params.set("id", target.itemId);
+    params.set("idProject", target.projectId);
+    const userInfo = context.windowObject.UserInfo || {};
+    const directory = userInfo.directoryInfo || {};
+    const project = userInfo.projectInfo || {};
+    if (directory.timezone) params.set("timezoneContactString", String(directory.timezone));
+    if (project.timezone) params.set("timezoneProjectString", String(project.timezone));
+    const email = context.windowObject.loginObject && context.windowObject.loginObject.contact
+      && context.windowObject.loginObject.contact.email;
+    if (email) params.set("user", String(email));
+    if (report.isV4) params.set("reportName", reportName);
+    params.set("helixActivityDownload", "1");
+    return {
+      name: reportName,
+      kind: report.isV4 ? "v4" : "legacy",
+      filename: `${target.itemType === "rfi" ? "RFI" : "Submittal"} ${record.displayNumber || record.number || target.itemId} - Details.pdf`,
+      url: `https://project.helixteam.com/Reports/${report.isV4 ? "betaViewer" : "Display"}?${params.toString()}`
+    };
   }
 
   function cloneQuery(query) {
@@ -913,39 +1092,117 @@
     return result;
   }
 
+  async function prepareItemDownload(windowObject, itemId, itemType, projectId) {
+    const target = getPackageTarget(windowObject, itemId, itemType, projectId);
+
+    const master = resolveMaster(windowObject);
+    const config = ITEM_TYPES[target.itemType];
+    const record = await readCompleteDetailRecord(
+      master,
+      config,
+      target.itemId,
+      target.projectId
+    );
+    if (!record) {
+      throw new Error("This item could not be found on the current Helix page.");
+    }
+    if (typeof master.callCustomEndpoint !== "function") {
+      throw new Error("Helix's protected file download service is unavailable.");
+    }
+
+    const featureName = target.itemType === "rfi" ? "RFIs" : "Submittals";
+    const context = getContext(windowObject);
+    const accessRules = [{ isGlobal: true }, { idProjects: { $in: [target.projectId] } }];
+    if (context.contactId) accessRules.push({ idContacts: { $in: [context.contactId] } });
+    const reportFilter = {
+      functionName: "DetailView",
+      isActive: true,
+      idProjectsExcluded: { $nin: [target.projectId] },
+      $and: [
+        { $or: accessRules },
+        reportFeatureFilter(featureName)
+      ]
+    };
+    const rawReadLevel = windowObject.UserInfo && windowObject.UserInfo.rpl;
+    const readLevel = Number(rawReadLevel);
+    if (rawReadLevel !== null && rawReadLevel !== undefined && Number.isFinite(readLevel)) {
+      reportFilter.minReadLevel = { $lte: readLevel };
+    }
+
+    const [attachmentRecords, reports] = await Promise.all([
+      readAll(master, COLLECTIONS.attachments, {
+        filter: {
+          idItem: target.itemId,
+          isActive: true,
+          isCurrent: true
+        },
+        fields: DOWNLOAD_ATTACHMENT_FIELDS,
+        sort: { "_kmd.ect": 1 }
+      }),
+      readAll(master, COLLECTIONS.reports, {
+        filter: reportFilter,
+        fields: REPORT_FIELDS,
+        sort: { reportName: 1 }
+      })
+    ]);
+    if (attachmentRecords.length > 250) {
+      throw new Error("This item has more than 250 current attachments. Download it directly from Helix instead.");
+    }
+    const report = chooseDetailsReport(reports, featureName);
+    if (!report) {
+      throw new Error(`Helix did not return an available Details (${featureName}) report for this item.`);
+    }
+
+    const attachmentResults = await mapWithConcurrency(
+      attachmentRecords.filter((attachment) => attachment && attachment._id),
+      SCAN_READ_CONCURRENCY,
+      async (attachment) => {
+        const protectedFile = await master.callCustomEndpoint("getDownloadURL", {
+          collectionName: COLLECTIONS.attachments,
+          _id: String(attachment._id),
+          propName: "file",
+          preferThumbnail: true,
+          idProject: target.projectId
+        });
+        const url = protectedFile && protectedFile.downloadURL;
+        if (typeof url !== "string" || !/^https:\/\//i.test(url)) {
+          throw new Error(`Helix did not provide a download URL for ${attachment.description || attachment.filename || "an attachment"}.`);
+        }
+        return {
+          id: String(attachment._id),
+          filename: String(attachment.description || attachment.filename || protectedFile.filename || "Attachment"),
+          uploadedAt: toIso(attachment._kmd && attachment._kmd.ect),
+          url
+        };
+      }
+    );
+
+    return {
+      prepared: true,
+      itemId: target.itemId,
+      itemType: target.itemType,
+      projectId: target.projectId,
+      report: buildReportDownload(report, record, { windowObject }, target),
+      attachments: attachmentResults
+    };
+  }
+
   async function openItem(windowObject, itemId, itemType, projectId) {
-    const page = parsePageContext(windowObject.location && windowObject.location.href);
-    if (!page) {
-      throw new Error("The current tab is no longer on a supported Helix activity page.");
-    }
-    const targetType = itemType || page.itemType;
-    const targetProjectId = String(projectId || page.projectId);
-    if (!ITEM_TYPES[targetType]) {
-      throw new Error("The requested Helix item type is not supported.");
-    }
-    const samePage = page.itemType === targetType && page.projectId === targetProjectId;
-    const cachedItem = itemNavigationCache.get(`${targetType}:${String(itemId)}`);
-    if (!samePage) {
-      if (!cachedItem) {
-        throw new Error("This item could not be found on the current Helix page.");
-      }
-      if (String(cachedItem.projectId) !== targetProjectId) {
-        throw new Error("This item does not belong to the requested project.");
-      }
-      const route = targetType === "rfi" ? "RFI" : "Submittals";
+    const target = getDownloadTarget(windowObject, itemId, itemType, projectId);
+    if (target.navigateTo) {
       return {
         opened: false,
         itemId: String(itemId),
-        navigateTo: `https://project.helixteam.com/Projects/${encodeURIComponent(targetProjectId)}/${route}`
+        navigateTo: target.navigateTo
       };
     }
 
     const master = resolveMaster(windowObject);
-    const config = ITEM_TYPES[targetType];
+    const config = ITEM_TYPES[target.itemType];
     if (typeof master.loadDetailView !== "function") {
       throw new Error("Helix's detail viewer is unavailable.");
     }
-    const record = await readCompleteDetailRecord(master, config, itemId, targetProjectId);
+    const record = await readCompleteDetailRecord(master, config, itemId, target.projectId);
     if (!record) {
       throw new Error("This item could not be found on the current Helix page.");
     }
@@ -954,7 +1211,7 @@
       return { opened: true, itemId: String(itemId), alreadyOpen: true };
     }
     const gridNamespace = await waitForPageGridNamespace(windowObject, config.collection);
-    const detailRecord = normalizeDetailRecord(gridNamespace, record, itemId, targetProjectId);
+    const detailRecord = normalizeDetailRecord(gridNamespace, record, itemId, target.projectId);
     await master.loadDetailView(null, detailRecord);
     return { opened: true, itemId: String(itemId) };
   }
@@ -967,6 +1224,7 @@
     getContext,
     readAll,
     scan,
+    prepareItemDownload,
     openItem,
     openRfi: openItem,
     _test: Object.freeze({
@@ -980,6 +1238,8 @@
       closeOtherDetailView,
       findPageGridNamespace,
       normalizeDetailRecord,
+      chooseDetailsReport,
+      buildReportDownload,
       navigationDescriptors: () => Array.from(itemNavigationCache.values()).map((value) => Object.assign({}, value)),
       resetCache: () => {
         itemNavigationCache = new Map();
