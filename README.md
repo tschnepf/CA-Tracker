@@ -9,6 +9,31 @@ extension never reads Procore cookies, authentication storage, headers, or priva
 Existing Helix Helper installations upgrade in place because the manifest key, extension ID, legacy
 storage keys, and stable package paths are preserved.
 
+## Repository
+
+This is the **SMC-CA-Tracker** repository. The extension was extracted from
+`extensions/HelixHelper` in the AnotherTaskManager (Task Hub) repository with its
+git history preserved, so it can be developed and released independently.
+
+```sh
+npm run check     # validate the manifest and run the unit tests
+npm run package   # check, then build dist/helix-my-activity.zip
+```
+
+Some validation checks confirm the extension still matches the Task Hub server
+configuration (Keycloak realm export, `.env` examples, and web packaging). Those
+files live in AnotherTaskManager. They are found automatically when that repository
+is checked out next to this one (for example `C:\Source\AnotherTaskManager`), or
+you can point at it explicitly:
+
+```powershell
+$env:TASKHUB_REPO_ROOT = "C:\Source\AnotherTaskManager"; npm run check
+```
+
+When no server checkout is found, those checks are skipped with a notice and the
+rest of the suite still runs. The design notes are in
+[`docs/unified-helix-procore-extension.md`](docs/unified-helix-procore-extension.md).
+
 ## What it finds in Helix
 
 The sidebar combines the current project's records with the current user's comments, uploads, and item history. A result can match because the logged-in user:

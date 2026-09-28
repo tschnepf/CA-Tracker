@@ -6,7 +6,9 @@ const fs = require("node:fs");
 const path = require("node:path");
 
 const root = path.resolve(__dirname, "..");
-const repositoryRoot = path.resolve(root, "..", "..");
+const { findTaskHubRepository } = require("../scripts/taskhub-repository.js");
+
+const repositoryRoot = findTaskHubRepository(root);
 const packageSource = fs.readFileSync(path.join(root, "scripts", "package-extension.ps1"), "utf8");
 const portablePackageSource = fs.readFileSync(
   path.join(root, "scripts", "package-extension.js"),
@@ -15,8 +17,6 @@ const portablePackageSource = fs.readFileSync(
 const readme = fs.readFileSync(path.join(root, "README.md"), "utf8");
 const manifest = JSON.parse(fs.readFileSync(path.join(root, "manifest.json"), "utf8"));
 const packageMetadata = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8"));
-const webDockerfile = fs.readFileSync(path.join(repositoryRoot, "infra", "web", "Dockerfile"), "utf8");
-const nginxConfiguration = fs.readFileSync(path.join(repositoryRoot, "infra", "web", "nginx.conf"), "utf8");
 
 test("packaging preserves a stable unpacked folder and stable-name archive", () => {
   assert.equal(manifest.version, "2.1.0");
@@ -40,7 +40,11 @@ test("packaging preserves a stable unpacked folder and stable-name archive", () 
   assert.match(readme, /npm run package/);
 });
 
-test("web packaging publishes no-cache metadata from the same manifest as the ZIP", () => {
+test("web packaging publishes no-cache metadata from the same manifest as the ZIP", {
+  skip: repositoryRoot ? false : "no AnotherTaskManager checkout found (set TASKHUB_REPO_ROOT)"
+}, () => {
+  const webDockerfile = fs.readFileSync(path.join(repositoryRoot, "infra", "web", "Dockerfile"), "utf8");
+  const nginxConfiguration = fs.readFileSync(path.join(repositoryRoot, "infra", "web", "nginx.conf"), "utf8");
   assert.match(
     webDockerfile,
     /dist\/helix-my-activity\/manifest\.json \/usr\/share\/nginx\/html\/browser-extensions\/helix-my-activity\.json/

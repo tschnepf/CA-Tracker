@@ -52,45 +52,54 @@ const extensionId = Array.from(
 ).join("");
 const redirectUri = `https://${extensionId}.chromiumapp.org/taskhub`;
 const procoreRedirectUri = `https://${extensionId}.chromiumapp.org/procore`;
-const repositoryRoot = path.resolve(root, "..", "..");
-const realm = JSON.parse(fs.readFileSync(
-  path.join(repositoryRoot, "tools", "keycloak", "realm-export", "taskhub-realm.json"),
-  "utf8"
-));
-const oidcClient = (realm.clients || []).find((client) => client.clientId === "taskhub-helix-extension");
-if (!oidcClient) {
-  throw new Error("Keycloak realm is missing the taskhub-helix-extension client.");
-}
-if (!Array.isArray(oidcClient.redirectUris) || !oidcClient.redirectUris.includes(redirectUri)) {
-  throw new Error(`Keycloak must register the pinned extension redirect URI: ${redirectUri}`);
-}
-if (
-  oidcClient.publicClient !== true
-  || oidcClient.standardFlowEnabled !== true
-  || oidcClient.directAccessGrantsEnabled !== false
-  || !oidcClient.attributes
-  || oidcClient.attributes["pkce.code.challenge.method"] !== "S256"
-) {
-  throw new Error("The Helix Keycloak client must be public, standard-flow-only, and require PKCE S256.");
-}
-const requiredDefaultScopes = ["profile", "email", "roles", "helix.sync", "taskhub-api-audience"];
-if (!requiredDefaultScopes.every((scope) => (oidcClient.defaultClientScopes || []).includes(scope))) {
-  throw new Error("The Helix Keycloak client is missing required default scopes.");
-}
-if (!(oidcClient.optionalClientScopes || []).includes("offline_access")) {
-  throw new Error("The Helix Keycloak client must allow the offline_access scope.");
-}
-if (!(realm.clientScopes || []).some((scope) => scope.name === "helix.sync")) {
-  throw new Error("The Keycloak realm is missing the helix.sync client scope.");
-}
-for (const environmentFile of [".env.example", ".env.unraid.production.example"]) {
-  const environment = fs.readFileSync(path.join(repositoryRoot, environmentFile), "utf8");
-  if (!environment.includes(`KEYCLOAK_HELIX_REDIRECT_URI=${redirectUri}`)) {
-    throw new Error(`${environmentFile} does not match the pinned extension redirect URI.`);
+const { findTaskHubRepository } = require("./taskhub-repository.js");
+const repositoryRoot = findTaskHubRepository(root);
+if (repositoryRoot) {
+  const realm = JSON.parse(fs.readFileSync(
+    path.join(repositoryRoot, "tools", "keycloak", "realm-export", "taskhub-realm.json"),
+    "utf8"
+  ));
+  const oidcClient = (realm.clients || []).find((client) => client.clientId === "taskhub-helix-extension");
+  if (!oidcClient) {
+    throw new Error("Keycloak realm is missing the taskhub-helix-extension client.");
   }
-  if (!environment.includes(`PROCORE_OAUTH_REDIRECT_URI=${procoreRedirectUri}`)) {
-    throw new Error(`${environmentFile} does not match the pinned Procore OAuth redirect URI.`);
+  if (!Array.isArray(oidcClient.redirectUris) || !oidcClient.redirectUris.includes(redirectUri)) {
+    throw new Error(`Keycloak must register the pinned extension redirect URI: ${redirectUri}`);
   }
+  if (
+    oidcClient.publicClient !== true
+    || oidcClient.standardFlowEnabled !== true
+    || oidcClient.directAccessGrantsEnabled !== false
+    || !oidcClient.attributes
+    || oidcClient.attributes["pkce.code.challenge.method"] !== "S256"
+  ) {
+    throw new Error("The Helix Keycloak client must be public, standard-flow-only, and require PKCE S256.");
+  }
+  const requiredDefaultScopes = ["profile", "email", "roles", "helix.sync", "taskhub-api-audience"];
+  if (!requiredDefaultScopes.every((scope) => (oidcClient.defaultClientScopes || []).includes(scope))) {
+    throw new Error("The Helix Keycloak client is missing required default scopes.");
+  }
+  if (!(oidcClient.optionalClientScopes || []).includes("offline_access")) {
+    throw new Error("The Helix Keycloak client must allow the offline_access scope.");
+  }
+  if (!(realm.clientScopes || []).some((scope) => scope.name === "helix.sync")) {
+    throw new Error("The Keycloak realm is missing the helix.sync client scope.");
+  }
+  for (const environmentFile of [".env.example", ".env.unraid.production.example"]) {
+    const environment = fs.readFileSync(path.join(repositoryRoot, environmentFile), "utf8");
+    if (!environment.includes(`KEYCLOAK_HELIX_REDIRECT_URI=${redirectUri}`)) {
+      throw new Error(`${environmentFile} does not match the pinned extension redirect URI.`);
+    }
+    if (!environment.includes(`PROCORE_OAUTH_REDIRECT_URI=${procoreRedirectUri}`)) {
+      throw new Error(`${environmentFile} does not match the pinned Procore OAuth redirect URI.`);
+    }
+  }
+  console.log(`Verified Task Hub server contract in ${repositoryRoot}.`);
+} else {
+  console.warn(
+    "Skipping Task Hub server contract checks: no AnotherTaskManager checkout found. "
+    + "Set TASKHUB_REPO_ROOT or clone it next to this repository."
+  );
 }
 
 const procoreMatches = manifest.content_scripts.flatMap((entry) => entry.matches || []);
