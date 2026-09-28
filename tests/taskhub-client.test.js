@@ -7,6 +7,7 @@ const TaskHubClient = require("../integrations/taskhub/client.js");
 
 const EXTENSION_ID = "kcngamkbiboiljpfbjpmjoekkfpbidbk";
 const REDIRECT_URI = `https://${EXTENSION_ID}.chromiumapp.org/taskhub`;
+const PROCORE_REDIRECT_URI = `https://${EXTENSION_ID}.chromiumapp.org/procore`;
 
 function response(status, payload) {
   return {
@@ -322,4 +323,134 @@ test("disconnect updates Task Hub before revoking local credentials", async () =
     requests[1].url,
     "https://tasks.example.com/idp/realms/taskhub/protocol/openid-connect/revoke"
   );
+});
+
+test("Procore connection uses backend-issued OAuth state and the extension callback", async () => {
+  const storage = chromeStorage({
+    [TaskHubClient.SETTINGS_KEY]: { baseUrl: "https://tasks.example.com", autoSync: true },
+    [TaskHubClient.AUTH_KEY]: {
+      accessToken: "access",
+      refreshToken: "refresh",
+      expiresAt: 9_999_999,
+      clientId: "taskhub-helix-extension",
+      tokenEndpoint: "https://tasks.example.com/token",
+      user: { email: "person@example.com" }
+    }
+  }, (details) => {
+    const authorize = new URL(details.url);
+    assert.equal(authorize.hostname, "login.procore.com");
+    return `${PROCORE_REDIRECT_URI}?code=procore-code&state=${encodeURIComponent(authorize.searchParams.get("state"))}`;
+  });
+  const requests = [];
+  const client = TaskHubClient.create({
+    chrome: storage.chrome,
+    crypto: webcrypto,
+    now: () => 1_000_000,
+    fetch: async (url, options) => {
+      requests.push({ url, options });
+      if (url.endsWith("/auth/initiate")) {
+        return response(200, {
+          auth_url: `https://login.procore.com/oauth/authorize?client_id=client&redirect_uri=${encodeURIComponent(PROCORE_REDIRECT_URI)}&state=signed-state`
+        });
+      }
+      if (url.endsWith("/auth/exchange")) {
+        return response(200, { connected: true, display_name: "Procore Person" });
+      }
+      throw new Error(`Unexpected URL ${url}`);
+    }
+  });
+
+  const result = await client.connectProcore();
+
+  assert.equal(result.connected, true);
+  assert.deepEqual(JSON.parse(requests[1].options.body), {
+    code: "procore-code",
+    state: "signed-state"
+  });
+  assert.equal(requests[1].options.headers.Authorization, "Bearer access");
+});
+
+test("Procore connection rejects untrusted authorization URLs and mismatched state", async () => {
+  const credentials = {
+    [TaskHubClient.SETTINGS_KEY]: { baseUrl: "https://tasks.example.com", autoSync: true },
+    [TaskHubClient.AUTH_KEY]: {
+      accessToken: "access",
+      refreshToken: "refresh",
+      expiresAt: 9_999_999,
+      clientId: "taskhub-helix-extension",
+      tokenEndpoint: "https://tasks.example.com/token",
+      user: { email: "person@example.com" }
+    }
+  };
+  const hostileStorage = chromeStorage(credentials);
+  const hostileClient = TaskHubClient.create({
+    chrome: hostileStorage.chrome,
+    crypto: webcrypto,
+    now: () => 1_000_000,
+    fetch: async () => response(200, {
+      auth_url: `https://example.com/oauth/authorize?redirect_uri=${encodeURIComponent(PROCORE_REDIRECT_URI)}&state=signed-state`
+    })
+  });
+  await assert.rejects(() => hostileClient.connectProcore(), /invalid Procore authorization URL/);
+
+  const mismatchedStorage = chromeStorage(credentials, () => (
+    `${PROCORE_REDIRECT_URI}?code=procore-code&state=different-state`
+  ));
+  const mismatchedClient = TaskHubClient.create({
+    chrome: mismatchedStorage.chrome,
+    crypto: webcrypto,
+    now: () => 1_000_000,
+    fetch: async (url) => {
+      if (url.endsWith("/auth/initiate")) {
+        return response(200, {
+          auth_url: `https://login.procore.com/oauth/authorize?client_id=client&redirect_uri=${encodeURIComponent(PROCORE_REDIRECT_URI)}&state=signed-state`
+        });
+      }
+      throw new Error(`Unexpected URL ${url}`);
+    }
+  });
+  await assert.rejects(() => mismatchedClient.connectProcore(), /state did not match/);
+});
+
+test("Procore queue and sync validate and send page context", async () => {
+  const storage = chromeStorage({
+    [TaskHubClient.SETTINGS_KEY]: { baseUrl: "https://tasks.example.com", autoSync: true },
+    [TaskHubClient.AUTH_KEY]: {
+      accessToken: "access",
+      refreshToken: "refresh",
+      expiresAt: 9_999_999,
+      clientId: "taskhub-helix-extension",
+      tokenEndpoint: "https://tasks.example.com/token",
+      user: { email: "person@example.com" }
+    }
+  });
+  const requests = [];
+  const client = TaskHubClient.create({
+    chrome: storage.chrome,
+    crypto: webcrypto,
+    now: () => 1_000_000,
+    fetch: async (url, options) => {
+      requests.push({ url, options });
+      return response(200, { items: [] });
+    }
+  });
+
+  await client.procoreQueue({ companyId: "12", projectId: "34" });
+  await client.syncProcore({ companyId: "12", projectId: "34" });
+  await client.syncProcoreSnapshot({ schema_version: 1, company_id: "12", items: [] });
+
+  assert.match(requests[0].url, /company_id=12/);
+  assert.match(requests[0].url, /project_id=34/);
+  assert.deepEqual(JSON.parse(requests[1].options.body), {
+    company_id: "12",
+    project_id: "34",
+    max_projects: "25"
+  });
+  assert.match(requests[2].url, /\/integrations\/procore\/sync-snapshot$/);
+  assert.deepEqual(JSON.parse(requests[2].options.body), {
+    schema_version: 1,
+    company_id: "12",
+    items: []
+  });
+  await assert.rejects(() => client.procoreQueue({ companyId: "not-a-number" }), /numeric/);
 });

@@ -7,6 +7,8 @@ const path = require("node:path");
 const vm = require("node:vm");
 const { webcrypto } = require("node:crypto");
 const TaskHubClient = require("../integrations/taskhub/client.js");
+const ProviderCore = require("../provider-core.js");
+const ProcoreCore = require("../procore-core.js");
 
 const source = fs.readFileSync(path.resolve(__dirname, "..", "background.js"), "utf8");
 
@@ -94,7 +96,8 @@ function loadBackground(options = {}) {
           callback(result);
         },
         set(value, callback) {
-          const isCacheWrite = Object.keys(value).some((key) => key.startsWith("helix-activity-cache-v4:"));
+          const isCacheWrite = Object.keys(value).some((key) => key.startsWith("helix-activity-cache-v4:")
+            || key.startsWith("taskhub-activity-cache-v1:"));
           if (isCacheWrite && remainingCacheWriteFailures > 0) {
             remainingCacheWriteFailures -= 1;
             chrome.runtime.lastError = { message: "QUOTA_BYTES quota exceeded" };
@@ -137,7 +140,9 @@ function loadBackground(options = {}) {
     fetch: fetchStub,
     Blob,
     setTimeout,
-    HelixTaskHubClient: TaskHubClient,
+    HelixTaskHubClient: options.taskHubClientModule || TaskHubClient,
+    TaskHubProviderCore: ProviderCore,
+    TaskHubProcoreCore: ProcoreCore,
     importScripts() {}
   }, options.reportGlobals || {}));
   return {
@@ -167,6 +172,19 @@ const optionsSender = {
   id: "test-extension-id",
   url: "chrome-extension://test-extension-id/options/options.html",
   tab: { id: 99, url: "chrome-extension://test-extension-id/options/options.html" }
+};
+const procoreSender = {
+  id: "test-extension-id",
+  url: "https://us02.procore.com/webclients/host/companies/12/projects/34/tools/rfis",
+  tab: {
+    id: 43,
+    url: "https://us02.procore.com/webclients/host/companies/12/projects/34/tools/rfis"
+  }
+};
+const legacyProcoreSender = {
+  id: "test-extension-id",
+  url: "https://app.procore.com/34/project/rfi/show/99",
+  tab: { id: 44, url: "https://app.procore.com/34/project/rfi/show/99" }
 };
 
 function cacheValue(storedAt = Date.now(), activityCount = 1, padding = "") {
@@ -610,4 +628,184 @@ test("cache management messages enforce their trusted senders", async () => {
   }, optionsSender);
   assert.equal(write.ok, false);
   assert.match(write.error, /supported Helix page/);
+});
+
+test("background routes Procore requests only from supported Procore tabs", async () => {
+  const calls = [];
+  const fakeClient = {
+    create() {
+      return {
+        restrictCredentialStorage: async () => {},
+        status: async () => ({ user: { id: "taskhub-user" } }),
+        procoreQueue: async (context) => {
+          calls.push(["queue", context]);
+          return { items: [{ project_id: "34" }] };
+        },
+        syncProcore: async (context) => { calls.push(["sync", context]); return { created: 0 }; },
+        syncProcoreSnapshot: async (snapshot) => { calls.push(["snapshot", snapshot]); return { created: 1 }; }
+      };
+    }
+  };
+  const { listener } = loadBackground({ taskHubClientModule: fakeClient });
+
+  const accepted = await send(listener, {
+    type: "PROCORE_QUEUE",
+    context: { companyId: "12", projectId: "34" }
+  }, procoreSender);
+  const rejected = await send(listener, {
+    type: "PROCORE_SYNC",
+    context: { companyId: "12", projectId: "34" }
+  }, helixSender);
+  const snapshot = await send(listener, {
+    type: "PROCORE_SNAPSHOT_SYNC",
+    snapshot: { schema_version: 1, company_id: "12", items: [] }
+  }, procoreSender);
+
+  assert.equal(accepted.ok, true);
+  assert.equal(rejected.ok, false);
+  assert.equal(snapshot.ok, true);
+  assert.deepEqual(calls, [
+    ["queue", { companyId: "12", projectId: "34" }],
+    ["snapshot", { schema_version: 1, company_id: "12", items: [] }]
+  ]);
+
+  const resolved = await send(listener, {
+    type: "PROCORE_CONTEXT_RESOLVE",
+    projectId: "34"
+  }, legacyProcoreSender);
+  assert.equal(resolved.result.companyId, "12");
+});
+
+test("unified Procore caches share the bounded activity storage budget", async () => {
+  const { listener, storageData } = loadBackground();
+  const key = "taskhub-activity-cache-v1:procore:12:person";
+  const value = {
+    version: 1,
+    provider: "procore",
+    storedAt: Date.now(),
+    index: { results: [], openQueue: [] }
+  };
+
+  const response = await send(listener, {
+    type: "TASKHUB_ACTIVITY_CACHE_WRITE",
+    key,
+    value
+  }, procoreSender);
+  const read = await send(listener, {
+    type: "TASKHUB_ACTIVITY_CACHE_READ",
+    key
+  }, procoreSender);
+
+  assert.equal(response.ok, true);
+  assert.deepEqual(storageData[key], value);
+  assert.deepEqual(read.result, value);
+});
+
+test("standalone Procore discovery is locally persisted and owned by its starting tab", async () => {
+  const { listener, storageData } = loadBackground();
+  const started = await send(listener, {
+    type: "PROCORE_DISCOVERY_START",
+    origin: {
+      url: "https://us02.procore.com/webclients/host/companies/12/projects/34/tools/rfis",
+      companyId: "12",
+      companyName: "Example Company"
+    }
+  }, procoreSender);
+
+  assert.equal(started.ok, true);
+  assert.equal(started.result.isOwner, true);
+  assert.equal(started.result.catalog.scan.status, "running");
+  assert.equal(started.result.catalog.scan.ownerTabId, 43);
+
+  const catalog = started.result.catalog;
+  catalog.companies = [{
+    id: "12",
+    name: "Example Company",
+    projects: [{
+      id: "34",
+      name: "Airport",
+      url: "https://us02.procore.com/34/project/home"
+    }]
+  }];
+  catalog.scan.phase = "scan";
+  catalog.scan.pendingCompanies = ["Other Company"];
+  const updated = await send(listener, {
+    type: "PROCORE_DISCOVERY_WRITE",
+    catalog
+  }, procoreSender);
+  assert.equal(updated.ok, true);
+  assert.equal(storageData["taskhub-procore-discovery-v1"].companies[0].projects[0].id, "34");
+
+  const read = await send(listener, { type: "PROCORE_DISCOVERY_READ" }, procoreSender);
+  assert.equal(read.ok, true);
+  assert.equal(read.result.isOwner, true);
+  assert.equal(read.result.catalog.scan.pendingCompanies[0], "Other Company");
+
+  const otherTab = {
+    id: "test-extension-id",
+    url: procoreSender.url,
+    tab: { id: 77, url: procoreSender.url }
+  };
+  const rejected = await send(listener, {
+    type: "PROCORE_DISCOVERY_WRITE",
+    catalog
+  }, otherTab);
+  assert.equal(rejected.ok, false);
+  assert.match(rejected.error, /started discovery/);
+});
+
+test("standalone Procore discovery rejects unsafe catalog project links", async () => {
+  const { listener, storageData } = loadBackground();
+  const started = await send(listener, {
+    type: "PROCORE_DISCOVERY_START",
+    origin: {
+      url: "https://us02.procore.com/webclients/host/companies/12/tools/opentasks",
+      companyId: "12",
+      companyName: "Example Company"
+    }
+  }, procoreSender);
+  const catalog = started.result.catalog;
+  catalog.companies = [{
+    id: "12",
+    name: "Example Company",
+    projects: [{ id: "34", name: "Unsafe", url: "javascript:alert(1)" }]
+  }];
+  const updated = await send(listener, { type: "PROCORE_DISCOVERY_WRITE", catalog }, procoreSender);
+  assert.equal(updated.ok, true);
+  assert.equal(storageData["taskhub-procore-discovery-v1"].companies[0].projects.length, 0);
+});
+
+test("cancelling Procore discovery retains the catalog and requests origin restoration", async () => {
+  const { listener } = loadBackground();
+  await send(listener, {
+    type: "PROCORE_DISCOVERY_START",
+    origin: {
+      url: "https://us02.procore.com/webclients/host/companies/12/tools/opentasks",
+      companyId: "12",
+      companyName: "Example Company"
+    }
+  }, procoreSender);
+  const cancelled = await send(listener, { type: "PROCORE_DISCOVERY_CANCEL" }, procoreSender);
+  assert.equal(cancelled.ok, true);
+  assert.equal(cancelled.result.catalog.scan.status, "running");
+  assert.equal(cancelled.result.catalog.scan.phase, "restore");
+  assert.equal(cancelled.result.catalog.scan.cancelRequested, true);
+  assert.deepEqual(Array.from(cancelled.result.catalog.scan.pendingCompanies), []);
+});
+
+test("closing the owner tab marks an active Procore discovery scan as failed", async () => {
+  const harness = loadBackground();
+  await send(harness.listener, {
+    type: "PROCORE_DISCOVERY_START",
+    origin: {
+      url: "https://us02.procore.com/webclients/host/companies/12/tools/opentasks",
+      companyId: "12",
+      companyName: "Example Company"
+    }
+  }, procoreSender);
+  harness.tabRemovedListener(43);
+  await new Promise((resolve) => setImmediate(resolve));
+  const catalog = harness.storageData["taskhub-procore-discovery-v1"];
+  assert.equal(catalog.scan.status, "error");
+  assert.match(catalog.scan.error, /tab.*closed/i);
 });

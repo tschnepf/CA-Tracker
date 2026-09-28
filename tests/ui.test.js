@@ -59,3 +59,11 @@ test("people filtering offers persistent me, company, and all-people scopes", ()
   assert.match(source, /Core\.companyPersonKeys/);
   assert.match(source, /selectPeopleScope\("company"\)/);
 });
+
+test("Procore exposes standalone company and project discovery controls", () => {
+  assert.match(source, /"Discover companies & projects"/);
+  assert.match(source, /"Rescan companies & projects"/);
+  assert.match(source, /callbacks\.onDiscover\(\{ cancel: discoveryRunning \}\)/);
+  assert.match(source, /setDiscoveryState\(value\)/);
+  assert.match(source, /"All discovered"/);
+});

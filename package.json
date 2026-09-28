@@ -1,8 +1,8 @@
 {
-  "name": "helix-my-activity",
-  "version": "1.9.8",
+  "name": "taskhub-helper",
+  "version": "2.1.0",
   "private": true,
-  "description": "Read-only Helix activity extension with optional self-hosted Task Hub sync.",
+  "description": "Site-aware Helix and Procore activity extension with optional self-hosted Task Hub sync.",
   "scripts": {
     "test": "node --test tests/*.test.js",
     "check": "node scripts/validate-extension.js && node --test tests/*.test.js",

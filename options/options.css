@@ -13,7 +13,7 @@ header { margin-bottom: 24px; }
 h1 { margin: 0; color: #fff; font-size: 30px; }
 header > p:last-child { color: #a9bfd0; }
 section { padding: 24px; border: 1px solid #334555; border-radius: 14px; background: #14212c; }
-#cache-card { margin-top: 28px; }
+#procore-card, #cache-card { margin-top: 28px; }
 .section-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 18px; }
 .section-heading h2 { margin: 0; color: #fff; font-size: 20px; }
 .section-heading p { margin: 5px 0 0; color: #a9bfd0; font-size: 12px; }
@@ -42,6 +42,10 @@ dd { margin: 0; color: #fff; word-break: break-word; }
 #message.error { color: #ffb1a9; }
 #cache-message { min-height: 20px; margin: 12px 0 0; color: #9dd7ff; font-size: 12px; }
 #cache-message.error { color: #ffb1a9; }
+#procore-state { color: #9dd7ff; font-size: 13px; }
+#procore-account { min-height: 20px; color: #a9bfd0; }
+#procore-message { min-height: 20px; margin: 12px 0 0; color: #9dd7ff; font-size: 12px; }
+#procore-message.error { color: #ffb1a9; }
 .security-note { color: #829aaa; font-size: 12px; }
 
 @media (max-width: 520px) {

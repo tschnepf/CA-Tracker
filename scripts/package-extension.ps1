@@ -21,11 +21,14 @@ New-Item -ItemType Directory -Path $install -Force | Out-Null
 $files = @(
     'manifest.json',
     'background.js',
+    'provider-core.js',
     'bridge-core.js',
     'page-bridge.js',
     'activity-core.js',
+    'procore-core.js',
     'ui.js',
     'content-script.js',
+    'procore-content-script.js',
     'README.md',
     'PRIVACY.md'
 )

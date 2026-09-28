@@ -14,7 +14,13 @@
   const cacheCount = document.getElementById("cache-count");
   const clearCacheButton = document.getElementById("clear-cache");
   const cacheMessage = document.getElementById("cache-message");
+  const procoreState = document.getElementById("procore-state");
+  const procoreAccount = document.getElementById("procore-account");
+  const connectProcoreButton = document.getElementById("connect-procore");
+  const disconnectProcoreButton = document.getElementById("disconnect-procore");
+  const procoreMessage = document.getElementById("procore-message");
   let cacheEntryCount = 0;
+  let taskHubConnected = false;
 
   function runtimeMessage(value) {
     return new Promise((resolve, reject) => {
@@ -36,6 +42,11 @@
     cacheMessage.classList.toggle("error", Boolean(isError));
   }
 
+  function showProcoreMessage(value, isError) {
+    procoreMessage.textContent = value || "";
+    procoreMessage.classList.toggle("error", Boolean(isError));
+  }
+
   function formatBytes(value) {
     const bytes = Math.max(0, Number(value) || 0);
     if (bytes < 1024) return `${bytes} B`;
@@ -49,12 +60,13 @@
     const entryCount = Number(status && status.entryCount) || 0;
     cacheEntryCount = entryCount;
     cacheUsage.textContent = `${formatBytes(bytesInUse)} of ${formatBytes(budgetBytes)}`;
-    cacheCount.textContent = `${entryCount} cached Helix ${entryCount === 1 ? "identity" : "identities"}`;
+    cacheCount.textContent = `${entryCount} cached activity ${entryCount === 1 ? "context" : "contexts"}`;
     clearCacheButton.disabled = entryCount === 0;
   }
 
   function render(status) {
     const isConnected = Boolean(status && status.connected);
+    taskHubConnected = isConnected;
     form.hidden = isConnected;
     connected.hidden = !isConnected;
     if (isConnected) {
@@ -64,13 +76,34 @@
     } else if (status && status.baseUrl) {
       baseUrl.value = status.baseUrl;
     }
+    connectProcoreButton.disabled = !isConnected;
+  }
+
+  function renderProcore(status) {
+    const isConnected = Boolean(status && status.connected);
+    procoreState.textContent = isConnected ? "API connected" : "Standalone";
+    procoreAccount.textContent = isConnected
+      ? status.display_name || status.login || `Procore user ${status.procore_user_id || ""}`
+      : taskHubConnected
+        ? "Optional: connect for broader API-backed scans."
+        : "Visible-page activity works without Task Hub or a Procore API connection.";
+    connectProcoreButton.hidden = isConnected;
+    connectProcoreButton.disabled = !taskHubConnected;
+    disconnectProcoreButton.hidden = !isConnected;
   }
 
   async function loadStatus() {
     try {
-      render(await runtimeMessage({ type: "HELIX_TASKHUB_STATUS" }));
+      const status = await runtimeMessage({ type: "TASKHUB_STATUS" });
+      render(status);
+      if (status.connected) {
+        renderProcore(await runtimeMessage({ type: "PROCORE_STATUS" }));
+      } else {
+        renderProcore({ connected: false });
+      }
     } catch (error) {
       showMessage(error.message, true);
+      renderProcore({ connected: false });
     }
   }
 
@@ -91,9 +124,9 @@
     showMessage("Requesting permission…");
     connectButton.disabled = true;
     try {
-      const normalized = HelixTaskHubClient.normalizeBaseUrl(baseUrl.value);
+      const normalized = TaskHubHelperClient.normalizeBaseUrl(baseUrl.value);
       const granted = await chrome.permissions.request({
-        origins: [HelixTaskHubClient.permissionOrigin(normalized)]
+        origins: [TaskHubHelperClient.permissionOrigin(normalized)]
       });
       if (!granted) throw new Error("Chrome did not grant access to that Task Hub server.");
       showMessage("Opening TaskHub ID…");
@@ -102,7 +135,8 @@
         baseUrl: normalized
       });
       render(status);
-      showMessage("Connected. Return to Helix and refresh the activity queue to sync.");
+      showMessage("Task Hub connected. Sync is ready; the Procore API connection below remains optional.");
+      await loadStatus();
     } catch (error) {
       showMessage(error.message, true);
     } finally {
@@ -126,7 +160,8 @@
     disconnectButton.disabled = true;
     try {
       render(await runtimeMessage({ type: "HELIX_TASKHUB_LOGOUT" }));
-      showMessage("Disconnected. Local Helix activity remains available.");
+      renderProcore({ connected: false });
+      showMessage("Disconnected. Locally cached activity remains available.");
     } catch (error) {
       showMessage(error.message, true);
     } finally {
@@ -136,19 +171,45 @@
 
   clearCacheButton.addEventListener("click", async () => {
     clearCacheButton.disabled = true;
-    showCacheMessage("Clearing cached Helix data…");
+    showCacheMessage("Clearing cached activity data…");
     try {
       const result = await runtimeMessage({ type: "HELIX_ACTIVITY_CACHE_CLEAR" });
       renderCacheStatus(result);
       const entries = Number(result && result.entriesCleared) || 0;
       showCacheMessage(
-        `Cleared ${entries} cached ${entries === 1 ? "entry" : "entries"} (${formatBytes(result && result.bytesCleared)}). Open Helix and refresh to rebuild.`
+        `Cleared ${entries} cached ${entries === 1 ? "entry" : "entries"} (${formatBytes(result && result.bytesCleared)}). Open Helix or Procore and refresh to rebuild.`
       );
     } catch (error) {
       showCacheMessage(error.message, true);
       await loadCacheStatus();
     } finally {
       clearCacheButton.disabled = cacheEntryCount === 0;
+    }
+  });
+
+  connectProcoreButton.addEventListener("click", async () => {
+    connectProcoreButton.disabled = true;
+    showProcoreMessage("Opening Procore authorization…");
+    try {
+      const status = await runtimeMessage({ type: "PROCORE_CONNECT" });
+      renderProcore(status);
+      showProcoreMessage("Procore API connected. Broader API-backed assignment scans are now available.");
+    } catch (error) {
+      showProcoreMessage(error.message, true);
+    } finally {
+      connectProcoreButton.disabled = false;
+    }
+  });
+
+  disconnectProcoreButton.addEventListener("click", async () => {
+    disconnectProcoreButton.disabled = true;
+    try {
+      renderProcore(await runtimeMessage({ type: "PROCORE_DISCONNECT" }));
+      showProcoreMessage("Procore disconnected from Task Hub.");
+    } catch (error) {
+      showProcoreMessage(error.message, true);
+    } finally {
+      disconnectProcoreButton.disabled = false;
     }
   });
 

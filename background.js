@@ -1,12 +1,18 @@
 "use strict";
 
-importScripts("integrations/taskhub/client.js");
+importScripts("provider-core.js", "procore-core.js", "integrations/taskhub/client.js");
 
 const INJECT_MESSAGE = "HELIX_ACTIVITY_INJECT_BRIDGE";
 const HELIX_ORIGIN = "https://project.helixteam.com";
 const ACTIVITY_PATH = /^\/Projects\/[^/]+\/(?:Overview|RFI|Submittals)(?:\/|$)/i;
 const ACTIVITY_CACHE_PREFIX = "helix-activity-cache-";
 const CURRENT_ACTIVITY_CACHE_PREFIX = "helix-activity-cache-v4:";
+const UNIFIED_ACTIVITY_CACHE_PREFIX = "taskhub-activity-cache-v1:";
+const PROCORE_CONTEXT_KEY = "taskhub-procore-project-context-v1";
+const PROCORE_DISCOVERY_KEY = "taskhub-procore-discovery-v1";
+const MAX_PROCORE_CONTEXTS = 200;
+const PROCORE_DISCOVERY_STALE_MS = 15 * 60 * 1000;
+const MAX_PROCORE_DISCOVERY_BYTES = 1024 * 1024;
 const ACTIVITY_CACHE_VERSION = 4;
 const ACTIVITY_CACHE_RETENTION_MS = 24 * 60 * 60 * 1000;
 const MAX_ACTIVITY_CONTEXTS = 3;
@@ -34,6 +40,12 @@ function isAllowedTab(tab) {
   } catch (_error) {
     return false;
   }
+}
+
+function isSupportedTab(tab) {
+  return Boolean(tab && Number.isInteger(tab.id)
+    && typeof tab.url === "string"
+    && TaskHubProviderCore.providerForUrl(tab.url));
 }
 
 function safeDownloadFilename(value, fallback) {
@@ -151,8 +163,10 @@ function isAllowedContentStorageKey(value) {
 
 function isCurrentActivityCacheKey(value) {
   return typeof value === "string"
-    && value.startsWith(CURRENT_ACTIVITY_CACHE_PREFIX)
-    && value.length > CURRENT_ACTIVITY_CACHE_PREFIX.length;
+    && ((value.startsWith(CURRENT_ACTIVITY_CACHE_PREFIX)
+      && value.length > CURRENT_ACTIVITY_CACHE_PREFIX.length)
+      || (value.startsWith(UNIFIED_ACTIVITY_CACHE_PREFIX)
+      && value.length > UNIFIED_ACTIVITY_CACHE_PREFIX.length));
 }
 
 function storageGet(key) {
@@ -206,12 +220,190 @@ function serializedBytes(key, value) {
   return new TextEncoder().encode(JSON.stringify({ [key]: value })).byteLength;
 }
 
+function isProcoreSender(sender) {
+  return isSupportedTab(sender && sender.tab)
+    && TaskHubProviderCore.providerForUrl(sender.tab.url) === TaskHubProviderCore.PROVIDERS.PROCORE;
+}
+
+async function readProcoreDiscovery(sender) {
+  const stored = await storageGet(PROCORE_DISCOVERY_KEY);
+  let catalog = TaskHubProcoreCore.normalizeDiscoveryCatalog(stored);
+  const startedAt = Date.parse(catalog.scan.startedAt || "") || 0;
+  if (catalog.scan.status === "running" && startedAt
+    && Date.now() - startedAt > PROCORE_DISCOVERY_STALE_MS) {
+    catalog.scan.status = "error";
+    catalog.scan.phase = "";
+    catalog.scan.error = "The previous discovery scan expired before it could finish.";
+    catalog.scan.message = catalog.scan.error;
+    catalog.scan.completedAt = new Date().toISOString();
+    catalog.updatedAt = catalog.scan.completedAt;
+    await storageSet(PROCORE_DISCOVERY_KEY, catalog);
+  }
+  return {
+    catalog,
+    isOwner: Boolean(sender && sender.tab && catalog.scan.ownerTabId === sender.tab.id)
+  };
+}
+
+async function startProcoreDiscovery(message, sender) {
+  if (!isProcoreSender(sender)) {
+    throw new Error("Company discovery must start from a supported Procore page.");
+  }
+  const current = await readProcoreDiscovery(sender);
+  if (current.catalog.scan.status === "running" && !current.isOwner) {
+    throw new Error("Company discovery is already running in another Procore tab.");
+  }
+  const origin = message.origin && typeof message.origin === "object" ? message.origin : {};
+  const originalUrl = String(origin.url || "");
+  const safeOriginalUrl = TaskHubProcoreCore.safeSourceUrl(originalUrl)
+    || TaskHubProcoreCore.safeProjectHomeUrl(originalUrl);
+  if (!safeOriginalUrl) throw new Error("The current Procore page cannot start discovery.");
+  const originalCompanyId = String(origin.companyId || "").trim();
+  const originalCompanyName = String(origin.companyName || "").replace(/\s+/g, " ").trim().slice(0, 240);
+  if (!/^\d+$/.test(originalCompanyId) || !originalCompanyName) {
+    throw new Error("The current Procore company could not be identified.");
+  }
+  const now = new Date().toISOString();
+  const catalog = TaskHubProcoreCore.normalizeDiscoveryCatalog({
+    version: 1,
+    updatedAt: now,
+    companies: current.catalog.companies,
+    scan: {
+      id: `discovery_${Date.now()}_${sender.tab.id}`,
+      ownerTabId: sender.tab.id,
+      status: "running",
+      phase: "enumerate",
+      startedAt: now,
+      originalUrl: safeOriginalUrl,
+      originalCompanyId,
+      originalCompanyName,
+      pendingCompanies: [],
+      completedCompanies: [],
+      totalCompanies: 0,
+      message: "Reading invited companies…"
+    }
+  });
+  await storageSet(PROCORE_DISCOVERY_KEY, catalog);
+  return { catalog, isOwner: true };
+}
+
+async function writeProcoreDiscovery(message, sender) {
+  if (!isProcoreSender(sender)) {
+    throw new Error("Company discovery updates must come from a supported Procore page.");
+  }
+  const current = await readProcoreDiscovery(sender);
+  if (current.catalog.scan.status === "running" && !current.isOwner) {
+    throw new Error("Only the Procore tab that started discovery may update it.");
+  }
+  const catalog = TaskHubProcoreCore.normalizeDiscoveryCatalog(message.catalog);
+  if (catalog.scan.status === "running") catalog.scan.ownerTabId = sender.tab.id;
+  catalog.updatedAt = new Date().toISOString();
+  if (serializedBytes(PROCORE_DISCOVERY_KEY, catalog) > MAX_PROCORE_DISCOVERY_BYTES) {
+    throw new Error("The discovered Procore catalog exceeded the local storage safety limit.");
+  }
+  await storageSet(PROCORE_DISCOVERY_KEY, catalog);
+  return { catalog, isOwner: catalog.scan.ownerTabId === sender.tab.id };
+}
+
+async function cancelProcoreDiscovery(sender) {
+  if (!isProcoreSender(sender)) {
+    throw new Error("Company discovery can be cancelled only from a supported Procore page.");
+  }
+  const current = await readProcoreDiscovery(sender);
+  if (current.catalog.scan.status !== "running") return current;
+  if (!current.isOwner) throw new Error("Company discovery is running in another Procore tab.");
+  current.catalog.scan.cancelRequested = true;
+  current.catalog.scan.phase = "restore";
+  current.catalog.scan.pendingCompanies = [];
+  current.catalog.scan.message = "Cancelling and restoring your original company…";
+  current.catalog.updatedAt = new Date().toISOString();
+  await storageSet(PROCORE_DISCOVERY_KEY, current.catalog);
+  return current;
+}
+
+async function failProcoreDiscoveryForTab(tabId) {
+  const stored = await storageGet(PROCORE_DISCOVERY_KEY);
+  const catalog = TaskHubProcoreCore.normalizeDiscoveryCatalog(stored);
+  if (catalog.scan.status !== "running" || catalog.scan.ownerTabId !== tabId) return;
+  const now = new Date().toISOString();
+  catalog.scan.status = "error";
+  catalog.scan.phase = "";
+  catalog.scan.completedAt = now;
+  catalog.scan.error = "The Procore tab running discovery was closed.";
+  catalog.scan.message = catalog.scan.error;
+  catalog.updatedAt = now;
+  await storageSet(PROCORE_DISCOVERY_KEY, catalog);
+}
+
+async function taskHubIdentityKey() {
+  const status = await taskHubClient.status();
+  return String(status && status.user && (status.user.id || status.user.email) || "").trim();
+}
+
+async function rememberProcoreContexts(context, response) {
+  const identityKey = await taskHubIdentityKey();
+  const companyId = String(context && context.companyId || "").trim();
+  if (!identityKey || !/^\d+$/.test(companyId)) return;
+  const queue = response && response.queue ? response.queue : response;
+  const projectIds = new Set(
+    (queue && Array.isArray(queue.items) ? queue.items : [])
+      .map((item) => String(item && (item.project_id || item.projectId) || ""))
+      .filter((projectId) => /^\d+$/.test(projectId))
+  );
+  const requestedProject = String(context && context.projectId || "").trim();
+  if (/^\d+$/.test(requestedProject)) projectIds.add(requestedProject);
+  if (projectIds.size === 0) return;
+  const stored = await storageGet(PROCORE_CONTEXT_KEY);
+  const values = stored && typeof stored === "object" && !Array.isArray(stored) ? stored : {};
+  const storedAt = Date.now();
+  projectIds.forEach((projectId) => {
+    values[`${encodeURIComponent(identityKey)}:${projectId}`] = { companyId, storedAt };
+  });
+  const trimmed = Object.fromEntries(Object.entries(values)
+    .sort((left, right) => Number(right[1] && right[1].storedAt || 0) - Number(left[1] && left[1].storedAt || 0))
+    .slice(0, MAX_PROCORE_CONTEXTS));
+  await storageSet(PROCORE_CONTEXT_KEY, trimmed);
+}
+
+async function resolveProcoreCompany(projectId) {
+  const normalizedProjectId = String(projectId || "").trim();
+  if (!/^\d+$/.test(normalizedProjectId)) throw new Error("A numeric Procore project ID is required.");
+  const identityKey = await taskHubIdentityKey();
+  if (!identityKey) return { companyId: "" };
+  const values = await storageGet(PROCORE_CONTEXT_KEY);
+  const entry = values && values[`${encodeURIComponent(identityKey)}:${normalizedProjectId}`];
+  return { companyId: String(entry && entry.companyId || "") };
+}
+
+async function clearProcoreContextsForCurrentIdentity() {
+  const identityKey = await taskHubIdentityKey();
+  if (!identityKey) return;
+  const values = await storageGet(PROCORE_CONTEXT_KEY);
+  if (!values || typeof values !== "object") return;
+  const prefix = `${encodeURIComponent(identityKey)}:`;
+  const retained = Object.fromEntries(
+    Object.entries(values).filter(([key]) => !key.startsWith(prefix))
+  );
+  if (Object.keys(retained).length) await storageSet(PROCORE_CONTEXT_KEY, retained);
+  else await storageRemove(PROCORE_CONTEXT_KEY);
+}
+
 function activityTimestamp(value) {
   const timestamp = Number(value && value.storedAt);
   return Number.isFinite(timestamp) && timestamp > 0 ? timestamp : 0;
 }
 
 function normalizeActivityCache(value) {
+  if (value && typeof value === "object"
+    && value.version === 1
+    && value.provider === "procore"
+    && activityTimestamp(value)
+    && value.index
+    && typeof value.index === "object"
+    && Array.isArray(value.index.results)
+    && Array.isArray(value.index.openQueue)) {
+    return value;
+  }
   if (!value || typeof value !== "object"
     || value.version !== ACTIVITY_CACHE_VERSION
     || !activityTimestamp(value)
@@ -240,7 +432,8 @@ function normalizeActivityCache(value) {
 
 function activityCacheEntries(values) {
   return Object.entries(values)
-    .filter(([key]) => key.startsWith(ACTIVITY_CACHE_PREFIX))
+    .filter(([key]) => key.startsWith(ACTIVITY_CACHE_PREFIX)
+      || key.startsWith(UNIFIED_ACTIVITY_CACHE_PREFIX))
     .map(([key, value]) => ({ key, value, storedAt: activityTimestamp(value) }));
 }
 
@@ -540,6 +733,7 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
 
 chrome.tabs.onRemoved.addListener((tabId) => {
   pendingReportDownloads.delete(tabId);
+  void failProcoreDiscoveryForTab(tabId).catch(() => {});
 });
 
 async function handleMessage(message, sender) {
@@ -583,6 +777,20 @@ async function handleMessage(message, sender) {
     return queueActivityCacheOperation(() => writeActivityCache(message.key, message.value));
   }
 
+  if (message.type === "TASKHUB_ACTIVITY_CACHE_READ") {
+    if (!isSupportedTab(sender.tab) || !isCurrentActivityCacheKey(message.key)) {
+      throw new Error("Activity cache reads must start from a supported provider page.");
+    }
+    return storageGet(message.key);
+  }
+
+  if (message.type === "TASKHUB_ACTIVITY_CACHE_WRITE") {
+    if (!isSupportedTab(sender.tab) || !String(message.key || "").startsWith(UNIFIED_ACTIVITY_CACHE_PREFIX)) {
+      throw new Error("Activity cache writes must start from a supported provider page.");
+    }
+    return queueActivityCacheOperation(() => writeActivityCache(message.key, message.value));
+  }
+
   if (message.type === "HELIX_ACTIVITY_CACHE_STATUS") {
     if (!isExtensionOptionsPage(sender)) {
       throw new Error("Activity cache status is available only from extension settings.");
@@ -599,6 +807,12 @@ async function handleMessage(message, sender) {
 
   if (message.type === "HELIX_ACTIVITY_OPEN_OPTIONS") {
     if (!isAllowedTab(sender.tab)) throw new Error("Open settings from a supported Helix page.");
+    await chrome.runtime.openOptionsPage();
+    return true;
+  }
+
+  if (message.type === "TASKHUB_ACTIVITY_OPEN_OPTIONS") {
+    if (!isSupportedTab(sender.tab)) throw new Error("Open settings from a supported provider page.");
     await chrome.runtime.openOptionsPage();
     return true;
   }
@@ -634,6 +848,32 @@ async function handleMessage(message, sender) {
     return taskHubClient.status();
   }
 
+  if (message.type === "TASKHUB_STATUS") {
+    if (!isSupportedTab(sender.tab) && !isExtensionOptionsPage(sender)) {
+      throw new Error("Task Hub status is available only to this extension.");
+    }
+    return taskHubClient.status();
+  }
+
+  if (message.type === "PROCORE_DISCOVERY_READ") {
+    if (!isProcoreSender(sender)) {
+      throw new Error("Company discovery is available only on supported Procore pages.");
+    }
+    return readProcoreDiscovery(sender);
+  }
+
+  if (message.type === "PROCORE_DISCOVERY_START") {
+    return startProcoreDiscovery(message, sender);
+  }
+
+  if (message.type === "PROCORE_DISCOVERY_WRITE") {
+    return writeProcoreDiscovery(message, sender);
+  }
+
+  if (message.type === "PROCORE_DISCOVERY_CANCEL") {
+    return cancelProcoreDiscovery(sender);
+  }
+
   if (message.type === "HELIX_TASKHUB_OIDC_LOGIN") {
     if (!isExtensionOptionsPage(sender)) throw new Error("Task Hub login must start from extension settings.");
     return taskHubClient.login({
@@ -643,7 +883,9 @@ async function handleMessage(message, sender) {
 
   if (message.type === "HELIX_TASKHUB_LOGOUT") {
     if (!isExtensionOptionsPage(sender)) throw new Error("Task Hub logout must start from extension settings.");
-    return taskHubClient.logout();
+    const result = await taskHubClient.logout();
+    await storageRemove(PROCORE_CONTEXT_KEY);
+    return result;
   }
 
   if (message.type === "HELIX_TASKHUB_UPDATE_SETTINGS") {
@@ -654,6 +896,52 @@ async function handleMessage(message, sender) {
   if (message.type === "HELIX_TASKHUB_SYNC") {
     if (!isAllowedTab(sender.tab)) throw new Error("Task Hub sync must start from a supported Helix page.");
     return taskHubClient.sync(message.snapshot);
+  }
+
+  if (message.type === "PROCORE_STATUS") {
+    if (!isSupportedTab(sender.tab) && !isExtensionOptionsPage(sender)) {
+      throw new Error("Procore status is available only to this extension.");
+    }
+    return taskHubClient.procoreStatus();
+  }
+
+  if (message.type === "PROCORE_CONNECT") {
+    if (!isExtensionOptionsPage(sender)) throw new Error("Procore connection must start from extension settings.");
+    return taskHubClient.connectProcore();
+  }
+
+  if (message.type === "PROCORE_DISCONNECT") {
+    if (!isExtensionOptionsPage(sender)) throw new Error("Procore disconnect must start from extension settings.");
+    await clearProcoreContextsForCurrentIdentity();
+    return taskHubClient.disconnectProcore();
+  }
+
+  if (message.type === "PROCORE_CONTEXT_RESOLVE") {
+    if (!isSupportedTab(sender.tab)
+      || TaskHubProviderCore.providerForUrl(sender.tab.url) !== TaskHubProviderCore.PROVIDERS.PROCORE) {
+      throw new Error("Procore context may be resolved only from a supported Procore page.");
+    }
+    return resolveProcoreCompany(message.projectId);
+  }
+
+  if (message.type === "PROCORE_QUEUE" || message.type === "PROCORE_SYNC") {
+    if (!isSupportedTab(sender.tab)
+      || TaskHubProviderCore.providerForUrl(sender.tab.url) !== TaskHubProviderCore.PROVIDERS.PROCORE) {
+      throw new Error("Procore requests must start from a supported Procore page.");
+    }
+    const result = await (message.type === "PROCORE_SYNC"
+      ? taskHubClient.syncProcore(message.context)
+      : taskHubClient.procoreQueue(message.context));
+    await rememberProcoreContexts(message.context, result);
+    return result;
+  }
+
+  if (message.type === "PROCORE_SNAPSHOT_SYNC") {
+    if (!isSupportedTab(sender.tab)
+      || TaskHubProviderCore.providerForUrl(sender.tab.url) !== TaskHubProviderCore.PROVIDERS.PROCORE) {
+      throw new Error("Procore snapshot sync must start from a supported Procore page.");
+    }
+    return taskHubClient.syncProcoreSnapshot(message.snapshot);
   }
 
   throw new Error("Unsupported extension message.");

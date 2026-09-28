@@ -30,11 +30,14 @@ if (!path.resolve(install).startsWith(distPrefix)) {
 const files = [
   "manifest.json",
   "background.js",
+  "provider-core.js",
   "bridge-core.js",
   "page-bridge.js",
   "activity-core.js",
+  "procore-core.js",
   "ui.js",
   "content-script.js",
+  "procore-content-script.js",
   "README.md",
   "PRIVACY.md"
 ];

@@ -1,6 +1,7 @@
 (function attachHelixActivityUI(root, factory) {
   const api = factory(root.HelixActivityCore);
   root.HelixActivityUI = api;
+  root.TaskHubActivityUI = api;
   if (typeof module === "object" && module.exports) {
     module.exports = api;
   }
@@ -53,6 +54,10 @@
     .view-switch { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-bottom: 10px; padding: 3px; border-radius: 9px; background: #0e1720; }
     .view-button { border: 0; border-radius: 7px; padding: 8px 10px; color: #9db2c1; background: transparent; cursor: pointer; font-size: 12px; }
     .view-button[aria-pressed="true"] { color: #06131f; background: #9dd7ff; }
+    .discovery { display: flex; align-items: center; justify-content: space-between; gap: 9px; margin-bottom: 10px; padding: 8px 9px; border: 1px solid #355064; border-radius: 8px; background: #102535; }
+    .discovery-button { flex: none; border: 1px solid #6ea7cf; border-radius: 6px; padding: 7px 9px; color: #06131f; background: #9dd7ff; cursor: pointer; font-size: 11px; }
+    .discovery-button.running { color: #ffe8c2; border-color: #956d38; background: #3a2b18; }
+    .discovery-status { min-width: 0; color: #b9cfdd; font-size: 10px; text-align: right; }
     .toolbar-top { display: flex; gap: 8px; }
     .search { flex: 1; min-width: 0; border: 1px solid #425767; border-radius: 7px; padding: 9px 11px; color: #fff; background: #0e1720; }
     .refresh { border: 1px solid #50738d; border-radius: 7px; padding: 9px 12px; color: #dff3ff; background: #1d3a50; cursor: pointer; }
@@ -113,7 +118,8 @@
       .view-switch { grid-column: 1; margin-bottom: 0; }
       .toolbar-top { grid-column: 2; }
       .filters { grid-column: 3; margin-top: 0; }
-      .queue-filters, .reason-filters { grid-column: 1 / -1; margin-top: 0; }
+      .discovery, .queue-filters, .reason-filters { grid-column: 1 / -1; margin-top: 0; }
+      .discovery { margin-bottom: 0; }
       .queue-filters { grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); }
       .queue-filters.activity-types { grid-template-columns: 1fr; }
       .reason-filters { padding-top: 0; }
@@ -206,7 +212,8 @@
     headerActions.append(taskHubSettings, close);
     headerRow.append(headingWrap, headerActions);
     const privacy = element(documentObject, "div", "privacy");
-    privacy.append(element(documentObject, "span", "privacy-dot"), element(documentObject, "span", "", "Read-only • Current login • Cached locally"));
+    const privacyCopy = element(documentObject, "span", "", "Read-only • Current login • Cached locally");
+    privacy.append(element(documentObject, "span", "privacy-dot"), privacyCopy);
     const taskHub = element(documentObject, "div", "taskhub");
     const taskHubCopy = element(documentObject, "span", "taskhub-copy", "Task Hub not connected");
     const taskHubActions = element(documentObject, "div", "taskhub-actions");
@@ -227,6 +234,13 @@
     queueView.type = "button";
     queueView.setAttribute("aria-pressed", "false");
     viewSwitch.append(activityView, queueView);
+    const discovery = element(documentObject, "section", "discovery hidden");
+    const discoveryButton = element(documentObject, "button", "discovery-button", "Discover companies & projects");
+    discoveryButton.type = "button";
+    const discoveryStatus = element(documentObject, "span", "discovery-status", "No local project catalog yet");
+    discoveryStatus.setAttribute("role", "status");
+    discoveryStatus.setAttribute("aria-live", "polite");
+    discovery.append(discoveryButton, discoveryStatus);
     const toolbarTop = element(documentObject, "div", "toolbar-top");
     const search = element(documentObject, "input", "search");
     search.type = "search";
@@ -340,7 +354,7 @@
       chip.setAttribute("aria-pressed", "false");
       reasonFilters.appendChild(chip);
     });
-    toolbar.append(viewSwitch, toolbarTop, filters, queueFilters, reasonFilters);
+    toolbar.append(viewSwitch, discovery, toolbarTop, filters, queueFilters, reasonFilters);
     panel.appendChild(toolbar);
 
     const summary = element(documentObject, "div", "summary hidden");
@@ -363,8 +377,10 @@
     let itemLabel = "Item";
     let itemLabelPlural = "Items";
     let activityTitle = "My Helix Activity";
+    let providerName = "Helix";
     let currentView = "activity";
     let contextItemType = null;
+    let discoveryRunning = false;
     let currentPersonKey = null;
     let panelIsOpen = false;
     let panelWidth = 520;
@@ -424,8 +440,9 @@
 
     function updateQueueFilterLabels() {
       const allProjects = Array.isArray(indexData && indexData.projects) ? indexData.projects : [];
+      const catalogBacked = Boolean(indexData && indexData.discoveryCatalog);
       projectSummary.textContent = selectedProjects.size === allProjects.length && allProjects.length > 0
-        ? `All projects (${allProjects.length})`
+        ? `${catalogBacked ? "All discovered" : "All projects"} (${allProjects.length})`
         : `${selectedProjects.size} of ${allProjects.length} projects`;
       typeSummary.textContent = selectedTypes.size === 2 ? "All types" : selectedTypes.size === 1
         ? (selectedTypes.has("rfi") ? "RFI only" : "Submittals only")
@@ -757,6 +774,7 @@
         const cardActions = element(documentObject, "div", "card-actions");
         const downloadButton = element(documentObject, "button", "item-action download-package", "Download package");
         downloadButton.type = "button";
+        downloadButton.hidden = typeof callbacks.onDownloadItem !== "function";
         const browseFolderButton = element(documentObject, "button", "item-action browse-package-folder", "Browse folder");
         browseFolderButton.type = "button";
         browseFolderButton.hidden = true;
@@ -770,7 +788,7 @@
             callbacks.onBrowseDownloadedFolder(item, browseFolderButton);
           }
         });
-        const openButton = element(documentObject, "button", "item-action open-rfi", "Open in Helix");
+        const openButton = element(documentObject, "button", "item-action open-rfi", `Open in ${providerName}`);
         openButton.type = "button";
         openButton.addEventListener("click", () => {
           if (typeof callbacks.onOpenItem === "function") callbacks.onOpenItem(item, openButton);
@@ -846,6 +864,9 @@
     });
     taskHubSync.addEventListener("click", () => {
       if (typeof callbacks.onTaskHubSync === "function") callbacks.onTaskHubSync();
+    });
+    discoveryButton.addEventListener("click", () => {
+      if (typeof callbacks.onDiscover === "function") callbacks.onDiscover({ cancel: discoveryRunning });
     });
     refresh.addEventListener("click", () => {
       if (typeof callbacks.onRefresh === "function") callbacks.onRefresh();
@@ -999,7 +1020,9 @@
         contextItemType = context && context.itemType;
         itemLabel = context && context.itemLabel ? context.itemLabel : "Item";
         itemLabelPlural = context && context.itemLabelPlural ? context.itemLabelPlural : `${itemLabel}s`;
-        activityTitle = "My Helix Activity";
+        providerName = context && context.provider === "procore" ? "Procore" : "Helix";
+        discovery.classList.toggle("hidden", providerName !== "Procore");
+        activityTitle = `My ${providerName} Activity`;
         launcher.textContent = activityTitle;
         heading.textContent = activityTitle;
         panel.setAttribute("aria-label", activityTitle);
@@ -1015,7 +1038,12 @@
         });
         subtitle.textContent = context && context.user
           ? `${context.user.fullName}${context.user.company ? ` • ${context.user.company}` : ""}`
-          : "Current Helix user";
+          : `Current ${providerName} user`;
+        privacyCopy.textContent = providerName === "Procore"
+          ? context && context.sourceMode === "visible_page"
+            ? "Visible Procore page • Standalone • No page credentials"
+            : "Official Procore API • Optional TaskHub connection • No page credentials"
+          : "Read-only • Current login • Cached locally";
       },
       setLoading(message) {
         refresh.disabled = true;
@@ -1066,6 +1094,21 @@
         taskHubSync.textContent = "Retry";
         taskHubCopy.className = "taskhub-copy error";
         taskHubCopy.textContent = message || "Task Hub sync failed";
+      },
+      setDiscoveryState(value) {
+        const stateValue = value && typeof value === "object" ? value : {};
+        discovery.classList.toggle("hidden", providerName !== "Procore");
+        discoveryRunning = stateValue.status === "running";
+        discoveryButton.classList.toggle("running", discoveryRunning);
+        discoveryButton.textContent = discoveryRunning
+          ? "Cancel discovery"
+          : stateValue.projectCount > 0 ? "Rescan companies & projects" : "Discover companies & projects";
+        discoveryButton.setAttribute("aria-label", discoveryButton.textContent);
+        const counts = stateValue.companyCount || stateValue.projectCount
+          ? `${Number(stateValue.companyCount) || 0} companies • ${Number(stateValue.projectCount) || 0} projects`
+          : "";
+        discoveryStatus.textContent = stateValue.message || counts || "No local project catalog yet";
+        discoveryStatus.title = discoveryStatus.textContent;
       },
       setData(value) {
         const restoredState = pendingViewState;

@@ -1,9 +1,9 @@
 {
   "manifest_version": 3,
-  "name": "My Helix Activity",
-  "version": "1.9.8",
+  "name": "TaskHub Helper for Helix & Procore",
+  "version": "2.1.0",
   "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA6QtJSSw2rJOwD3VAz+wVILnWqKclO+VIznd95nsWq56yRV4yiizOOJlzbBLkygB1y+a3/mXzzajFfh4EB6LPdTqG4EgmYBbvTF8RHh0IHg0NHP0q1qeBFJRCvmDt/Dic0nuls8CIizr1Fv/2LCp7hkzm7WvSAcA90oXRUeQUl/eL9Xrp3F4UCgij+W++Ol9z0F0qOpFll3EJ4RSndiDRRjhGZqmMMnk9ouJugzDHJKh4rJZ3RBqoS3Vpvd5u++6hc9QOx8Yc60W6GWsAAleGEhLqHOrK81YxxH6oAu12G3kqQMNNjuuK8dnWRsujnlZTdlJskZc7c3pBmyMcvjdJ1wIDAQAB",
-  "description": "Review Helix RFI and Submittal activity, with optional sync to a self-hosted Task Hub.",
+  "description": "Review and sync RFI and Submittal assignments in Helix or Procore from one site-aware extension.",
   "permissions": [
     "scripting",
     "storage",
@@ -34,10 +34,24 @@
         "content-script.js"
       ],
       "run_at": "document_idle"
+    },
+    {
+      "matches": [
+        "https://*.procore.com/webclients/host/*",
+        "https://*.procore.com/*/project/*"
+      ],
+      "js": [
+        "provider-core.js",
+        "activity-core.js",
+        "procore-core.js",
+        "ui.js",
+        "procore-content-script.js"
+      ],
+      "run_at": "document_idle"
     }
   ],
   "action": {
-    "default_title": "My Helix Activity"
+    "default_title": "TaskHub Helper"
   },
   "options_ui": {
     "page": "options/options.html",

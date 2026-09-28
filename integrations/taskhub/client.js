@@ -1,6 +1,7 @@
 (function attachHelixTaskHubClient(root, factory) {
   const api = factory();
   root.HelixTaskHubClient = api;
+  root.TaskHubHelperClient = api;
   if (typeof module === "object" && module.exports) {
     module.exports = api;
   }
@@ -10,6 +11,7 @@
   const SETTINGS_KEY = "helix-taskhub-settings-v1";
   const AUTH_KEY = "helix-taskhub-auth-v1";
   const CALLBACK_PATH = "taskhub";
+  const PROCORE_CALLBACK_PATH = "procore";
   const REFRESH_SKEW_MS = 60 * 1000;
   const VERSION_HEADER = "X-TaskHub-Extension-Version";
 
@@ -484,13 +486,104 @@
       });
     }
 
+    async function procoreStatus() {
+      return authenticatedRequest("/integrations/procore/auth/status", {
+        method: "GET"
+      });
+    }
+
+    async function connectProcore() {
+      const initiated = await authenticatedRequest("/integrations/procore/auth/initiate", {
+        method: "POST",
+        body: "{}"
+      });
+      const authorizationUrl = new URL(String(initiated && initiated.auth_url || ""));
+      if (authorizationUrl.protocol !== "https:"
+        || authorizationUrl.hostname !== "login.procore.com"
+        || authorizationUrl.pathname !== "/oauth/authorize") {
+        throw new Error("Task Hub returned an invalid Procore authorization URL.");
+      }
+      const expectedRedirect = new URL(chromeObject.identity.getRedirectURL(PROCORE_CALLBACK_PATH));
+      const configuredRedirect = new URL(String(authorizationUrl.searchParams.get("redirect_uri") || ""));
+      if (configuredRedirect.origin !== expectedRedirect.origin
+        || configuredRedirect.pathname !== expectedRedirect.pathname) {
+        throw new Error(`Task Hub's Procore app must use redirect ${expectedRedirect}.`);
+      }
+
+      const callbackValue = await launchWebAuthFlow(chromeObject, authorizationUrl.toString());
+      const callback = new URL(callbackValue);
+      if (callback.origin !== expectedRedirect.origin || callback.pathname !== expectedRedirect.pathname) {
+        throw new Error("Procore returned to an unexpected extension URL.");
+      }
+      if (callback.searchParams.get("error")) {
+        throw new Error(
+          callback.searchParams.get("error_description")
+          || callback.searchParams.get("error")
+          || "Procore authorization failed."
+        );
+      }
+      const code = callback.searchParams.get("code");
+      const state = callback.searchParams.get("state");
+      if (!code || !state) throw new Error("Procore did not return an authorization code and state.");
+      if (state !== authorizationUrl.searchParams.get("state")) {
+        throw new Error("Procore authorization state did not match. Try again.");
+      }
+      return authenticatedRequest("/integrations/procore/auth/exchange", {
+        method: "POST",
+        body: JSON.stringify({ code, state })
+      });
+    }
+
+    async function disconnectProcore() {
+      await authenticatedRequest("/integrations/procore/auth/disconnect", {
+        method: "POST",
+        body: "{}"
+      });
+      return { connected: false };
+    }
+
+    function procoreContextParameters(context) {
+      const companyId = String(context && context.companyId || "").trim();
+      const projectId = String(context && context.projectId || "").trim();
+      const maxProjects = Math.max(1, Math.min(100, Number(context && context.maxProjects) || 25));
+      if (!/^\d+$/.test(companyId)) throw new Error("A numeric Procore company ID is required.");
+      if (projectId && !/^\d+$/.test(projectId)) throw new Error("The Procore project ID must be numeric.");
+      return { company_id: companyId, project_id: projectId, max_projects: String(maxProjects) };
+    }
+
+    async function procoreQueue(context) {
+      const query = new URLSearchParams(procoreContextParameters(context));
+      if (!query.get("project_id")) query.delete("project_id");
+      return authenticatedRequest(`/integrations/procore/queue?${query}`, { method: "GET" });
+    }
+
+    async function syncProcore(context) {
+      return authenticatedRequest("/integrations/procore/sync", {
+        method: "POST",
+        body: JSON.stringify(procoreContextParameters(context))
+      });
+    }
+
+    async function syncProcoreSnapshot(snapshot) {
+      return authenticatedRequest("/integrations/procore/sync-snapshot", {
+        method: "POST",
+        body: JSON.stringify(snapshot)
+      });
+    }
+
     return Object.freeze({
       restrictCredentialStorage,
       login,
       logout,
       status,
       updateSettings,
-      sync
+      sync,
+      procoreStatus,
+      connectProcore,
+      disconnectProcore,
+      procoreQueue,
+      syncProcore,
+      syncProcoreSnapshot
     });
   }
 
@@ -498,6 +591,7 @@
     SETTINGS_KEY,
     AUTH_KEY,
     CALLBACK_PATH,
+    PROCORE_CALLBACK_PATH,
     normalizeBaseUrl,
     permissionOrigin,
     create

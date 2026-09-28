@@ -1,8 +1,15 @@
-# My Helix Activity
+# TaskHub Helper for Helix and Procore
 
-A dependency-free Chrome Manifest V3 extension that finds RFIs and Submittals associated with the user currently logged into Helix. It works from project Overview, RFI, and Submittals pages. It does not contain a user ID or project ID; both are read from the active Helix login and page.
+A dependency-free Chrome Manifest V3 extension with one stable extension ID and two site adapters. It activates **My Helix Activity** on supported Helix pages and **My Procore Activity** on supported Procore company/project tool pages. Shared UI, filtering, bounded caching, Task Hub login, and sync infrastructure are reused; provider-specific data access remains isolated.
 
-## What it finds
+Helix uses the existing read-only page bridge. Procore works standalone by reading the work-item rows
+rendered on the current Procore page. An optional Task Hub connection can sync those sanitized rows,
+and an optional server-side Procore OAuth connection enables broader official REST API scans. The
+extension never reads Procore cookies, authentication storage, headers, or private page tokens.
+Existing Helix Helper installations upgrade in place because the manifest key, extension ID, legacy
+storage keys, and stable package paths are preserved.
+
+## What it finds in Helix
 
 The sidebar combines the current project's records with the current user's comments, uploads, and item history. A result can match because the logged-in user:
 
@@ -90,25 +97,62 @@ The launcher shows the open count for the selected people, projects, and types s
 
 Successful results are considered fresh in Chrome's extension-local storage for 15 minutes and are scoped to the logged-in contact. Each refresh replaces the cached open queue and retains only the three most recently accessed project/feature views. Cache entries expire after 24 hours and the extension enforces a 5 MB total cache budget without requesting unlimited storage. Use **Refresh** whenever an immediate rebuild is needed, or open extension settings to inspect and clear only the local Helix cache.
 
-## Optional Task Hub connection
+## Procore activity
 
-The extension works normally without Task Hub. To send the current **In court now** selection to a
-self-hosted Task Hub:
+On a supported Procore tool URL, the same panel immediately displays the RFI and Submittal rows
+rendered in Procore's current grid, including **My Open Items**. This standalone mode needs neither a
+Task Hub account nor a separate Procore authorization. Project, type, status, text, and due-date
+filtering run locally through the shared activity UI. **Open in Procore** follows the displayed item's
+Procore link. Only currently rendered rows are available in the item queue; change Procore's own
+filters or paging to change that visible set.
 
-1. Open the extension's **Task Hub** settings from the Helix sidebar or Chrome's extension details.
+Select **Discover companies & projects** to build a browser-local catalog of the companies in
+Procore's company chooser and the accessible active projects in each company's project picker. The
+scan switches through those companies one at a time, reports progress in the sidebar, survives a
+normal Procore page reload, and restores the original company and page when it finishes or is
+cancelled. The project filter then lists every discovered project, including projects with no items
+in the current queue, using a **Company — Project** label. Re-run discovery whenever invitations or
+project access changes. Discovery reads only the visible company and project selectors; it does not
+read cookies, browser session storage, network traffic, or private Procore API credentials.
+
+If broader scanning is wanted, connect Task Hub and then use the optional Procore OAuth connection.
+The current project is used when present in the URL; a company-level API scan reads accessible active
+projects, up to the configured safety limit. Official API mode displays open RFIs and Submittals where
+the connected Procore user is currently in **Ball In Court**. Helix-only package downloads remain
+hidden on Procore cards until an official API-backed package workflow is implemented.
+
+To enable optional API-backed scans:
+
+1. Connect Task Hub in extension settings.
+2. Select **Connect Procore** and approve the Procore OAuth prompt.
+3. Open a modern Procore company/project tool URL and select **My Procore Activity**.
+4. Leave automatic sync enabled, or use **Sync** in the panel.
+
+Task Hub calls `GET /rest/v1.0/me`, `GET /rest/v1.1/projects`, the v1.0 project RFI list, and the v1.1
+project Submittal list. API warnings or truncated project scans make a result incomplete so missing
+tasks are not archived. The current implementation uses user-delegated OAuth; it does not yet run a
+company-wide unattended DMSA sync or subscribe to webhooks.
+
+## Task Hub connection
+
+Helix and Procore both work without Task Hub. Connect it only to send the current **In court now**
+selection to a self-hosted Task Hub:
+
+1. Open the extension's **Task Hub** settings from either sidebar or Chrome's extension details.
 2. Enter the public HTTPS URL of the Task Hub deployment and select **Sign in with TaskHub ID**.
    Chrome opens the deployment's Keycloak login using OIDC Authorization Code + PKCE. Plain HTTP is
    accepted only for `localhost` or `127.0.0.1` development.
 3. Approve Chrome's host permission for that one server.
-4. Leave automatic sync enabled, or disable it and use **Sync** in the Helix sidebar.
+4. Leave automatic sync enabled, or disable it and use **Sync** in either sidebar.
 5. Choose **Only me**, a company scope, all people, or a custom set in the Open queue person filter.
    A fresh scan sends only the selected people whose assignment is currently **In court**.
 
-Task Hub creates a **CA** subsection under **Work**, groups the RFIs and Submittals by Helix project,
-and shows the Helix added date, the best available date the item entered the selected person's court,
+Task Hub creates a **CA** subsection under **Work**, groups the RFIs and Submittals by provider project,
+and shows the source added date, the best available date the item entered the selected person's court,
 and the earliest available due/review date. Repeated syncs update the same tasks. A complete scan
 archives synced items that are no longer in the selected current queue; a scan with Helix read
-warnings never archives missing items.
+warnings never archives missing items. A visible-page Procore snapshot is always incomplete for the
+same reason: records absent from a filtered or paged grid must never be treated as completed.
 
 The extension never receives the TaskHub ID password. It stores revocable access/refresh tokens in
 extension-local storage restricted to trusted extension contexts, rotates them automatically, and
@@ -117,7 +161,7 @@ never changes Helix records. See [PRIVACY.md](PRIVACY.md) for the exact fields s
 
 ## Install in Chrome
 
-For a deployed Task Hub, open **Settings → Browser Extensions**, download the Helix ZIP, extract it
+For a deployed Task Hub, open **Settings → Browser Extensions**, download the TaskHub Helper ZIP, extract it
 into a permanent folder, and use that folder in the steps below. Task Hub also shows whether the
 current account has connected or synced the extension.
 
@@ -138,10 +182,10 @@ powershell -ExecutionPolicy Bypass -File scripts/package-extension.ps1
 2. Enable **Developer mode**.
 3. Select **Load unpacked**.
 4. Choose this folder once: `extensions\HelixHelper\dist\helix-my-activity` inside this repository.
-5. Open a Helix project Overview, RFI, or Submittals page and refresh it once.
-6. Select the **My Helix Activity** launcher in the lower-right corner.
+5. Open a supported Helix or Procore tool page and refresh it once.
+6. Select the matching **My Helix Activity** or **My Procore Activity** launcher.
 
-Each person installs the same folder/package. The extension automatically uses that person's active Helix login, current project, and current supported feature page.
+Each person installs the same folder/package. The extension automatically chooses its adapter from the active site; no manual provider switch is required.
 
 For every future update, run the same packaging command. It replaces the contents of the permanent `dist\helix-my-activity` folder without changing its path. Then open `chrome://extensions` and select **Reload** on the existing extension. Do not select **Load unpacked** again.
 
@@ -151,8 +195,9 @@ If older versions were loaded from separate folders, remove those duplicates fro
 
 ## Read-only and privacy guarantees
 
-- The extension has only `scripting`, local `storage`, and OIDC `identity` permissions, plus access
-  to `project.helixteam.com`. Access to a Task Hub host is optional and requested only when
+- The extension has only `scripting`, local `storage`, and OIDC `identity` permissions. Its content
+  scripts are limited to supported Helix routes and Procore `/webclients/host/` or legacy
+  `/{project_id}/project/` routes. Access to a Task Hub host is optional and requested only when
   connecting.
 - It calls Helix's existing `readFromCollection` and protected-download helpers through a fixed
   operation bridge.
@@ -167,6 +212,8 @@ If older versions were loaded from separate folders, remove those duplicates fro
   connection, the cache is not sent anywhere.
 - Sidebar width and open/hidden preferences are stored locally; they contain no Helix record data.
 - **Open in Helix** opens Helix's existing detail viewer. For another project or item type, a short-lived local handoff carries only the item, type, and project identifiers to the destination page so it can open the same read-only detail viewer.
+- Procore credentials never enter page or content-script storage. Task Hub stores the refresh token
+  encrypted with `TASKHUB_FIELD_ENCRYPTION_KEY`; the extension receives only sanitized work items.
 
 Helix itself remains responsible for access control. The extension uses the same active project-directory assignments as Helix's **My Projects** page and can only read records the logged-in user is already permitted to read.
 
@@ -190,3 +237,10 @@ For a visual preview without Helix, open `test/ui-preview.html` in a browser.
 ## Compatibility notes
 
 The extension targets the current Helix Overview, RFI, and Submittals implementations and their `UserInfo.directoryInfo`, `Master.readFromCollection`, and `Master.loadDetailView` page interfaces. If Helix changes those internal interfaces, the sidebar reports an error instead of falling back to credential extraction or direct API calls.
+
+The Procore adapter targets modern `/webclients/host/companies/.../tools/...` pages and legacy
+`/{project_id}/project/...` detail routes. A modern route establishes a bounded, user-scoped mapping
+from project ID to company ID so the panel can remain available after **Open in Procore** reaches a
+legacy detail URL. If no safe mapping exists yet, the panel asks the user to open a modern company or
+project tool once. API failures are reported without falling back to DOM scraping or browser-session
+credential extraction.

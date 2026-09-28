@@ -12,8 +12,11 @@ const runtimeFiles = [
   "bridge-core.js",
   "page-bridge.js",
   "activity-core.js",
+  "provider-core.js",
+  "procore-core.js",
   "ui.js",
-  "content-script.js"
+  "content-script.js",
+  "procore-content-script.js"
 ];
 
 test("manifest uses only the required bridge, storage, and OIDC permissions", () => {
@@ -40,6 +43,7 @@ test("network access is isolated to the optional Task Hub client", () => {
   assert.doesNotMatch(client, /project\.helixteam\.com/);
   assert.match(client, /\/integrations\/helix\/sync/);
   assert.match(client, /\/integrations\/helix\/auth\/config/);
+  assert.match(client, /\/integrations\/procore\/queue/);
   assert.doesNotMatch(client, /\/integrations\/helix\/auth\/login/);
   assert.doesNotMatch(client, /password\s*:/i);
 });
@@ -50,8 +54,9 @@ test("Task Hub settings contain no direct credential fields", () => {
   assert.doesNotMatch(options, /type=["']password["']/i);
   assert.doesNotMatch(options, /name=["']email["']/i);
   assert.match(options, /Sign in with TaskHub ID/);
-  assert.match(options, /Local Helix cache/);
-  assert.match(options, /Clear cached Helix data/);
+  assert.match(options, /Local activity cache/);
+  assert.match(options, /Clear cached activity data/);
+  assert.match(options, /private session tokens are never read/i);
   assert.match(optionsScript, /HELIX_ACTIVITY_CACHE_STATUS/);
   assert.match(optionsScript, /HELIX_ACTIVITY_CACHE_CLEAR/);
 });

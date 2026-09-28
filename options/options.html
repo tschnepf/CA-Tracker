@@ -3,18 +3,20 @@
   <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>My Helix Activity — Task Hub</title>
+    <title>TaskHub Helper settings</title>
     <link rel="stylesheet" href="options.css">
   </head>
   <body>
     <main>
       <header>
-        <p class="eyebrow">My Helix Activity</p>
-        <h1>Task Hub connection</h1>
-        <p>Helix continues to work locally when Task Hub is not connected.</p>
+        <p class="eyebrow">TaskHub Helper</p>
+        <h1>Helix and Procore</h1>
+        <p>One extension activates the matching experience on each supported site.</p>
       </header>
 
       <section id="connection-card">
+        <h2>Optional Task Hub sync</h2>
+        <p>Both site helpers work standalone. Connect only if you want to copy assignments into Task Hub.</p>
         <form id="login-form">
           <label>
             <span>Self-hosted Task Hub URL</span>
@@ -30,7 +32,7 @@
           </dl>
           <label class="toggle">
             <input id="auto-sync" type="checkbox" checked>
-            <span>Automatically sync after each fresh Helix scan</span>
+            <span>Automatically sync after each fresh Helix or Procore scan</span>
           </label>
           <button id="disconnect" type="button" class="secondary">Disconnect</button>
         </div>
@@ -42,16 +44,30 @@
         and stores only revocable login tokens in trusted Chrome extension storage.
       </p>
 
+      <section id="procore-card" aria-labelledby="procore-heading">
+        <div class="section-heading">
+          <div>
+            <h2 id="procore-heading">Optional Procore API connection</h2>
+            <p>Procore works standalone from the visible page. Connect its supported OAuth and REST APIs only for broader scans; private session tokens are never read.</p>
+          </div>
+          <strong id="procore-state">Checking…</strong>
+        </div>
+        <p id="procore-account"></p>
+        <button id="connect-procore" type="button">Connect Procore</button>
+        <button id="disconnect-procore" type="button" class="secondary" hidden>Disconnect Procore</button>
+        <p id="procore-message" role="status" aria-live="polite"></p>
+      </section>
+
       <section id="cache-card" aria-labelledby="cache-heading">
         <div class="section-heading">
           <div>
-            <h2 id="cache-heading">Local Helix cache</h2>
+            <h2 id="cache-heading">Local activity cache</h2>
             <p>Recent sanitized activity makes the sidebar reopen quickly. It is automatically bounded and expires after 24 hours.</p>
           </div>
           <strong id="cache-usage">Calculating…</strong>
         </div>
         <p id="cache-count"></p>
-        <button id="clear-cache" type="button" class="secondary">Clear cached Helix data</button>
+        <button id="clear-cache" type="button" class="secondary">Clear cached activity data</button>
         <p id="cache-message" role="status" aria-live="polite"></p>
       </section>
     </main>

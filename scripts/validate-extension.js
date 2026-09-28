@@ -12,6 +12,7 @@ const requiredFiles = [
   manifest.background && manifest.background.service_worker,
   ...manifest.content_scripts.flatMap((entry) => [...(entry.js || []), ...(entry.css || [])]),
   manifest.options_ui && manifest.options_ui.page,
+  "provider-core.js",
   "bridge-core.js",
   "page-bridge.js",
   "integrations/taskhub/client.js",
@@ -50,6 +51,7 @@ const extensionId = Array.from(
   (character) => String.fromCharCode(97 + Number.parseInt(character, 16))
 ).join("");
 const redirectUri = `https://${extensionId}.chromiumapp.org/taskhub`;
+const procoreRedirectUri = `https://${extensionId}.chromiumapp.org/procore`;
 const repositoryRoot = path.resolve(root, "..", "..");
 const realm = JSON.parse(fs.readFileSync(
   path.join(repositoryRoot, "tools", "keycloak", "realm-export", "taskhub-realm.json"),
@@ -86,6 +88,17 @@ for (const environmentFile of [".env.example", ".env.unraid.production.example"]
   if (!environment.includes(`KEYCLOAK_HELIX_REDIRECT_URI=${redirectUri}`)) {
     throw new Error(`${environmentFile} does not match the pinned extension redirect URI.`);
   }
+  if (!environment.includes(`PROCORE_OAUTH_REDIRECT_URI=${procoreRedirectUri}`)) {
+    throw new Error(`${environmentFile} does not match the pinned Procore OAuth redirect URI.`);
+  }
+}
+
+const procoreMatches = manifest.content_scripts.flatMap((entry) => entry.matches || []);
+if (!procoreMatches.includes("https://*.procore.com/webclients/host/*")) {
+  throw new Error("The unified extension must activate on modern Procore tool routes.");
+}
+if (!procoreMatches.includes("https://*.procore.com/*/project/*")) {
+  throw new Error("The unified extension must retain context on regional legacy Procore project routes.");
 }
 
 console.log(
