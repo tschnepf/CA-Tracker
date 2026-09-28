@@ -9,6 +9,7 @@ const { webcrypto } = require("node:crypto");
 const TaskHubClient = require("../integrations/taskhub/client.js");
 const ProviderCore = require("../provider-core.js");
 const ProcoreCore = require("../procore-core.js");
+const WindowsHelperClient = require("../integrations/windows-helper/client.js");
 
 const source = fs.readFileSync(path.resolve(__dirname, "..", "background.js"), "utf8");
 
@@ -143,6 +144,7 @@ function loadBackground(options = {}) {
     HelixTaskHubClient: options.taskHubClientModule || TaskHubClient,
     TaskHubProviderCore: ProviderCore,
     TaskHubProcoreCore: ProcoreCore,
+    TaskHubWindowsHelperClient: WindowsHelperClient,
     importScripts() {}
   }, options.reportGlobals || {}));
   return {
@@ -808,4 +810,20 @@ test("closing the owner tab marks an active Procore discovery scan as failed", a
   const catalog = harness.storageData["taskhub-procore-discovery-v1"];
   assert.equal(catalog.scan.status, "error");
   assert.match(catalog.scan.error, /tab.*closed/i);
+});
+
+test("Windows helper snapshots are accepted only from a matching provider page", async () => {
+  const { listener } = loadBackground();
+  const helixSnapshot = { provider: "helix", projectId: "project-1", itemTypes: ["rfi"], items: [] };
+  const fromHelix = await send(listener, { type: "WINDOWS_HELPER_SNAPSHOT", snapshot: helixSnapshot }, helixSender);
+  const mismatched = await send(listener, { type: "WINDOWS_HELPER_SNAPSHOT", snapshot: helixSnapshot }, procoreSender);
+  const fromOptions = await send(listener, { type: "WINDOWS_HELPER_SNAPSHOT", snapshot: helixSnapshot }, optionsSender);
+  const status = await send(listener, { type: "WINDOWS_HELPER_STATUS" }, optionsSender);
+
+  assert.equal(fromHelix.ok, true);
+  assert.deepEqual(fromHelix.result, { sent: false, reason: "not_enabled" });
+  assert.equal(mismatched.ok, false);
+  assert.equal(fromOptions.ok, false);
+  assert.equal(status.ok, true);
+  assert.deepEqual(status.result, { permission: false, installed: false });
 });

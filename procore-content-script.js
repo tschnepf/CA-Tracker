@@ -699,10 +699,24 @@
     return queue;
   }
 
+  async function sendWindowsHelperSnapshots(visibleQueue) {
+    // Optional: visible Procore rows are a partial view, so the helper never treats
+    // folders missing from this snapshot as orphaned.
+    try {
+      if (typeof TaskHubWindowsHelperSnapshot === "undefined" || !visibleQueue) return;
+      for (const snapshot of TaskHubWindowsHelperSnapshot.buildProcoreSnapshots(visibleQueue)) {
+        await runtimeMessage({ type: "WINDOWS_HELPER_SNAPSHOT", snapshot });
+      }
+    } catch (_error) {
+      // The Windows helper is optional; Procore stays fully usable without it.
+    }
+  }
+
   async function loadQueue(forceSync, forceRefresh) {
     if (scanPromise) return scanPromise;
     scanPromise = (async () => {
       const visibleQueue = renderVisibleQueue(true);
+      void sendWindowsHelperSnapshots(visibleQueue);
       try {
         if (!taskHubStatus || forceRefresh) await loadConnectionStatus();
         if (!taskHubStatus.connected) {

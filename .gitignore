@@ -5,3 +5,8 @@ Thumbs.db
 *.log
 .vscode/
 .idea/
+
+# Windows helper build output
+windows-helper/**/bin/
+windows-helper/**/obj/
+windows-helper/dist/

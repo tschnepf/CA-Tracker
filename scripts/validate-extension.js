@@ -17,6 +17,8 @@ const requiredFiles = [
   "page-bridge.js",
   "integrations/taskhub/client.js",
   "integrations/taskhub/mapper.js",
+  "integrations/windows-helper/client.js",
+  "integrations/windows-helper/snapshot.js",
   "options/options.js",
   "options/options.css"
 ].filter(Boolean);
@@ -39,6 +41,12 @@ if (!manifest.permissions.includes("identity")) {
 }
 if (manifest.permissions.includes("downloads")) {
   throw new Error("Folder-picked package downloads must not require Chrome's downloads permission.");
+}
+if (manifest.permissions.includes("nativeMessaging")) {
+  throw new Error("The Windows helper bridge must stay optional so updates never disable the extension.");
+}
+if (!(manifest.optional_permissions || []).includes("nativeMessaging")) {
+  throw new Error("The optional Windows helper bridge requires the optional nativeMessaging permission.");
 }
 if (manifest.permissions.includes("unlimitedStorage")) {
   throw new Error("The Helix extension must remain within its bounded local-storage budget.");
@@ -110,6 +118,7 @@ if (!procoreMatches.includes("https://*.procore.com/*/project/*")) {
   throw new Error("The unified extension must retain context on regional legacy Procore project routes.");
 }
 
+console.log(`Windows helper native host allowed origin: chrome-extension://${extensionId}/`);
 console.log(
   `Validated Manifest V3 extension ${extensionId} with ${requiredFiles.length} referenced files.`
 );

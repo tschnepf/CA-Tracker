@@ -1,0 +1,24 @@
+<ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <!-- Dark palette. Keys are shared with Light/Dark; styles use DynamicResource. -->
+    <SolidColorBrush x:Key="WindowBackground" Color="#0E1720" />
+    <SolidColorBrush x:Key="SurfaceBackground" Color="#14212C" />
+    <SolidColorBrush x:Key="SurfaceAltBackground" Color="#1A2A38" />
+    <SolidColorBrush x:Key="InputBackground" Color="#0E1720" />
+    <SolidColorBrush x:Key="LineBrush" Color="#334555" />
+    <SolidColorBrush x:Key="TextPrimary" Color="#E9F2F8" />
+    <SolidColorBrush x:Key="TextSecondary" Color="#A9BFD0" />
+    <SolidColorBrush x:Key="TextMuted" Color="#829AAA" />
+    <SolidColorBrush x:Key="AccentBrush" Color="#9DD7FF" />
+    <SolidColorBrush x:Key="AccentForeground" Color="#06131F" />
+    <SolidColorBrush x:Key="AccentSoftBrush" Color="#1D3A50" />
+    <SolidColorBrush x:Key="HoverBrush" Color="#213444" />
+    <SolidColorBrush x:Key="SelectionBrush" Color="#24445C" />
+    <SolidColorBrush x:Key="DangerBrush" Color="#FFB1A9" />
+    <SolidColorBrush x:Key="DangerSoftBrush" Color="#4A2626" />
+    <SolidColorBrush x:Key="WarningBrush" Color="#FFD27A" />
+    <SolidColorBrush x:Key="WarningSoftBrush" Color="#473816" />
+    <SolidColorBrush x:Key="SuccessBrush" Color="#8FE3B0" />
+    <SolidColorBrush x:Key="SuccessSoftBrush" Color="#1E3F2E" />
+    <SolidColorBrush x:Key="NeutralSoftBrush" Color="#243442" />
+</ResourceDictionary>

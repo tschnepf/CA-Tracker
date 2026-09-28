@@ -184,6 +184,24 @@ extension-local storage restricted to trusted extension contexts, rotates them a
 revokes the refresh token when possible before removing it on disconnect. The optional connection
 never changes Helix records. See [PRIVACY.md](PRIVACY.md) for the exact fields sent.
 
+## CA Tracker Windows helper (optional)
+
+The companion Windows app in [`windows-helper/`](windows-helper/README.md) compares each project's
+Helix or Procore items with that project's Egnyte CA folder (default `CA\RFIs`, `CA\Submittals`,
+each with a `~Returned` subfolder). It can move folders for returned items into `~Returned`, always
+after a preview you can cancel.
+
+The extension works exactly as before without it. To connect them:
+
+1. Build and run the helper, then select **Settings → Register with Chrome** in the app.
+2. In this extension's settings, select **Enable Windows helper**. This asks Chrome for the optional
+   `nativeMessaging` permission, so updating the extension never disables it or adds a prompt.
+3. After each fresh Helix scan, the extension sends the helper the current project's item list,
+   including who holds each item and at which company. Procore sends its visible rows, marked
+   partial.
+
+See [PRIVACY.md](PRIVACY.md) for exactly what is sent.
+
 ## Install in Chrome
 
 For a deployed Task Hub, open **Settings → Browser Extensions**, download the TaskHub Helper ZIP, extract it

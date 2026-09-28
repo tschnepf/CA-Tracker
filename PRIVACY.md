@@ -82,3 +82,24 @@ The extension also stores the sidebar width, whether it was open or hidden, the 
 Disconnecting Task Hub stops future syncs and removes the local Task Hub URL and login tokens. Local
 Helix and visible-page Procore activity continue to work. Disconnecting does not delete provider tasks
 already synced to the self-hosted Task Hub.
+
+## Optional CA Tracker Windows helper
+
+The Windows helper bridge is off by default. It uses Chrome's optional `nativeMessaging` permission,
+which is requested only when the user selects **Enable Windows helper** in extension settings and can
+be removed there at any time. Chrome can then reach only the fixed `com.smc.catracker` host, and only
+if the CA Tracker app on that computer has registered it for this extension's ID.
+
+After each fresh Helix scan, the extension sends the helper the current project's RFI and Submittal
+list: item identifiers, type, number, title, status and status rank, whether it is closed, the
+responsible text, attachment count, created/modified/due dates, a link back to the item, and the
+names and company identifiers/names of the people who currently hold or will next hold each item.
+The logged-in user's name and company are included so the helper can tell which company "returned"
+refers to. For Procore, only the rows visible in the current grid are sent, always marked partial.
+Comments, attachment contents, activity history, cookies, and credentials are never sent.
+
+The helper stores these lists in the Windows user's `%LOCALAPPDATA%\SMC-CA-Tracker` folder and uses them
+only to compare with project CA folders on that computer. It sends nothing onward. The helper never
+changes a CA folder on its own: every folder creation or move is shown in a preview and runs only
+after the user confirms it, and each step is recorded in a local journal.
+

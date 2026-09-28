@@ -19,6 +19,12 @@
   const connectProcoreButton = document.getElementById("connect-procore");
   const disconnectProcoreButton = document.getElementById("disconnect-procore");
   const procoreMessage = document.getElementById("procore-message");
+  const helperState = document.getElementById("helper-state");
+  const helperDetail = document.getElementById("helper-detail");
+  const enableHelperButton = document.getElementById("enable-helper");
+  const disableHelperButton = document.getElementById("disable-helper");
+  const helperMessage = document.getElementById("helper-message");
+  const HELPER_PERMISSION = { permissions: ["nativeMessaging"] };
   let cacheEntryCount = 0;
   let taskHubConnected = false;
 
@@ -213,6 +219,61 @@
     }
   });
 
+  function showHelperMessage(value, isError) {
+    helperMessage.textContent = value || "";
+    helperMessage.classList.toggle("error", Boolean(isError));
+  }
+
+  function renderHelper(status) {
+    const permission = Boolean(status && status.permission);
+    const installed = Boolean(status && status.installed);
+    helperState.textContent = !permission ? "Off" : installed ? "Connected" : "Not found";
+    helperDetail.textContent = !permission
+      ? "Optional: enable to feed the CA Tracker app on this Windows computer."
+      : installed
+        ? `CA Tracker helper ${status.version || ""} is receiving item lists after each fresh scan.`.replace("  ", " ")
+        : "Chrome allows the helper, but it is not installed or registered on this computer. Open the CA Tracker app and choose Settings → Register with Chrome.";
+    enableHelperButton.hidden = permission;
+    disableHelperButton.hidden = !permission;
+  }
+
+  async function loadHelperStatus() {
+    try {
+      renderHelper(await runtimeMessage({ type: "WINDOWS_HELPER_STATUS" }));
+    } catch (error) {
+      renderHelper({ permission: false });
+      showHelperMessage(error.message, true);
+    }
+  }
+
+  enableHelperButton.addEventListener("click", async () => {
+    enableHelperButton.disabled = true;
+    try {
+      const granted = await chrome.permissions.request(HELPER_PERMISSION);
+      if (!granted) throw new Error("Chrome did not grant the Windows helper permission.");
+      showHelperMessage("Windows helper enabled. Refresh a Helix or Procore page to send its items.");
+      await loadHelperStatus();
+    } catch (error) {
+      showHelperMessage(error.message, true);
+    } finally {
+      enableHelperButton.disabled = false;
+    }
+  });
+
+  disableHelperButton.addEventListener("click", async () => {
+    disableHelperButton.disabled = true;
+    try {
+      await chrome.permissions.remove(HELPER_PERMISSION);
+      showHelperMessage("Windows helper disabled. Item lists are no longer sent.");
+      renderHelper({ permission: false });
+    } catch (error) {
+      showHelperMessage(error.message, true);
+    } finally {
+      disableHelperButton.disabled = false;
+    }
+  });
+
   void loadStatus();
   void loadCacheStatus();
+  void loadHelperStatus();
 })();

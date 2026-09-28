@@ -1,0 +1,9 @@
+{
+  "name": "com.smc.catracker",
+  "description": "SMC CA Tracker Windows helper",
+  "path": "SmcCaTracker.NativeHost.exe",
+  "type": "stdio",
+  "allowed_origins": [
+    "chrome-extension://kcngamkbiboiljpfbjpmjoekkfpbidbk/"
+  ]
+}

@@ -1,6 +1,11 @@
 "use strict";
 
-importScripts("provider-core.js", "procore-core.js", "integrations/taskhub/client.js");
+importScripts(
+  "provider-core.js",
+  "procore-core.js",
+  "integrations/taskhub/client.js",
+  "integrations/windows-helper/client.js"
+);
 
 const INJECT_MESSAGE = "HELIX_ACTIVITY_INJECT_BRIDGE";
 const HELIX_ORIGIN = "https://project.helixteam.com";
@@ -25,6 +30,7 @@ const CONTENT_STORAGE_KEYS = [
   /^helix-activity-ui-preferences-v1$/
 ];
 const taskHubClient = HelixTaskHubClient.create({ chrome, fetch });
+const windowsHelperClient = TaskHubWindowsHelperClient.create({ chrome });
 let activityCacheOperations = Promise.resolve();
 const pendingReportDownloads = new Map();
 void taskHubClient.restrictCredentialStorage();
@@ -942,6 +948,24 @@ async function handleMessage(message, sender) {
       throw new Error("Procore snapshot sync must start from a supported Procore page.");
     }
     return taskHubClient.syncProcoreSnapshot(message.snapshot);
+  }
+
+  if (message.type === "WINDOWS_HELPER_STATUS") {
+    if (!isSupportedTab(sender.tab) && !isExtensionOptionsPage(sender)) {
+      throw new Error("Windows helper status is available only to this extension.");
+    }
+    return windowsHelperClient.status();
+  }
+
+  if (message.type === "WINDOWS_HELPER_SNAPSHOT") {
+    if (!isSupportedTab(sender.tab)) {
+      throw new Error("Windows helper snapshots must start from a supported Helix or Procore page.");
+    }
+    const provider = TaskHubProviderCore.providerForUrl(sender.tab.url);
+    if (!message.snapshot || message.snapshot.provider !== provider) {
+      throw new Error("The snapshot provider does not match the sending page.");
+    }
+    return windowsHelperClient.sendSnapshot(message.snapshot);
   }
 
   throw new Error("Unsupported extension message.");

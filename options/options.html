@@ -58,6 +58,20 @@
         <p id="procore-message" role="status" aria-live="polite"></p>
       </section>
 
+      <section id="helper-card" aria-labelledby="helper-heading">
+        <div class="section-heading">
+          <div>
+            <h2 id="helper-heading">Optional CA Tracker Windows helper</h2>
+            <p>Sends each fresh Helix or Procore item list to the CA Tracker app on this computer so it can compare projects with their CA folders. Nothing is sent when the helper is not enabled or not installed.</p>
+          </div>
+          <strong id="helper-state">Checking…</strong>
+        </div>
+        <p id="helper-detail"></p>
+        <button id="enable-helper" type="button">Enable Windows helper</button>
+        <button id="disable-helper" type="button" class="secondary" hidden>Disable Windows helper</button>
+        <p id="helper-message" role="status" aria-live="polite"></p>
+      </section>
+
       <section id="cache-card" aria-labelledby="cache-heading">
         <div class="section-heading">
           <div>

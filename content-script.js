@@ -566,6 +566,20 @@
     return response.result;
   }
 
+  async function sendWindowsHelperSnapshot(raw) {
+    // Optional: hands the full current-project item list to the CA Tracker Windows helper.
+    // Without the helper permission or install this resolves quietly.
+    try {
+      if (typeof TaskHubWindowsHelperSnapshot === "undefined") return null;
+      const snapshot = TaskHubWindowsHelperSnapshot.buildHelixSnapshot(raw);
+      if (!snapshot.itemTypes.length) return null;
+      const response = await runtimeMessage({ type: "WINDOWS_HELPER_SNAPSHOT", snapshot });
+      return response && response.ok ? response.result : null;
+    } catch (_error) {
+      return null;
+    }
+  }
+
   function rpc(operation, payload, onProgress, timeoutMs) {
     const requestId = `activity-${Date.now()}-${requestSequence += 1}`;
     return new Promise((resolve, reject) => {
@@ -641,6 +655,7 @@
       } catch (_error) {
         // Helix remains fully usable when the optional Task Hub connection fails.
       }
+      await sendWindowsHelperSnapshot(raw);
       return index;
     })().catch((error) => {
       ui.setError(error.message);

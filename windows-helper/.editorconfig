@@ -1,0 +1,2 @@
+[*.{cs,xaml,csproj,props,slnx}]
+indent_size = 4
