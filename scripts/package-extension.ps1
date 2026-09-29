@@ -3,9 +3,9 @@ $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
 $manifest = Get-Content -Raw (Join-Path $root 'manifest.json') | ConvertFrom-Json
 $dist = Join-Path $root 'dist'
-$install = Join-Path $dist 'helix-my-activity'
-$versionedArchive = Join-Path $dist ("helix-my-activity-{0}.zip" -f $manifest.version)
-$currentArchive = Join-Path $dist 'helix-my-activity.zip'
+$install = Join-Path $dist 'SMC-CA-Tracker'
+$versionedArchive = Join-Path $dist ("SMC-CA-Tracker-{0}.zip" -f $manifest.version)
+$currentArchive = Join-Path $dist 'SMC-CA-Tracker.zip'
 $distFull = [IO.Path]::GetFullPath($dist).TrimEnd([IO.Path]::DirectorySeparatorChar) + [IO.Path]::DirectorySeparatorChar
 $installFull = [IO.Path]::GetFullPath($install)
 

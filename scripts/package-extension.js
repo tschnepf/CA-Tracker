@@ -18,9 +18,9 @@ if (process.platform === "win32") {
 
 const manifest = JSON.parse(fs.readFileSync(path.join(root, "manifest.json"), "utf8"));
 const dist = path.join(root, "dist");
-const install = path.join(dist, "helix-my-activity");
-const versionedArchive = path.join(dist, `helix-my-activity-${manifest.version}.zip`);
-const currentArchive = path.join(dist, "helix-my-activity.zip");
+const install = path.join(dist, "SMC-CA-Tracker");
+const versionedArchive = path.join(dist, `SMC-CA-Tracker-${manifest.version}.zip`);
+const currentArchive = path.join(dist, "SMC-CA-Tracker.zip");
 const distPrefix = `${path.resolve(dist)}${path.sep}`;
 
 if (!path.resolve(install).startsWith(distPrefix)) {

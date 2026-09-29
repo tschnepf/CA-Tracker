@@ -17,7 +17,7 @@ git history preserved, so it can be developed and released independently.
 
 ```sh
 npm run check     # validate the manifest and run the unit tests
-npm run package   # check, then build dist/helix-my-activity.zip
+npm run package   # check, then build dist/SMC-CA-Tracker.zip
 ```
 
 Some validation checks confirm the extension still matches the Task Hub server
@@ -228,15 +228,15 @@ powershell -ExecutionPolicy Bypass -File scripts/package-extension.ps1
 1. Open `chrome://extensions`.
 2. Enable **Developer mode**.
 3. Select **Load unpacked**.
-4. Choose this folder once: `extensions\HelixHelper\dist\helix-my-activity` inside this repository.
+4. Choose this folder once: `dist\SMC-CA-Tracker` inside this repository.
 5. Open a supported Helix or Procore tool page and refresh it once.
 6. Select the matching **My Helix Activity** or **My Procore Activity** launcher.
 
 Each person installs the same folder/package. The extension automatically chooses its adapter from the active site; no manual provider switch is required.
 
-For every future update, run the same packaging command. It replaces the contents of the permanent `dist\helix-my-activity` folder without changing its path. Then open `chrome://extensions` and select **Reload** on the existing extension. Do not select **Load unpacked** again.
+For every future update, run the same packaging command. It replaces the contents of the permanent `dist\SMC-CA-Tracker` folder without changing its path. Then open `chrome://extensions` and select **Reload** on the existing extension. Do not select **Load unpacked** again.
 
-The script also produces `dist\helix-my-activity.zip` for a stable-name distribution package and a versioned archive for release history. A recipient should always extract `helix-my-activity.zip` over the contents of one permanent folder, then select **Reload** in Chrome.
+The script also produces `dist\SMC-CA-Tracker.zip` for a stable-name distribution package and a versioned archive for release history. A recipient should always extract `SMC-CA-Tracker.zip` over the contents of one permanent folder, then select **Reload** in Chrome.
 
 If older versions were loaded from separate folders, remove those duplicates from `chrome://extensions` after the permanent folder is installed.
 

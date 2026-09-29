@@ -21,8 +21,8 @@ const packageMetadata = JSON.parse(fs.readFileSync(path.join(root, "package.json
 test("packaging preserves a stable unpacked folder and stable-name archive", () => {
   assert.equal(manifest.version, "2.3.0");
   assert.equal(packageMetadata.version, manifest.version);
-  assert.match(packageSource, /\$install = Join-Path \$dist 'helix-my-activity'/);
-  assert.match(packageSource, /\$currentArchive = Join-Path \$dist 'helix-my-activity\.zip'/);
+  assert.match(packageSource, /\$install = Join-Path \$dist 'SMC-CA-Tracker'/);
+  assert.match(packageSource, /\$currentArchive = Join-Path \$dist 'SMC-CA-Tracker\.zip'/);
   assert.match(packageSource, /InstallFolder = \$install/);
   assert.ok(
     packageSource.lastIndexOf("Remove-Item -LiteralPath $install")
@@ -36,7 +36,7 @@ test("packaging preserves a stable unpacked folder and stable-name archive", () 
   assert.match(packageSource, /-Recurse/);
   assert.match(portablePackageSource, /"integrations", "options"/);
   assert.match(portablePackageSource, /"procore-content-script\.js"/);
-  assert.match(portablePackageSource, /helix-my-activity-\$\{manifest\.version\}\.zip/);
+  assert.match(portablePackageSource, /SMC-CA-Tracker-\$\{manifest\.version\}\.zip/);
   assert.match(readme, /npm run package/);
 });
 
@@ -47,8 +47,8 @@ test("web packaging publishes no-cache metadata from the same manifest as the ZI
   const nginxConfiguration = fs.readFileSync(path.join(repositoryRoot, "infra", "web", "nginx.conf"), "utf8");
   assert.match(
     webDockerfile,
-    /dist\/helix-my-activity\/manifest\.json \/usr\/share\/nginx\/html\/browser-extensions\/helix-my-activity\.json/
+    /dist\/SMC-CA-Tracker\/manifest\.json \/usr\/share\/nginx\/html\/browser-extensions\/SMC-CA-Tracker\.json/
   );
-  assert.match(nginxConfiguration, /location = \/browser-extensions\/helix-my-activity\.json/);
+  assert.match(nginxConfiguration, /location = \/browser-extensions\/SMC-CA-Tracker\.json/);
   assert.match(nginxConfiguration, /Cache-Control "private, no-cache"/);
 });
