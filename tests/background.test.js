@@ -827,3 +827,63 @@ test("Windows helper snapshots are accepted only from a matching provider page",
   assert.equal(status.ok, true);
   assert.deepEqual(status.result, { permission: false, installed: false });
 });
+
+test("CA Tracker refreshes close only the finishing tab and only follow same-provider next pages", async () => {
+  const id = "d4".repeat(16);
+  const calls = [];
+  const helperModule = {
+    create() {
+      return {
+        async status() { return { permission: true, installed: true }; },
+        async claimRefresh(requestId, provider) { calls.push(["claim", requestId, provider]); return { id: requestId, projectId: "34", step: 0 }; },
+        async refreshFailed(requestId, error) { calls.push(["failed", requestId, error]); return true; },
+        async sendSnapshot(_snapshot, extras) {
+          calls.push(["snapshot", extras.refresh && extras.refresh.step]);
+          return extras.refresh.step === 0
+            ? { sent: true, refresh: { done: false, nextUrl: "https://us02.procore.com/webclients/host/companies/12/projects/34/tools/submittals#ca-tracker-refresh=x" } }
+            : extras.refresh.step === 1
+              ? { sent: true, refresh: { done: true, closeTab: true, status: "Complete" } }
+              : { sent: true, refresh: { done: false, nextUrl: "https://evil.example.com/" } };
+        }
+      };
+    }
+  };
+  const { listener, removedTabs } = loadBackground({ reportGlobals: { TaskHubWindowsHelperClient: helperModule, setTimeout: (fn) => fn() } });
+  const snapshot = { provider: "procore", projectId: "34", itemTypes: ["rfi"], items: [] };
+
+  const claim = await send(listener, { type: "WINDOWS_HELPER_REFRESH_CLAIM", id }, procoreSender);
+  assert.equal(claim.ok, true);
+  assert.deepEqual(calls[0], ["claim", id, "procore"]);
+  const fromOptions = await send(listener, { type: "WINDOWS_HELPER_REFRESH_CLAIM", id }, optionsSender);
+  assert.equal(fromOptions.ok, false);
+
+  const first = await send(listener, { type: "WINDOWS_HELPER_SNAPSHOT", snapshot, refresh: { id, step: 0 } }, procoreSender);
+  assert.match(first.result.refresh.nextUrl, /\/tools\/submittals/);
+  assert.deepEqual(removedTabs, []);
+
+  const unsafe = await send(listener, { type: "WINDOWS_HELPER_SNAPSHOT", snapshot, refresh: { id, step: 2 } }, procoreSender);
+  assert.equal(unsafe.result.refresh.nextUrl, null);
+
+  const last = await send(listener, { type: "WINDOWS_HELPER_SNAPSHOT", snapshot, refresh: { id, step: 1 } }, procoreSender);
+  assert.equal(last.result.refresh.done, true);
+  assert.deepEqual(removedTabs, [procoreSender.tab.id]);
+
+  const failed = await send(listener, { type: "WINDOWS_HELPER_REFRESH_FAILED", id, error: "boom" }, procoreSender);
+  assert.equal(failed.ok, true);
+  assert.deepEqual(calls[calls.length - 1], ["failed", id, "boom"]);
+});
+
+test("refresh ids seen at page start are handed out once, to the same tab only", async () => {
+  const { listener } = loadBackground();
+  const id = "f6".repeat(16);
+  const seen = await send(listener, { type: "WINDOWS_HELPER_REFRESH_SEEN", id }, helixSender);
+  assert.equal(seen.ok, true);
+  const bad = await send(listener, { type: "WINDOWS_HELPER_REFRESH_SEEN", id: "../x" }, helixSender);
+  assert.equal(bad.ok, false);
+  const otherTab = await send(listener, { type: "WINDOWS_HELPER_REFRESH_TAKE" }, procoreSender);
+  assert.equal(otherTab.result, null);
+  const taken = await send(listener, { type: "WINDOWS_HELPER_REFRESH_TAKE" }, helixSender);
+  assert.equal(taken.result, id);
+  const again = await send(listener, { type: "WINDOWS_HELPER_REFRESH_TAKE" }, helixSender);
+  assert.equal(again.result, null);
+});

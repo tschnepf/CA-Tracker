@@ -81,18 +81,55 @@
       if (size > MAX_MESSAGE_BYTES) throw new Error("The project snapshot is too large for the Windows helper.");
     }
 
-    async function sendSnapshot(snapshot) {
+    function validRefreshId(value) {
+      return typeof value === "string" && /^[a-f0-9]{32}$/.test(value);
+    }
+
+    async function sendSnapshot(snapshot, extras) {
       validateSnapshot(snapshot);
       if (!await hasPermission()) return { sent: false, reason: "not_enabled" };
+      const message = { type: "snapshot", snapshot };
+      const options = extras && typeof extras === "object" ? extras : {};
+      if (options.catalog && typeof options.catalog === "object"
+        && options.catalog.provider === snapshot.provider && Array.isArray(options.catalog.projects)) {
+        message.catalog = options.catalog;
+      }
+      if (options.refresh && validRefreshId(options.refresh.id)) {
+        message.refresh = { id: options.refresh.id, step: Number(options.refresh.step) || 0 };
+      }
       try {
-        const response = await sendNative({ type: "snapshot", snapshot });
-        return { sent: true, itemCount: snapshot.items.length, helperVersion: String(response.version || "") };
+        const response = await sendNative(message);
+        return {
+          sent: true,
+          itemCount: snapshot.items.length,
+          helperVersion: String(response.version || ""),
+          refresh: response.refresh || null
+        };
       } catch (error) {
         return { sent: false, reason: "unavailable", error: error.message };
       }
     }
 
-    return Object.freeze({ status, sendSnapshot, hasPermission });
+    async function claimRefresh(id, provider) {
+      if (!validRefreshId(id)) throw new Error("Invalid refresh request.");
+      if (!await hasPermission()) {
+        throw new Error("Enable the Windows helper in TaskHub Helper settings so the CA Tracker app can refresh.");
+      }
+      const response = await sendNative({ type: "claimRefresh", id, provider });
+      return response.request;
+    }
+
+    async function refreshFailed(id, error) {
+      if (!validRefreshId(id) || !await hasPermission()) return false;
+      try {
+        await sendNative({ type: "refreshFailed", id, error: String(error || "").slice(0, 500) });
+        return true;
+      } catch (_error) {
+        return false;
+      }
+    }
+
+    return Object.freeze({ status, sendSnapshot, hasPermission, claimRefresh, refreshFailed });
   }
 
   return Object.freeze({ HOST_NAME, PERMISSION, create });

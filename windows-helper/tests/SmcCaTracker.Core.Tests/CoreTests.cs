@@ -4,6 +4,7 @@ using SmcCaTracker.Core.Matching;
 using SmcCaTracker.Core.Models;
 using SmcCaTracker.Core.NativeMessaging;
 using SmcCaTracker.Core.Operations;
+using SmcCaTracker.Core.Refresh;
 using SmcCaTracker.Core.Storage;
 
 namespace SmcCaTracker.Core.Tests;
@@ -208,7 +209,7 @@ public class SnapshotStoreTests
     {
         using var temp = new TempFolder();
         var store = new SnapshotStore(new AppPaths(temp.Root));
-        var handler = new NativeHostHandler(store);
+        var handler = new NativeHostHandler(new AppPaths(temp.Root));
         var json = """
         {"type":"snapshot","snapshot":{"schemaVersion":1,"provider":"helix","accountId":null,"projectId":"p1",
          "projectName":"Aligned CMH04","projectUrl":null,"itemTypes":["rfi"],"complete":true,
@@ -243,7 +244,7 @@ public class SnapshotStoreTests
 
 public class ComparisonAndOperationTests
 {
-    private static (TempFolder Temp, TrackerSettings Settings, ProjectMapping Mapping) Setup()
+    private static (TempFolder Temp, TrackerSettings Settings, TrackerProject Mapping) Setup()
     {
         var temp = new TempFolder();
         var ca = temp.Make("CMH04", "CA");
@@ -253,8 +254,13 @@ public class ComparisonAndOperationTests
         temp.Make("CMH04", "CA", "RFIs", "~Returned", "RFI-004 - Closed");
         temp.Make("CMH04", "CA", "RFIs", "Scratch");
         var settings = new TrackerSettings();
-        var mapping = settings.GetOrAddMapping(Providers.Helix, "p1", "Aligned CMH04");
-        mapping.CaFolder = ca;
+        var mapping = new TrackerProject
+        {
+            Name = "CMH04",
+            CaFolder = ca,
+            Connection = new ProviderConnection { Provider = Providers.Helix, ProjectId = "p1", ProjectName = "Aligned CMH04" }
+        };
+        settings.Projects.Add(mapping);
         return (temp, settings, mapping);
     }
 
@@ -293,8 +299,8 @@ public class ComparisonAndOperationTests
             var ready = comparison.For(ItemTypes.Rfi).Rows.Where(row => row.Status == RowStatus.ReadyToReturn).ToList();
             var plan = OperationPlanner.PlanMarkReturned(ready, comparison);
 
-            var source = Path.Combine(mapping.CaFolder!, "RFIs", "RFI-002 - With architect");
-            var destination = Path.Combine(mapping.CaFolder!, "RFIs", "~Returned", "RFI-002 - With architect");
+            var source = Path.Combine(mapping.CaFolder, "RFIs", "RFI-002 - With architect");
+            var destination = Path.Combine(mapping.CaFolder, "RFIs", "~Returned", "RFI-002 - With architect");
             Assert.Single(plan.Operations);
             Assert.True(Directory.Exists(source));
             Assert.False(Directory.Exists(destination));
@@ -321,7 +327,7 @@ public class ComparisonAndOperationTests
             Assert.EndsWith("_Returned", plan.Operations[0].DestinationPath);
             Assert.False(Directory.Exists(plan.Operations[0].DestinationPath));
 
-            Directory.CreateDirectory(Path.Combine(mapping.CaFolder!, "RFIs", "_Returned", "RFI-001 - Held by us"));
+            Directory.CreateDirectory(Path.Combine(mapping.CaFolder, "RFIs", "_Returned", "RFI-001 - Held by us"));
             var blocked = OperationPlanner.PlanMarkReturned(rows, ProjectComparer.Compare(Snapshot(), mapping, settings));
             Assert.Contains(blocked.Operations, operation => operation.IsBlocked && operation.Title.Contains("RFI-001"));
             Assert.Contains(blocked.Operations, operation => operation.Warning is not null && operation.Title.Contains("RFI-001"));
@@ -339,7 +345,7 @@ public class ComparisonAndOperationTests
             var plan = OperationPlanner.PlanMoveBack(reopened, comparison);
             Assert.Single(plan.Operations);
             new OperationExecutor(new AppPaths(temp.Make("appdata"))).Execute(plan);
-            Assert.True(Directory.Exists(Path.Combine(mapping.CaFolder!, "RFIs", "RFI-003 - Back with us")));
+            Assert.True(Directory.Exists(Path.Combine(mapping.CaFolder, "RFIs", "RFI-003 - Back with us")));
         }
     }
 
@@ -351,5 +357,172 @@ public class ComparisonAndOperationTests
         Assert.False(FolderNames.IsValid(" padded"));
         Assert.False(FolderNames.IsValid("CON"));
         Assert.NotEmpty(new FolderLayout { RfiFolder = "Same", SubmittalFolder = "same" }.Validate());
+    }
+}
+
+public class RefreshTests
+{
+    private static TrackerProject HelixProject() => new()
+    {
+        Name = "CMH04",
+        CaFolder = @"C:\CA",
+        Connection = new ProviderConnection { Provider = Providers.Helix, ProjectId = "p1", ProjectName = "Aligned CMH04" }
+    };
+
+    [Theory]
+    [InlineData("https://project.helixteam.com/Projects/abc123/Overview", "helix", "abc123", null)]
+    [InlineData("https://project.helixteam.com/Projects/abc123/RFI#helix-activity-open=x", "helix", "abc123", null)]
+    [InlineData("https://us02.procore.com/webclients/host/companies/12/projects/34/tools/rfis?page=2", "procore", "34", "12")]
+    public void ParsesProjectLinks(string link, string provider, string projectId, string? accountId)
+    {
+        Assert.True(ProviderLinks.TryParse(link, out var connection, out _));
+        Assert.Equal(provider, connection!.Provider);
+        Assert.Equal(projectId, connection.ProjectId);
+        Assert.Equal(accountId, connection.AccountId);
+    }
+
+    [Theory]
+    [InlineData("https://app.procore.com/34/project/rfi/show/9")]
+    [InlineData("https://project.helixteam.com/Home")]
+    [InlineData("http://project.helixteam.com/Projects/abc/Overview")]
+    [InlineData("https://example.com/Projects/abc/Overview")]
+    [InlineData("not a link")]
+    public void RejectsLinksWithoutAProject(string link)
+    {
+        Assert.False(ProviderLinks.TryParse(link, out _, out var error));
+        Assert.NotEmpty(error);
+    }
+
+    [Fact]
+    public void BuildsRefreshPagesForEachProvider()
+    {
+        var helix = ProviderLinks.RefreshSteps(HelixProject().Connection!);
+        Assert.Single(helix);
+        Assert.Equal("https://project.helixteam.com/Projects/p1/Overview", helix[0].Url);
+
+        var procore = ProviderLinks.RefreshSteps(new ProviderConnection
+        {
+            Provider = Providers.Procore, ProjectId = "34", AccountId = "12", Host = "us02.procore.com"
+        });
+        Assert.Equal(new[]
+        {
+            "https://us02.procore.com/webclients/host/companies/12/projects/34/tools/rfis",
+            "https://us02.procore.com/webclients/host/companies/12/projects/34/tools/submittals"
+        }, procore.Select(step => step.Url));
+    }
+
+    [Fact]
+    public void OnlyAppCreatedRequestsCanBeClaimedAndCompleted()
+    {
+        using var temp = new TempFolder();
+        var paths = new AppPaths(temp.Root);
+        var store = new RefreshRequestStore(paths);
+        var now = DateTimeOffset.Parse("2026-09-28T20:00:00Z");
+        var request = store.Create(HelixProject(), new BrowserSettings(), now);
+
+        Assert.Matches("^[a-f0-9]{32}$", request.Id);
+        Assert.EndsWith($"/Overview#ca-tracker-refresh={request.Id}", request.UrlForStep(0));
+        Assert.Null(store.Claim(new string('a', 32), Providers.Helix, now).Request);
+        Assert.Null(store.Claim(request.Id, Providers.Procore, now).Request);
+
+        var claim = store.Claim(request.Id, Providers.Helix, now);
+        Assert.Equal(RefreshStatus.Running, claim.Request!.Status);
+
+        var snapshot = Build.Snapshot(Build.Item("1", "RFI-001"));
+        var result = store.CompleteStep(request.Id, 0, snapshot, now.AddSeconds(20));
+        Assert.True(result!.Done);
+        Assert.Equal(RefreshStatus.Complete, store.Load(request.Id)!.Status);
+        Assert.Null(store.Claim(request.Id, Providers.Helix, now).Request);
+    }
+
+    [Fact]
+    public void RequestsExpireAndRejectTheWrongProject()
+    {
+        using var temp = new TempFolder();
+        var store = new RefreshRequestStore(new AppPaths(temp.Root));
+        var now = DateTimeOffset.Parse("2026-09-28T20:00:00Z");
+        var expired = store.Create(HelixProject(), new BrowserSettings { TimeoutSeconds = 60 }, now);
+        Assert.Null(store.Claim(expired.Id, Providers.Helix, now.AddMinutes(5)).Request);
+        Assert.Equal(RefreshStatus.Failed, store.Load(expired.Id)!.Status);
+
+        var request = store.Create(HelixProject(), new BrowserSettings(), now);
+        store.Claim(request.Id, Providers.Helix, now);
+        var other = Build.Snapshot();
+        other.ProjectId = "someone-else";
+        store.CompleteStep(request.Id, 0, other, now);
+        Assert.Equal(RefreshStatus.Failed, store.Load(request.Id)!.Status);
+    }
+
+    [Fact]
+    public void ProcoreRefreshesContinueToTheNextPage()
+    {
+        using var temp = new TempFolder();
+        var paths = new AppPaths(temp.Root);
+        var now = DateTimeOffset.Parse("2026-09-28T20:00:00Z");
+        var project = new TrackerProject
+        {
+            Name = "Tower",
+            Connection = new ProviderConnection { Provider = Providers.Procore, ProjectId = "34", AccountId = "12", ProjectName = "Tower" }
+        };
+        var request = new RefreshRequestStore(paths).Create(project, new BrowserSettings(), now);
+        var handler = new NativeHostHandler(paths, () => now);
+
+        var claim = JsonDocument.Parse(handler.Handle($$"""{"type":"claimRefresh","id":"{{request.Id}}","provider":"procore"}""")).RootElement;
+        Assert.True(claim.GetProperty("ok").GetBoolean());
+        Assert.Equal(0, claim.GetProperty("request").GetProperty("step").GetInt32());
+
+        var snapshotJson = $$$"""
+        {"type":"snapshot","refresh":{"id":"{{{request.Id}}}","step":0},
+         "catalog":{"provider":"procore","projects":[{"projectId":"34","accountId":"12","name":"Tower","host":"app.procore.com"}]},
+         "snapshot":{"schemaVersion":1,"provider":"procore","projectId":"34","projectName":"Tower","itemTypes":["rfi"],
+         "complete":false,"scannedAt":"2026-09-28T20:00:05Z","user":{"fullName":""},"items":[]}}
+        """;
+        var first = JsonDocument.Parse(handler.Handle(snapshotJson)).RootElement.GetProperty("refresh");
+        Assert.False(first.GetProperty("done").GetBoolean());
+        Assert.EndsWith($"/tools/submittals#ca-tracker-refresh={request.Id}", first.GetProperty("nextUrl").GetString());
+
+        var second = JsonDocument.Parse(handler.Handle(snapshotJson.Replace("\"step\":0", "\"step\":1"))).RootElement.GetProperty("refresh");
+        Assert.True(second.GetProperty("done").GetBoolean());
+        Assert.True(second.GetProperty("closeTab").GetBoolean());
+        Assert.Contains(new ProjectCatalogStore(paths).Load(), project => project.ProjectId == "34" && project.AccountId == "12");
+        Assert.NotNull(ExtensionContact.Load(paths));
+    }
+
+    [Theory]
+    [InlineData(@"Z:\Shared\Projects\CMH04\CA", "CMH04")]
+    [InlineData(@"Z:\Shared\Projects\CMH04\CA\", "CMH04")]
+    [InlineData(@"Z:\Shared\Projects\CMH04 Construction Admin", "CMH04 Construction Admin")]
+    public void SuggestsProjectNamesFromCaFolders(string folder, string expected)
+    {
+        if (!OperatingSystem.IsWindows())
+        {
+            return;
+        }
+
+        Assert.Equal(expected, TrackerProject.SuggestName(folder));
+    }
+}
+
+public class SettingsMigrationTests
+{
+    [Fact]
+    public void Version1MappingsBecomeConnectedProjects()
+    {
+        using var temp = new TempFolder();
+        var paths = new AppPaths(temp.Root);
+        File.WriteAllText(paths.SettingsFile, """
+        {"version":1,"theme":"Dark","projects":[
+          {"provider":"helix","projectId":"p1","projectName":"Aligned CMH04","caFolder":"Z:/CMH04/CA","companyId":null},
+          {"provider":"helix","projectId":"p2","projectName":"No folder yet","caFolder":null}
+        ]}
+        """);
+        var settings = new SettingsStore(paths).Load();
+        Assert.Equal(2, settings.Version);
+        Assert.Equal(ThemePreference.Dark, settings.Theme);
+        var project = Assert.Single(settings.Projects);
+        Assert.Equal("Aligned CMH04", project.Name);
+        Assert.Equal("Z:/CMH04/CA", project.CaFolder);
+        Assert.Equal("p1", project.Connection!.ProjectId);
+        Assert.Equal(2, new SettingsStore(paths).Load().Version);
     }
 }

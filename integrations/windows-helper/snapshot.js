@@ -192,8 +192,98 @@
     return Array.from(byProject.values());
   }
 
+  // One Procore page during an app-requested refresh: always returns a snapshot for the requested
+  // project and item type, even when the grid shows no rows, so the app can record the refresh.
+  function buildProcoreProjectSnapshot(visibleQueue, request) {
+    if (!request || !request.projectId) throw new Error("A Procore refresh request is required.");
+    const itemType = Array.isArray(request.itemTypes) && request.itemTypes[0] === "submittal" ? "submittal" : "rfi";
+    const projectId = text(request.projectId, 120);
+    const matching = buildProcoreSnapshots(visibleQueue).find((snapshot) => snapshot.projectId === projectId);
+    const items = matching ? matching.items.filter((item) => item.itemType === itemType) : [];
+    return {
+      schemaVersion: SCHEMA_VERSION,
+      provider: "procore",
+      accountId: request.accountId ? text(request.accountId, 80) : (matching && matching.accountId) || null,
+      projectId,
+      projectName: text(request.projectName || (matching && matching.projectName) || `Procore Project ${projectId}`, 300),
+      projectUrl: null,
+      itemTypes: [itemType],
+      complete: false,
+      scannedAt: (matching && matching.scannedAt) || new Date().toISOString(),
+      user: { fullName: "", companyId: null, company: null },
+      items
+    };
+  }
+
+  // Projects the user can open, offered by the app when connecting a project.
+  function buildHelixCatalog(scanResult) {
+    const projects = scanResult && Array.isArray(scanResult.projects) ? scanResult.projects : [];
+    return {
+      provider: "helix",
+      projects: projects.slice(0, MAX_ITEMS).filter((project) => project && project.id && project.name).map((project) => ({
+        projectId: text(project.id, 120),
+        accountId: null,
+        accountName: null,
+        name: text(project.name, 300),
+        host: "project.helixteam.com"
+      }))
+    };
+  }
+
+  function buildProcoreCatalog(visibleQueue, discoveryCatalog, host) {
+    const projects = new Map();
+    const safeHost = /^(?:app|[a-z]{2}\d{2})\.procore\.com$/i.test(String(host || "")) ? String(host).toLowerCase() : null;
+    const companies = discoveryCatalog && Array.isArray(discoveryCatalog.companies) ? discoveryCatalog.companies : [];
+    for (const company of companies) {
+      for (const project of Array.isArray(company && company.projects) ? company.projects : []) {
+        if (!project || !project.id || !project.name) continue;
+        projects.set(`${company.id}|${project.id}`, {
+          projectId: text(project.id, 120),
+          accountId: text(company.id, 80),
+          accountName: text(company.name, 240),
+          name: text(project.name, 300),
+          host: safeHost
+        });
+      }
+    }
+    for (const row of visibleQueue && Array.isArray(visibleQueue.items) ? visibleQueue.items : []) {
+      if (!row || !row.project_id || !row.account_id) continue;
+      const key = `${row.account_id}|${row.project_id}`;
+      if (projects.has(key)) continue;
+      projects.set(key, {
+        projectId: text(row.project_id, 120),
+        accountId: text(row.account_id, 80),
+        accountName: null,
+        name: text(row.project_name || `Procore Project ${row.project_id}`, 300),
+        host: safeHost
+      });
+    }
+    return { provider: "procore", projects: Array.from(projects.values()).slice(0, MAX_ITEMS) };
+  }
+
+  const REFRESH_HASH = /^#ca-tracker-refresh=([a-f0-9]{32})$/;
+
+  // Reads and removes an app-issued refresh id from the page URL. The id only works if the CA
+  // Tracker app on this computer created it, which the native host checks when it is claimed.
+  function takeRefreshId(windowObject) {
+    const match = String(windowObject.location && windowObject.location.hash || "").match(REFRESH_HASH);
+    if (!match) return null;
+    if (windowObject.history && typeof windowObject.history.replaceState === "function") {
+      windowObject.history.replaceState(
+        windowObject.history.state,
+        "",
+        `${windowObject.location.pathname}${windowObject.location.search || ""}`
+      );
+    }
+    return match[1];
+  }
+
   return Object.freeze({
     HOST_NAME,
+    buildProcoreProjectSnapshot,
+    buildHelixCatalog,
+    buildProcoreCatalog,
+    takeRefreshId,
     SCHEMA_VERSION,
     MAX_ITEMS,
     buildHelixSnapshot,

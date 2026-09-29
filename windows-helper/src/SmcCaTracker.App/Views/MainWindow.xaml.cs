@@ -50,35 +50,78 @@ public partial class MainWindow : Window
         }
     }
 
-    private async void ChooseFolder_Click(object sender, RoutedEventArgs e)
+    private async void NewProject_Click(object sender, RoutedEventArgs e)
+    {
+        var dialog = new OpenFolderDialog { Title = "Choose the new project's CA folder", Multiselect = false };
+        if (dialog.ShowDialog(this) != true)
+        {
+            return;
+        }
+
+        var existing = viewModel.Settings.Projects.FirstOrDefault(project =>
+            string.Equals(Path.TrimEndingDirectorySeparator(project.CaFolder), Path.TrimEndingDirectorySeparator(dialog.FolderName), StringComparison.OrdinalIgnoreCase));
+        if (existing is not null)
+        {
+            ShowInfo($"That CA folder already belongs to the project \"{existing.Name}\".");
+            viewModel.SelectedProject = viewModel.Projects.FirstOrDefault(project => project.Id == existing.Id);
+            return;
+        }
+
+        // Creating a project only records it in the tracker's settings; nothing in the folder changes.
+        var draft = new TrackerProject { Name = TrackerProject.SuggestName(dialog.FolderName), CaFolder = dialog.FolderName };
+        var window = new ProjectWindow(draft, isNew: true, viewModel) { Owner = this };
+        if (window.ShowDialog() == true && window.Result is not null)
+        {
+            viewModel.AddProject(window.Result);
+            await viewModel.CompareAsync();
+        }
+    }
+
+    private async void EditProject_Click(object sender, RoutedEventArgs e)
     {
         if (viewModel.SelectedProject is null)
         {
             return;
         }
 
-        var dialog = new OpenFolderDialog
+        var window = new ProjectWindow(viewModel.CloneProject(viewModel.SelectedProject.Project), isNew: false, viewModel) { Owner = this };
+        if (window.ShowDialog() != true)
         {
-            Title = $"Choose the CA folder for {viewModel.SelectedProject.Name}",
-            Multiselect = false
-        };
-        var current = viewModel.SelectedProject.Mapping?.CaFolder;
-        if (!string.IsNullOrWhiteSpace(current) && Directory.Exists(current))
-        {
-            dialog.InitialDirectory = current;
+            return;
         }
 
-        if (dialog.ShowDialog(this) == true)
+        if (window.RemoveRequested)
         {
-            // Choosing a folder only records it in the tracker's settings; nothing in it changes.
-            await viewModel.SetCaFolderAsync(dialog.FolderName);
+            viewModel.RemoveProject(viewModel.SelectedProject.Id);
+        }
+        else if (window.Result is not null)
+        {
+            await viewModel.UpdateProjectAsync(window.Result);
+        }
+    }
+
+    private async void Connect_Click(object sender, RoutedEventArgs e)
+    {
+        if (viewModel.SelectedProject is null)
+        {
+            return;
+        }
+
+        var project = viewModel.CloneProject(viewModel.SelectedProject.Project);
+        var window = new ConnectWindow(viewModel.KnownProviderProjects(), project.Connection, viewModel.Settings.Browser) { Owner = this };
+        if (window.ShowDialog() == true && window.Result is not null)
+        {
+            project.Connection = window.Result;
+            await viewModel.UpdateProjectAsync(project);
         }
     }
 
     private void OpenCaFolder_Click(object sender, RoutedEventArgs e) =>
-        OpenInExplorer(viewModel.SelectedProject?.Mapping?.CaFolder);
+        OpenInExplorer(viewModel.SelectedProject?.Project.CaFolder);
 
-    private async void Rescan_Click(object sender, RoutedEventArgs e) => await viewModel.RefreshAsync();
+    private async void Refresh_Click(object sender, RoutedEventArgs e) => await viewModel.StartRefreshAsync();
+
+    private void CancelRefresh_Click(object sender, RoutedEventArgs e) => viewModel.CancelRefresh();
 
     private void SelectReady_Click(object sender, RoutedEventArgs e) => viewModel.SelectAllReady();
 
@@ -157,7 +200,7 @@ public partial class MainWindow : Window
         var failed = results.Count(result => result.Outcome == OperationOutcome.Failed);
         viewModel.StatusMessage = $"{plan.Title}: {done} done, {failed} failed, {results.Count - done - failed} skipped.";
         new PreviewWindow(plan, results) { Owner = this }.ShowDialog();
-        await viewModel.RefreshAsync();
+        await viewModel.CompareAsync();
     }
 
     private void OpenRowFolder_Click(object sender, RoutedEventArgs e)
@@ -188,7 +231,7 @@ public partial class MainWindow : Window
 
     private async void Settings_Click(object sender, RoutedEventArgs e)
     {
-        var window = new SettingsWindow(viewModel.CloneSettings(), viewModel.SelectedProject, viewModel.Paths) { Owner = this };
+        var window = new SettingsWindow(viewModel.CloneSettings(), viewModel.Paths) { Owner = this };
         if (window.ShowDialog() == true)
         {
             ThemeManager.Apply(window.Result.Theme);
@@ -204,7 +247,7 @@ public partial class MainWindow : Window
     {
         if (string.IsNullOrWhiteSpace(path) || !Directory.Exists(path))
         {
-            ShowInfo("That folder cannot be found. Rescan to refresh the list.");
+            ShowInfo("That folder cannot be found. Select Refresh to update the list.");
             return;
         }
 

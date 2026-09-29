@@ -20,6 +20,11 @@
   const VIEW_STATE_VERSION = 1;
   const VIEW_STATE_PREFIX = "helix-activity-view-state-v1:";
   const nonce = crypto.randomUUID().replace(/-/g, "_");
+  // Taken before Helix's own scripts can rewrite the URL; see runHelperRefresh.
+  const helperRefreshId = typeof TaskHubWindowsHelperSnapshot === "undefined"
+    ? null
+    : TaskHubWindowsHelperSnapshot.takeRefreshId(window);
+  let helperRefresh = null;
   const pending = new Map();
   let requestSequence = 0;
   let context = null;
@@ -568,15 +573,76 @@
 
   async function sendWindowsHelperSnapshot(raw) {
     // Optional: hands the full current-project item list to the CA Tracker Windows helper.
-    // Without the helper permission or install this resolves quietly.
+    // Without the helper permission or install this resolves quietly. When the CA Tracker app
+    // requested this scan, the snapshot also completes that refresh.
+    const refresh = helperRefresh;
+    helperRefresh = null;
     try {
       if (typeof TaskHubWindowsHelperSnapshot === "undefined") return null;
       const snapshot = TaskHubWindowsHelperSnapshot.buildHelixSnapshot(raw);
-      if (!snapshot.itemTypes.length) return null;
-      const response = await runtimeMessage({ type: "WINDOWS_HELPER_SNAPSHOT", snapshot });
-      return response && response.ok ? response.result : null;
-    } catch (_error) {
+      if (!snapshot.itemTypes.length) {
+        if (refresh) await reportHelperRefreshFailure(refresh, "Helix could not read this project's RFIs and Submittals.");
+        return null;
+      }
+      const response = await runtimeMessage({
+        type: "WINDOWS_HELPER_SNAPSHOT",
+        snapshot,
+        catalog: TaskHubWindowsHelperSnapshot.buildHelixCatalog(raw),
+        refresh
+      });
+      const result = response && response.ok ? response.result : null;
+      if (refresh) {
+        if (!result || !result.sent) {
+          await reportHelperRefreshFailure(refresh, result && result.error || "The CA Tracker app did not receive the data.");
+        } else if (result.refresh && result.refresh.status === "Failed") {
+          ui.setError(`CA Tracker refresh failed: ${result.refresh.error || "the app rejected this page."}`);
+        } else if (result.refresh && result.refresh.nextUrl) {
+          window.location.assign(result.refresh.nextUrl);
+        }
+      }
+      return result;
+    } catch (error) {
+      if (refresh) await reportHelperRefreshFailure(refresh, error.message);
       return null;
+    }
+  }
+
+  async function takeBackgroundRefreshId() {
+    const response = await runtimeMessage({ type: "WINDOWS_HELPER_REFRESH_TAKE" });
+    return response && response.ok && typeof response.result === "string" ? response.result : null;
+  }
+
+  async function reportHelperRefreshFailure(refresh, message) {
+    await runtimeMessage({ type: "WINDOWS_HELPER_REFRESH_FAILED", id: refresh.id, error: String(message || "") });
+    ui.setError(`CA Tracker refresh failed: ${message}`);
+  }
+
+  // The CA Tracker app opened this page to refresh a project: claim the request through the
+  // native host (which only accepts ids the app created), then run a fresh full scan.
+  async function runHelperRefresh(id) {
+    const claimed = await runtimeMessage({ type: "WINDOWS_HELPER_REFRESH_CLAIM", id });
+    if (!claimed || !claimed.ok || !claimed.result) {
+      ui.setPanelOpen(true);
+      ui.setError(`CA Tracker refresh: ${claimed && claimed.error || "the Windows helper did not respond."}`);
+      return;
+    }
+    const request = claimed.result;
+    if (String(request.projectId) !== String(context.projectId)) {
+      ui.setPanelOpen(true);
+      await reportHelperRefreshFailure({ id }, "Chrome opened a different Helix project than the one requested.");
+      return;
+    }
+    helperRefresh = { id, step: Number(request.step) || 0 };
+    const scan = runScan(true);
+    ui.setPanelOpen(true);
+    try {
+      await scan;
+    } catch (error) {
+      if (helperRefresh) {
+        const refresh = helperRefresh;
+        helperRefresh = null;
+        await reportHelperRefreshFailure(refresh, error.message);
+      }
     }
   }
 
@@ -744,6 +810,11 @@
         hasScanned = cached.fresh;
       }
       ui.setTaskHubStatus(await taskHubStatus());
+      const refreshId = helperRefreshId || await takeBackgroundRefreshId();
+      if (refreshId) {
+        await runHelperRefresh(refreshId);
+        return;
+      }
       const resumedTaskHubNavigation = await resumeTaskHubNavigation();
       const resumedNavigation = resumedTaskHubNavigation || await resumePendingNavigation();
       if (!resumedNavigation && preferences.panelOpen === true) ui.setPanelOpen(true);

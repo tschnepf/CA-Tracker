@@ -6,22 +6,18 @@ using SmcCaTracker.Core.Storage;
 
 namespace SmcCaTracker.App.Views;
 
-public sealed record CompanyOption(string? Id, string? Name, string Label);
-
 /// <summary>Edits a copy of the settings; the caller applies <see cref="Result"/> only after Save.</summary>
 public partial class SettingsWindow : Window
 {
-    private readonly ProjectViewModel? project;
     private readonly ChromeRegistration registration;
     private readonly bool loading;
 
-    public SettingsWindow(TrackerSettings settings, ProjectViewModel? project, AppPaths paths)
+    public SettingsWindow(TrackerSettings settings, AppPaths paths)
     {
         loading = true;
         InitializeComponent();
         ThemeManager.Attach(this);
         Result = settings;
-        this.project = project;
         registration = new ChromeRegistration(paths);
 
         ThemeSystem.IsChecked = settings.Theme == ThemePreference.System;
@@ -39,62 +35,17 @@ public partial class SettingsWindow : Window
         NeverStatusesBox.Text = string.Join(", ", settings.Returned.NeverReturnedStatuses);
         ExtensionIdsBox.Text = string.Join(", ", settings.AllowedExtensionIds);
 
-        LoadProject(settings);
+        ChromePathBox.Text = settings.Browser.ChromePath;
+        ProfileBox.Text = settings.Browser.ProfileDirectory;
+        CloseTabBox.IsChecked = settings.Browser.CloseTabWhenDone;
+        TimeoutBox.Text = settings.Browser.TimeoutSeconds.ToString();
+        var found = ChromeLauncher.FindChrome(settings.Browser.ChromePath);
+        ChromeFoundText.Text = found is null ? "Chrome was not found automatically. Browse to chrome.exe." : $"Using {found}";
         RefreshRegistration();
         loading = false;
     }
 
     public TrackerSettings Result { get; }
-
-    private void LoadProject(TrackerSettings settings)
-    {
-        if (project is null)
-        {
-            ProjectCard.Visibility = Visibility.Collapsed;
-            return;
-        }
-
-        ProjectHeading.Text = $"THIS PROJECT — {project.Name.ToUpperInvariant()}";
-        var mapping = settings.FindMapping(project.Provider, project.ProjectId);
-        var snapshot = project.Snapshot;
-        var loginCompany = snapshot?.User.Company ?? snapshot?.User.CompanyId;
-        var options = new List<CompanyOption>
-        {
-            new(null, null, loginCompany is null
-                ? $"My company from the {project.ProviderLabel} login (not known yet)"
-                : $"My company from the {project.ProviderLabel} login ({loginCompany})")
-        };
-        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        foreach (var holder in snapshot?.Items.SelectMany(item => item.Holders) ?? Enumerable.Empty<SnapshotHolder>())
-        {
-            var key = holder.CompanyId ?? holder.Company;
-            if (string.IsNullOrWhiteSpace(key) || !seen.Add(key))
-            {
-                continue;
-            }
-
-            options.Add(new CompanyOption(holder.CompanyId, holder.Company, holder.Company ?? holder.CompanyId!));
-        }
-
-        if (mapping is not null && (mapping.CompanyId is not null || mapping.CompanyName is not null)
-            && !options.Any(option => option.Id == mapping.CompanyId && option.Name == mapping.CompanyName))
-        {
-            options.Add(new CompanyOption(mapping.CompanyId, mapping.CompanyName, mapping.CompanyName ?? mapping.CompanyId!));
-        }
-
-        var ordered = options.Take(1).Concat(options.Skip(1).OrderBy(option => option.Label, StringComparer.CurrentCultureIgnoreCase)).ToList();
-        CompanyList.ItemsSource = ordered;
-        CompanyList.SelectedItem = ordered.FirstOrDefault(option =>
-            option.Id == mapping?.CompanyId && option.Name == mapping?.CompanyName) ?? ordered[0];
-
-        var folders = mapping?.FoldersOverride;
-        OverrideFoldersBox.IsChecked = folders is not null;
-        var effective = folders ?? settings.Folders;
-        ProjectRfiBox.Text = effective.RfiFolder;
-        ProjectSubmittalBox.Text = effective.SubmittalFolder;
-        ProjectReturnedBox.Text = effective.ReturnedFolder;
-        OverrideGrid.IsEnabled = folders is not null;
-    }
 
     private void Theme_Checked(object sender, RoutedEventArgs e)
     {
@@ -109,9 +60,19 @@ public partial class SettingsWindow : Window
         : ThemeLight.IsChecked == true ? ThemePreference.Light
         : ThemePreference.System;
 
-    private void OverrideFolders_Changed(object sender, RoutedEventArgs e)
+    private void BrowseChrome_Click(object sender, RoutedEventArgs e)
     {
-        OverrideGrid.IsEnabled = OverrideFoldersBox.IsChecked == true;
+        var dialog = new Microsoft.Win32.OpenFileDialog
+        {
+            Title = "Find chrome.exe",
+            Filter = "Chrome|chrome.exe|Programs|*.exe",
+            CheckFileExists = true
+        };
+        if (dialog.ShowDialog(this) == true)
+        {
+            ChromePathBox.Text = dialog.FileName;
+            ChromeFoundText.Text = $"Using {dialog.FileName}";
+        }
     }
 
     private void RefreshRegistration()
@@ -161,16 +122,9 @@ public partial class SettingsWindow : Window
         };
         var problems = folders.Validate().ToList();
 
-        FolderLayout? projectFolders = null;
-        if (project is not null && OverrideFoldersBox.IsChecked == true)
+        if (!int.TryParse(TimeoutBox.Text.Trim(), out var timeout) || timeout < 30 || timeout > 1800)
         {
-            projectFolders = new FolderLayout
-            {
-                RfiFolder = ProjectRfiBox.Text.Trim(),
-                SubmittalFolder = ProjectSubmittalBox.Text.Trim(),
-                ReturnedFolder = ProjectReturnedBox.Text.Trim()
-            };
-            problems.AddRange(projectFolders.Validate().Select(problem => $"This project: {problem}"));
+            problems.Add("Wait between 30 and 1800 seconds for Chrome.");
         }
 
         var extensionIds = SplitList(ExtensionIdsBox.Text);
@@ -194,20 +148,13 @@ public partial class SettingsWindow : Window
         Result.Returned.NeverReturnedStatuses = SplitList(NeverStatusesBox.Text);
         Result.AllowedExtensionIds = extensionIds;
 
-        if (project is not null)
+        Result.Browser = new BrowserSettings
         {
-            var company = CompanyList.SelectedItem as CompanyOption;
-            var needsMapping = projectFolders is not null || company?.Id is not null || company?.Name is not null;
-            var mapping = needsMapping
-                ? Result.GetOrAddMapping(project.Provider, project.ProjectId, project.Name)
-                : Result.FindMapping(project.Provider, project.ProjectId);
-            if (mapping is not null)
-            {
-                mapping.CompanyId = company?.Id;
-                mapping.CompanyName = company?.Name;
-                mapping.FoldersOverride = projectFolders;
-            }
-        }
+            ChromePath = ChromePathBox.Text.Trim(),
+            ProfileDirectory = ProfileBox.Text.Trim(),
+            CloseTabWhenDone = CloseTabBox.IsChecked == true,
+            TimeoutSeconds = timeout
+        };
 
         DialogResult = true;
     }

@@ -22,6 +22,9 @@ public sealed class AppPaths
     public string JournalFile => Path.Combine(Root, "journal.jsonl");
     public string HostManifestFile => Path.Combine(Root, "com.smc.catracker.json");
     public string HostLogFile => Path.Combine(Root, "native-host.log");
+    public string RefreshDirectory => Path.Combine(Root, "refresh");
+    public string CatalogFile => Path.Combine(Root, "catalog.json");
+    public string ContactFile => Path.Combine(Root, "extension-contact.json");
 }
 
 public static class TrackerJson
@@ -59,14 +62,23 @@ public static class LocalFiles
 
         var temporary = $"{path}.{Guid.NewGuid():N}.tmp";
         File.WriteAllText(temporary, content, new UTF8Encoding(false));
-        try
+        for (var attempt = 0; ; attempt++)
         {
-            File.Move(temporary, path, overwrite: true);
-        }
-        catch
-        {
-            TryDelete(temporary);
-            throw;
+            try
+            {
+                File.Move(temporary, path, overwrite: true);
+                return;
+            }
+            catch (Exception error) when ((error is IOException or UnauthorizedAccessException) && attempt < 8)
+            {
+                // The app or the native host may be reading the file at this moment.
+                Thread.Sleep(60);
+            }
+            catch
+            {
+                TryDelete(temporary);
+                throw;
+            }
         }
     }
 
@@ -76,9 +88,21 @@ public static class LocalFiles
         {
             try
             {
-                return File.Exists(path) ? File.ReadAllText(path, Encoding.UTF8) : null;
+                if (!File.Exists(path))
+                {
+                    return null;
+                }
+
+                // Share read/write/delete so a reader never blocks the other process's atomic replace.
+                using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+                using var reader = new StreamReader(stream, Encoding.UTF8);
+                return reader.ReadToEnd();
             }
-            catch (IOException) when (attempt < 5)
+            catch (FileNotFoundException)
+            {
+                return null;
+            }
+            catch (Exception error) when ((error is IOException or UnauthorizedAccessException) && attempt < 5)
             {
                 Thread.Sleep(80);
             }

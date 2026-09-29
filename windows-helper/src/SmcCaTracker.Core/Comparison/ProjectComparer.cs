@@ -87,7 +87,7 @@ public sealed class TypeComparison
 public sealed class ProjectComparison
 {
     public ProviderSnapshot? Snapshot { get; init; }
-    public ProjectMapping Mapping { get; init; } = new();
+    public TrackerProject Project { get; init; } = new();
     public FolderLayout Folders { get; init; } = new();
     public CompanyIdentity Company { get; init; } = new(null, null);
     public IReadOnlyDictionary<string, TypeComparison> Types { get; init; } = new Dictionary<string, TypeComparison>();
@@ -98,22 +98,22 @@ public sealed class ProjectComparison
 
 public static class ProjectComparer
 {
-    public static ProjectComparison Compare(ProviderSnapshot? snapshot, ProjectMapping mapping, TrackerSettings settings)
+    public static ProjectComparison Compare(ProviderSnapshot? snapshot, TrackerProject project, TrackerSettings settings)
     {
-        var layout = mapping.EffectiveFolders(settings.Folders);
-        var company = CompanyIdentity.For(mapping, snapshot);
+        var layout = project.EffectiveFolders(settings.Folders);
+        var company = CompanyIdentity.For(project, snapshot);
         var holdersReported = snapshot is not null && string.Equals(snapshot.Provider, Providers.Helix, StringComparison.OrdinalIgnoreCase);
         var types = new Dictionary<string, TypeComparison>(StringComparer.OrdinalIgnoreCase);
         foreach (var itemType in ItemTypes.All)
         {
-            var scan = FolderScanner.Scan(mapping.CaFolder, itemType, layout);
+            var scan = FolderScanner.Scan(project.CaFolder, itemType, layout);
             types[itemType] = CompareType(itemType, scan, snapshot, company, holdersReported, settings.Returned);
         }
 
         return new ProjectComparison
         {
             Snapshot = snapshot,
-            Mapping = mapping,
+            Project = project,
             Folders = layout,
             Company = company,
             Types = types

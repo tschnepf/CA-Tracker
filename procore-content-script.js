@@ -20,6 +20,10 @@
   let lastVisibleSignature = "";
   let discoveryCatalog = TaskHubProcoreCore.normalizeDiscoveryCatalog(null);
   let discoveryPromise = null;
+  // Taken before Procore's own router can rewrite the URL; see runHelperRefresh.
+  const helperRefreshId = typeof TaskHubWindowsHelperSnapshot === "undefined"
+    ? null
+    : TaskHubWindowsHelperSnapshot.takeRefreshId(window);
 
   const PROCORE_ITEM_LINK_SELECTOR = [
     'a[href*="/project/rfi/show/"]',
@@ -699,16 +703,87 @@
     return queue;
   }
 
+  function helperCatalog(visibleQueue) {
+    return TaskHubWindowsHelperSnapshot.buildProcoreCatalog(visibleQueue, discoveryCatalog, window.location.hostname);
+  }
+
   async function sendWindowsHelperSnapshots(visibleQueue) {
     // Optional: visible Procore rows are a partial view, so the helper never treats
     // folders missing from this snapshot as orphaned.
     try {
       if (typeof TaskHubWindowsHelperSnapshot === "undefined" || !visibleQueue) return;
       for (const snapshot of TaskHubWindowsHelperSnapshot.buildProcoreSnapshots(visibleQueue)) {
-        await runtimeMessage({ type: "WINDOWS_HELPER_SNAPSHOT", snapshot });
+        await runtimeMessage({ type: "WINDOWS_HELPER_SNAPSHOT", snapshot, catalog: helperCatalog(visibleQueue) });
       }
     } catch (_error) {
       // The Windows helper is optional; Procore stays fully usable without it.
+    }
+  }
+
+  // Procore renders its grid after the page loads; wait until the row count stops changing.
+  function waitForSettledRows() {
+    return new Promise((resolve) => {
+      const started = Date.now();
+      let lastCount = -1;
+      let stableSince = started;
+      const timer = setInterval(() => {
+        const count = visibleRows().length;
+        const now = Date.now();
+        if (count !== lastCount) {
+          lastCount = count;
+          stableSince = now;
+        }
+        const elapsed = now - started;
+        const settled = count > 0 && elapsed >= 4000 && now - stableSince >= 3000;
+        if (settled || (count === 0 && elapsed >= 20000) || elapsed >= 45000) {
+          clearInterval(timer);
+          resolve(count);
+        }
+      }, 500);
+    });
+  }
+
+  // The CA Tracker app opened this page to refresh a project: claim the request through the
+  // native host (which only accepts ids the app created), read the grid, and hand it over.
+  // The host then says whether to continue on the Submittals page or finish.
+  async function runHelperRefresh(id) {
+    let request;
+    try {
+      request = await runtimeMessage({ type: "WINDOWS_HELPER_REFRESH_CLAIM", id });
+    } catch (error) {
+      ui.setCacheWarning(`CA Tracker refresh: ${error.message}`);
+      return;
+    }
+    try {
+      const expectedTool = Array.isArray(request.itemTypes) && request.itemTypes[0] === "submittal" ? "submittals" : "rfis";
+      if (String(pageContext.projectId || "") !== String(request.projectId)
+        || !new RegExp(`/tools/${expectedTool}(?:/|$)`, "i").test(window.location.pathname)) {
+        throw new Error(`Procore did not open the project's ${expectedTool === "rfis" ? "RFIs" : "Submittals"} list. Check that you are signed in to Procore in Chrome.`);
+      }
+      await waitForSettledRows();
+      const visibleQueue = localQueue();
+      const snapshot = TaskHubWindowsHelperSnapshot.buildProcoreProjectSnapshot(visibleQueue, request);
+      const result = await runtimeMessage({
+        type: "WINDOWS_HELPER_SNAPSHOT",
+        snapshot,
+        catalog: helperCatalog(visibleQueue),
+        refresh: { id, step: Number(request.step) || 0 }
+      });
+      if (!result || !result.sent) {
+        throw new Error(result && result.error || "The CA Tracker app did not receive the data.");
+      }
+      if (result.refresh && result.refresh.status === "Failed") {
+        ui.setCacheWarning(`CA Tracker refresh failed: ${result.refresh.error || "the app rejected this page."}`);
+      } else if (result.refresh && result.refresh.nextUrl) {
+        window.location.assign(result.refresh.nextUrl);
+      }
+    } catch (error) {
+      try {
+        await runtimeMessage({ type: "WINDOWS_HELPER_REFRESH_FAILED", id, error: error.message });
+      } catch (_error) {
+        // Nothing more to report; the app times the refresh out.
+      }
+      ui.setCacheWarning(`CA Tracker refresh failed: ${error.message}`);
     }
   }
 
@@ -798,6 +873,17 @@
   }
 
   renderVisibleQueue(true);
+  void (async () => {
+    let refreshId = helperRefreshId;
+    if (!refreshId) {
+      try {
+        refreshId = await runtimeMessage({ type: "WINDOWS_HELPER_REFRESH_TAKE" });
+      } catch (_error) {
+        refreshId = null;
+      }
+    }
+    if (typeof refreshId === "string" && /^[a-f0-9]{32}$/.test(refreshId)) await runHelperRefresh(refreshId);
+  })();
   void readDiscoveryCatalog().then((result) => {
     if (result && result.isOwner && discoveryCatalog.scan.status === "running") {
       return continueDiscovery();

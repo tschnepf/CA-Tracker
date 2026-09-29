@@ -39,11 +39,11 @@ public sealed record CompanyIdentity(string? CompanyId, string? CompanyName)
             && string.Equals(CompanyName.Trim(), companyName.Trim(), StringComparison.OrdinalIgnoreCase);
     }
 
-    public static CompanyIdentity For(ProjectMapping? mapping, ProviderSnapshot? snapshot)
+    public static CompanyIdentity For(TrackerProject? project, ProviderSnapshot? snapshot)
     {
-        if (mapping is not null && (!string.IsNullOrWhiteSpace(mapping.CompanyId) || !string.IsNullOrWhiteSpace(mapping.CompanyName)))
+        if (project is not null && (!string.IsNullOrWhiteSpace(project.CompanyId) || !string.IsNullOrWhiteSpace(project.CompanyName)))
         {
-            return new CompanyIdentity(mapping.CompanyId, mapping.CompanyName);
+            return new CompanyIdentity(project.CompanyId, project.CompanyName);
         }
 
         return new CompanyIdentity(snapshot?.User.CompanyId, snapshot?.User.Company);

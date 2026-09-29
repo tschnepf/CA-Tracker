@@ -19,7 +19,7 @@ const manifest = JSON.parse(fs.readFileSync(path.join(root, "manifest.json"), "u
 const packageMetadata = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8"));
 
 test("packaging preserves a stable unpacked folder and stable-name archive", () => {
-  assert.equal(manifest.version, "2.2.0");
+  assert.equal(manifest.version, "2.3.0");
   assert.equal(packageMetadata.version, manifest.version);
   assert.match(packageSource, /\$install = Join-Path \$dist 'helix-my-activity'/);
   assert.match(packageSource, /\$currentArchive = Join-Path \$dist 'helix-my-activity\.zip'/);

@@ -184,21 +184,25 @@ extension-local storage restricted to trusted extension contexts, rotates them a
 revokes the refresh token when possible before removing it on disconnect. The optional connection
 never changes Helix records. See [PRIVACY.md](PRIVACY.md) for the exact fields sent.
 
-## CA Tracker Windows helper (optional)
+## CA Tracker Windows app (optional)
 
-The companion Windows app in [`windows-helper/`](windows-helper/README.md) compares each project's
-Helix or Procore items with that project's Egnyte CA folder (default `CA\RFIs`, `CA\Submittals`,
-each with a `~Returned` subfolder). It can move folders for returned items into `~Returned`, always
-after a preview you can cancel.
+The companion Windows app in [`windows-helper/`](windows-helper/README.md) is where CA projects are
+defined. Each project is an Egnyte CA folder (default `CA\RFIs`, `CA\Submittals`, each with a
+`~Returned` subfolder), optionally connected to a Helix or Procore project. The app's **Refresh**
+button opens that project in Chrome; this extension reads it and hands the items back. The app then
+compares them with the CA folder and can move returned items' folders into `~Returned`, always after
+a preview you can cancel.
 
-The extension works exactly as before without it. To connect them:
+The extension works exactly as before without the app. To connect them:
 
-1. Build and run the helper, then select **Settings → Register with Chrome** in the app.
+1. Build and run the app, then select **Settings → Register with Chrome** in the app.
 2. In this extension's settings, select **Enable Windows helper**. This asks Chrome for the optional
    `nativeMessaging` permission, so updating the extension never disables it or adds a prompt.
-3. After each fresh Helix scan, the extension sends the helper the current project's item list,
-   including who holds each item and at which company. Procore sends its visible rows, marked
-   partial.
+3. When the app opens a page with a `#ca-tracker-refresh=` id, the extension claims the id through
+   the app's native host, runs a fresh scan, and sends the result back. On Procore it reads the RFIs
+   list, then the Submittals list. Ids the app didn't create are refused.
+4. After ordinary fresh Helix scans the extension also sends the current project's items, plus your
+   assigned project list, so the app can offer those projects when you connect one.
 
 See [PRIVACY.md](PRIVACY.md) for exactly what is sent.
 

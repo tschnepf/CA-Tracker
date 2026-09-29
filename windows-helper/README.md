@@ -1,13 +1,17 @@
-# SMC CA Tracker (Windows helper)
+# SMC CA Tracker (Windows app)
 
-A small Windows app that compares what the TaskHub Helper extension sees in Helix or Procore
-with each project's CA folder on the Egnyte drive, and moves item folders into a returned folder.
-It never changes a folder without first showing a preview you can cancel.
+The CA Tracker app is where projects live. Each project is a CA folder on the Egnyte drive,
+optionally connected to one Helix or Procore project. **Refresh** opens that project in Chrome,
+where the TaskHub Helper extension reads its RFIs and Submittals and hands them back. The app then
+compares them with the CA folder and can move folders for returned items into `~Returned`. It never
+changes a folder without first showing a preview you can cancel.
 
 ```
-TaskHub Helper (Chrome) ──native messaging──▶ SmcCaTracker.NativeHost.exe ──▶ %LOCALAPPDATA%\SMC-CA-Tracker\snapshots
-                                                                                      │
-                                              SmcCaTracker.exe (the app) ◀────────────┘  compares with  Z:\...\CA
+CA Tracker app ──Refresh──▶ opens Chrome at the project page (with a one-time refresh id)
+      ▲                                  │
+      │                 TaskHub Helper extension claims the id, scans the page
+      │                                  │
+      └── %LOCALAPPDATA%\SMC-CA-Tracker ◀── SmcCaTracker.NativeHost.exe (Chrome native messaging)
 ```
 
 ## Build
@@ -27,13 +31,42 @@ Close the app before rebuilding, because Windows locks a running exe.
 1. Run `windows-helper\dist\SmcCaTracker.exe`.
 2. **Settings → Register with Chrome.** This writes a small file to `%LOCALAPPDATA%\SMC-CA-Tracker`
    and a registry key under `HKEY_CURRENT_USER` (and Edge's equivalent). No admin rights are needed.
-3. In Chrome, open the TaskHub Helper extension's settings and select **Enable Windows helper**.
-   Chrome should then show **Connected**.
-4. Open a project's **Overview** page in Helix, which lists every RFI and Submittal. An RFI or
-   Submittals page sends only that type. The project appears in the app within a second or two.
-5. Select the project and **Choose CA folder…** (e.g. `Z:\Shared\Projects\CMH04\CA`).
+3. In Chrome, reload the TaskHub Helper extension, open its settings, and select **Enable Windows helper**.
+   The footer of the app then shows when the extension last connected.
+4. **New project…**: choose the project's CA folder (e.g. `Z:\Shared\Projects\CMH04\CA`). The name
+   defaults to the folder above `CA`.
+5. **Connect…**: pick the Helix or Procore project, or paste its link:
+   - Helix: the project's Overview page, e.g. `https://project.helixteam.com/Projects/<id>/Overview`
+   - Procore: the project's RFIs tool, e.g. `https://app.procore.com/webclients/host/companies/<company>/projects/<project>/tools/rfis`
+
+   The list fills in with every project Chrome has seen: all your assigned Helix projects after you
+   open any Helix project, and Procore projects you open or discover.
+6. **Refresh.**
 
 If you move the `dist` folder, register with Chrome again.
+
+## Refresh
+
+**Refresh** always rechecks the CA folder. For a connected project it also:
+
+1. Records a one-time refresh request (a random id) in `%LOCALAPPDATA%\SMC-CA-Tracker\refresh`.
+2. Opens Chrome at the project's page with that id in the link:
+   - Helix: the Overview page, which reads every RFI and Submittal in one scan.
+   - Procore: the RFIs tool, then the Submittals tool.
+3. The extension asks the app's native host to claim the id. Only ids the app created are accepted,
+   so a link someone sends you cannot start a refresh.
+4. The extension runs a fresh scan and sends the items back. The tab closes when the refresh
+   finishes; you can turn this off in Settings.
+
+The project header shows **when the Helix/Procore data was last refreshed** and **when the CA folder
+was last checked**. While a refresh runs it shows progress, and you can cancel it. If Chrome doesn't
+report back within 3 minutes (changeable in Settings), the app says so. The usual causes are not
+being signed in to Helix or Procore in Chrome, or the extension's Windows helper being off.
+
+Browsing a connected project in Chrome also updates its data, even without pressing Refresh.
+
+Chrome opens in its last-used profile. If you use several Chrome profiles, set the profile folder
+(e.g. `Profile 1`) in **Settings → Chrome**.
 
 ## Folder layout
 
@@ -58,7 +91,8 @@ online-only files are not downloaded.
 ## What "returned" means
 
 By default an item is returned when **no one from the selected company holds it**, including when
-it is closed. The company defaults to the one on your Helix login and can be changed per project.
+it is closed. The company defaults to the one on your Helix login and can be changed per project in
+**Edit project**.
 "Holds" uses the extension's own In court and Coming up rules. Settings can also:
 
 - count items where your company only has a later step (coming up) as returned
@@ -89,14 +123,16 @@ would land in the same place) is shown in red and skipped. Cancel is the default
 apply, each step is re-checked just before it runs. A results window shows what happened, and every
 step is appended to `%LOCALAPPDATA%\SMC-CA-Tracker\journal.jsonl`.
 
-Choosing a CA folder or changing settings only updates the app's own settings file. They don't
-change anything in the CA folder.
+Creating, editing, connecting or removing a project, and changing settings, only update the app's
+own settings file. They don't change anything in the CA folder.
 
 ## Files
 
 | Path | What |
 |---|---|
-| `%LOCALAPPDATA%\SMC-CA-Tracker\settings.json` | Theme, folder names, returned rule, project → CA folder mappings |
+| `%LOCALAPPDATA%\SMC-CA-Tracker\settings.json` | Projects (CA folder + connection), theme, folder names, returned rule, Chrome options |
 | `%LOCALAPPDATA%\SMC-CA-Tracker\snapshots\*.json` | Latest item list per project from the extension |
+| `%LOCALAPPDATA%\SMC-CA-Tracker\refresh\*.json` | Refresh requests (cleaned up after a day) |
+| `%LOCALAPPDATA%\SMC-CA-Tracker\catalog.json` | Helix/Procore projects Chrome has seen, offered in Connect |
 | `%LOCALAPPDATA%\SMC-CA-Tracker\journal.jsonl` | Every folder change that was applied |
 | `%LOCALAPPDATA%\SMC-CA-Tracker\native-host.log` | Errors from the Chrome bridge, if any |

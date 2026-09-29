@@ -4,6 +4,7 @@ using SmcCaTracker.Core.Comparison;
 using SmcCaTracker.Core.Matching;
 using SmcCaTracker.Core.Models;
 using SmcCaTracker.Core.Operations;
+using SmcCaTracker.Core.Refresh;
 using SmcCaTracker.Core.Storage;
 
 namespace SmcCaTracker.App.ViewModels;
@@ -30,62 +31,72 @@ public abstract class ObservableObject : INotifyPropertyChanged
 
 public sealed class ProjectViewModel : ObservableObject
 {
+    private TrackerProject project;
     private ProviderSnapshot? snapshot;
-    private ProjectMapping? mapping;
+    private RefreshRequest? activeRefresh;
     private int attentionCount;
     private bool compared;
 
-    public ProjectViewModel(string provider, string projectId)
+    public ProjectViewModel(TrackerProject project)
     {
-        Provider = provider;
-        ProjectId = projectId;
+        this.project = project;
     }
 
-    public string Provider { get; }
-    public string ProjectId { get; }
-    public string Key => $"{Provider}|{ProjectId}";
-    public string ProviderLabel => Providers.Label(Provider);
+    public string Id => project.Id;
+
+    public TrackerProject Project
+    {
+        get => project;
+        set
+        {
+            project = value;
+            RaiseAll();
+        }
+    }
 
     public ProviderSnapshot? Snapshot
     {
         get => snapshot;
         set
         {
-            if (Set(ref snapshot, value))
-            {
-                OnPropertyChanged(nameof(Name));
-                OnPropertyChanged(nameof(Subtitle));
-            }
+            snapshot = value;
+            RaiseAll();
         }
     }
 
-    public ProjectMapping? Mapping
+    public RefreshRequest? ActiveRefresh
     {
-        get => mapping;
+        get => activeRefresh;
         set
         {
-            if (Set(ref mapping, value))
-            {
-                OnPropertyChanged(nameof(Name));
-                OnPropertyChanged(nameof(Subtitle));
-                OnPropertyChanged(nameof(HasCaFolder));
-            }
+            activeRefresh = value;
+            RaiseAll();
         }
     }
 
-    public string Name => !string.IsNullOrWhiteSpace(Snapshot?.ProjectName) ? Snapshot!.ProjectName
-        : !string.IsNullOrWhiteSpace(Mapping?.ProjectName) ? Mapping!.ProjectName
-        : ProjectId;
-
-    public bool HasCaFolder => !string.IsNullOrWhiteSpace(Mapping?.CaFolder);
+    public string Name => string.IsNullOrWhiteSpace(project.Name) ? "Untitled project" : project.Name;
+    public bool IsConnected => project.Connection is not null;
+    public string ProviderLabel => project.Connection is null ? "" : Providers.Label(project.Connection.Provider);
+    public string ConnectionText => project.Connection?.Label ?? "Not connected to Helix or Procore";
+    public bool IsRefreshing => activeRefresh is { IsFinished: false };
 
     public string Subtitle
     {
         get
         {
-            var data = Snapshot is null ? "no item data yet" : $"data {Formatting.When(Snapshot.ScannedAt)}";
-            var folder = HasCaFolder ? "" : " · no CA folder";
-            return $"{ProviderLabel} · {data}{folder}";
+            if (project.Connection is null)
+            {
+                return "Not connected";
+            }
+
+            if (IsRefreshing)
+            {
+                return $"{ProviderLabel} · refreshing…";
+            }
+
+            return snapshot is null
+                ? $"{ProviderLabel} · not refreshed yet"
+                : $"{ProviderLabel} · refreshed {Formatting.When(snapshot.ScannedAt)}";
         }
     }
 
@@ -116,6 +127,18 @@ public sealed class ProjectViewModel : ObservableObject
 
     public bool HasBadge => Compared && AttentionCount > 0;
     public string BadgeText => AttentionCount.ToString();
+
+    private void RaiseAll()
+    {
+        foreach (var name in new[]
+                 {
+                     nameof(Project), nameof(Snapshot), nameof(ActiveRefresh), nameof(Name), nameof(IsConnected),
+                     nameof(ProviderLabel), nameof(ConnectionText), nameof(IsRefreshing), nameof(Subtitle)
+                 })
+        {
+            OnPropertyChanged(name);
+        }
+    }
 }
 
 public sealed class RowViewModel : ObservableObject

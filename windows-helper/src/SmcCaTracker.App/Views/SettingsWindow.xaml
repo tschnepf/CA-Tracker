@@ -66,40 +66,25 @@
                     </StackPanel>
                 </Border>
 
-                <!-- Selected project -->
-                <Border x:Name="ProjectCard" Style="{StaticResource Card}" Margin="0,0,0,14">
-                    <StackPanel>
-                        <TextBlock x:Name="ProjectHeading" Style="{StaticResource SectionTitle}" />
-                        <TextBlock Text="Company whose court defines &quot;returned&quot;" Foreground="{DynamicResource TextSecondary}" />
-                        <ListBox x:Name="CompanyList" MaxHeight="150" Margin="0,4,0,10" DisplayMemberPath="Label"
-                                 Background="{DynamicResource InputBackground}" BorderThickness="1"
-                                 BorderBrush="{DynamicResource LineBrush}" />
-                        <CheckBox x:Name="OverrideFoldersBox" Content="Use different folder names for this project"
-                                  Checked="OverrideFolders_Changed" Unchecked="OverrideFolders_Changed" Margin="0,0,0,6" />
-                        <Grid x:Name="OverrideGrid">
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="170" />
-                                <ColumnDefinition Width="*" />
-                            </Grid.ColumnDefinitions>
-                            <Grid.RowDefinitions>
-                                <RowDefinition Height="Auto" />
-                                <RowDefinition Height="Auto" />
-                                <RowDefinition Height="Auto" />
-                            </Grid.RowDefinitions>
-                            <TextBlock Grid.Row="0" Text="RFI folder" VerticalAlignment="Center" />
-                            <TextBox Grid.Row="0" Grid.Column="1" x:Name="ProjectRfiBox" Margin="0,0,0,6" />
-                            <TextBlock Grid.Row="1" Text="Submittal folder" VerticalAlignment="Center" />
-                            <TextBox Grid.Row="1" Grid.Column="1" x:Name="ProjectSubmittalBox" Margin="0,0,0,6" />
-                            <TextBlock Grid.Row="2" Text="Returned subfolder" VerticalAlignment="Center" />
-                            <TextBox Grid.Row="2" Grid.Column="1" x:Name="ProjectReturnedBox" />
-                        </Grid>
-                    </StackPanel>
-                </Border>
-
                 <!-- Chrome -->
                 <Border Style="{StaticResource Card}">
                     <StackPanel>
-                        <TextBlock Text="CHROME CONNECTION" Style="{StaticResource SectionTitle}" />
+                        <TextBlock Text="CHROME" Style="{StaticResource SectionTitle}" />
+                        <TextBlock Text="Chrome program (leave empty to find it automatically)" Foreground="{DynamicResource TextSecondary}" />
+                        <DockPanel Margin="0,4,0,8">
+                            <Button DockPanel.Dock="Right" Content="Browse…" Click="BrowseChrome_Click" Margin="8,0,0,0" />
+                            <TextBox x:Name="ChromePathBox" VerticalContentAlignment="Center" />
+                        </DockPanel>
+                        <TextBlock x:Name="ChromeFoundText" Style="{StaticResource Muted}" FontSize="12" Margin="0,0,0,8" />
+                        <TextBlock Text="Chrome profile folder (optional, e.g. Default or Profile 1)" Foreground="{DynamicResource TextSecondary}" />
+                        <TextBox x:Name="ProfileBox" Margin="0,4,0,8" />
+                        <CheckBox x:Name="CloseTabBox" Content="Close the Chrome tab when a refresh finishes" Margin="0,0,0,8" />
+                        <StackPanel Orientation="Horizontal" Margin="0,0,0,14">
+                            <TextBlock Text="Stop waiting for Chrome after" VerticalAlignment="Center" Margin="0,0,8,0" />
+                            <TextBox x:Name="TimeoutBox" Width="60" />
+                            <TextBlock Text="seconds" VerticalAlignment="Center" Margin="8,0,0,0" />
+                        </StackPanel>
+                        <TextBlock Text="EXTENSION CONNECTION" Style="{StaticResource SectionTitle}" />
                         <TextBlock x:Name="RegistrationText" TextWrapping="Wrap" Margin="0,0,0,8" />
                         <TextBlock Text="Allowed extension IDs (comma-separated)" Foreground="{DynamicResource TextSecondary}" />
                         <TextBox x:Name="ExtensionIdsBox" Margin="0,4,0,10" />

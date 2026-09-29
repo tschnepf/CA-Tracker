@@ -177,7 +177,11 @@ test("the native messaging permission is optional and the helper host name is sh
   assert.equal(manifest.permissions.includes("nativeMessaging"), false);
   assert.deepEqual(manifest.optional_permissions, ["nativeMessaging"]);
   assert.equal(Snapshot.HOST_NAME, HelperClient.HOST_NAME);
-  for (const entry of manifest.content_scripts) {
+  const capture = manifest.content_scripts.find((entry) => entry.js.includes("refresh-capture.js"));
+  assert.equal(capture.run_at, "document_start");
+  assert.deepEqual(capture.js, ["refresh-capture.js"]);
+  for (const entry of manifest.content_scripts.filter((candidate) => candidate !== capture)) {
+    assert.ok(capture.matches.every((pattern) => pattern) && entry.matches.every((pattern) => capture.matches.includes(pattern)));
     const scripts = entry.js;
     assert.ok(scripts.indexOf("integrations/windows-helper/snapshot.js") > scripts.indexOf("activity-core.js"));
     assert.ok(scripts.indexOf("integrations/windows-helper/snapshot.js") > scripts.indexOf("integrations/taskhub/mapper.js"));
@@ -188,4 +192,109 @@ test("the native messaging permission is optional and the helper host name is sh
   ));
   assert.equal(hostManifest.name, HelperClient.HOST_NAME);
   assert.deepEqual(hostManifest.allowed_origins, ["chrome-extension://kcngamkbiboiljpfbjpmjoekkfpbidbk/"]);
+});
+
+test("refresh ids are taken from the URL only when they match the app's format", () => {
+  function fakeWindow(hash) {
+    const calls = [];
+    return {
+      calls,
+      location: { hash, pathname: "/Projects/p1/Overview", search: "" },
+      history: { state: null, replaceState(state, title, url) { calls.push(url); } }
+    };
+  }
+  const good = fakeWindow(`#ca-tracker-refresh=${"a1".repeat(16)}`);
+  assert.equal(Snapshot.takeRefreshId(good), "a1".repeat(16));
+  assert.deepEqual(good.calls, ["/Projects/p1/Overview"]);
+  const bad = fakeWindow("#ca-tracker-refresh=../../etc");
+  assert.equal(Snapshot.takeRefreshId(bad), null);
+  assert.deepEqual(bad.calls, []);
+  assert.equal(Snapshot.takeRefreshId(fakeWindow("")), null);
+});
+
+test("Procore refresh snapshots cover the requested project and type even when the grid is empty", () => {
+  const request = { projectId: "900", accountId: "5", projectName: "Tower", itemTypes: ["submittal"] };
+  const empty = Snapshot.buildProcoreProjectSnapshot({ items: [] }, request);
+  assert.equal(empty.projectId, "900");
+  assert.equal(empty.projectName, "Tower");
+  assert.deepEqual(empty.itemTypes, ["submittal"]);
+  assert.deepEqual(empty.items, []);
+  assert.equal(empty.complete, false);
+
+  const withRows = Snapshot.buildProcoreProjectSnapshot({
+    items: [
+      { item_id: "1", item_type: "submittal", project_id: "900", number: "S-1", title: "Doors", status: "Open" },
+      { item_id: "2", item_type: "rfi", project_id: "900", number: "4", title: "Slab", status: "Open" },
+      { item_id: "3", item_type: "submittal", project_id: "901", number: "S-9", title: "Other", status: "Open" }
+    ]
+  }, request);
+  assert.deepEqual(withRows.items.map((item) => item.itemId), ["1"]);
+});
+
+test("project catalogs list Helix assignments and Procore discovery results", () => {
+  const helix = Snapshot.buildHelixCatalog({ projects: [{ id: "p1", name: "Aligned CMH04" }, { id: "", name: "x" }] });
+  assert.deepEqual(helix, {
+    provider: "helix",
+    projects: [{ projectId: "p1", accountId: null, accountName: null, name: "Aligned CMH04", host: "project.helixteam.com" }]
+  });
+  const procore = Snapshot.buildProcoreCatalog(
+    { items: [{ project_id: "34", account_id: "12", project_name: "Garage" }] },
+    { companies: [{ id: "12", name: "SMC", projects: [{ id: "33", name: "Tower" }] }] },
+    "us02.procore.com"
+  );
+  assert.deepEqual(procore.projects.map((project) => [project.accountId, project.projectId, project.name, project.host]), [
+    ["12", "33", "Tower", "us02.procore.com"],
+    ["12", "34", "Garage", "us02.procore.com"]
+  ]);
+  assert.equal(Snapshot.buildProcoreCatalog({ items: [] }, null, "evil.example.com").projects.length, 0);
+});
+
+test("helper client claims refreshes and forwards catalog and refresh details", async () => {
+  const fake = fakeChrome({ permission: true });
+  fake.chrome.runtime.sendNativeMessage = function sendNativeMessage(host, message, callback) {
+    fake.sent.push({ host, message });
+    if (message.type === "claimRefresh") callback({ ok: true, request: { id: message.id, projectId: "p1", step: 0 } });
+    else callback({ ok: true, version: "1.1.0", refresh: { done: true } });
+  };
+  const client = HelperClient.create({ chrome: fake.chrome });
+  const id = "b2".repeat(16);
+  assert.deepEqual(await client.claimRefresh(id, "helix"), { id, projectId: "p1", step: 0 });
+  await assert.rejects(() => client.claimRefresh("not-an-id", "helix"));
+  const result = await client.sendSnapshot(minimalSnapshot, {
+    catalog: { provider: "helix", projects: [] },
+    refresh: { id, step: "0" }
+  });
+  assert.deepEqual(result.refresh, { done: true });
+  const sentSnapshot = fake.sent.find((entry) => entry.message.type === "snapshot").message;
+  assert.deepEqual(sentSnapshot.refresh, { id, step: 0 });
+  assert.deepEqual(sentSnapshot.catalog, { provider: "helix", projects: [] });
+
+  await client.sendSnapshot(minimalSnapshot, { catalog: { provider: "procore", projects: [] }, refresh: { id: "bad" } });
+  const last = fake.sent[fake.sent.length - 1].message;
+  assert.equal(last.catalog, undefined);
+  assert.equal(last.refresh, undefined);
+});
+
+test("helper client refuses to claim refreshes without the optional permission", async () => {
+  const client = HelperClient.create({ chrome: fakeChrome({ permission: false }).chrome });
+  await assert.rejects(() => client.claimRefresh("c3".repeat(16), "helix"), /Enable the Windows helper/);
+  assert.equal(await client.refreshFailed("c3".repeat(16), "x"), false);
+});
+
+test("the document_start capture hands refresh ids to the background worker, not the page", () => {
+  const source = fs.readFileSync(path.join(root, "refresh-capture.js"), "utf8");
+  const sent = [];
+  const replaced = [];
+  const sandbox = {
+    window: {
+      top: null,
+      location: { hash: `#ca-tracker-refresh=${"e5".repeat(16)}`, pathname: "/Projects/p1/Overview", search: "" },
+      history: { state: null, replaceState(state, title, url) { replaced.push(url); } }
+    },
+    chrome: { runtime: { lastError: null, sendMessage(message, callback) { sent.push(message); callback(); } } }
+  };
+  sandbox.window.top = sandbox.window;
+  require("node:vm").runInNewContext(source, sandbox);
+  assert.equal(JSON.stringify(sent), JSON.stringify([{ type: "WINDOWS_HELPER_REFRESH_SEEN", id: "e5".repeat(16) }]));
+  assert.deepEqual(replaced, ["/Projects/p1/Overview"]);
 });

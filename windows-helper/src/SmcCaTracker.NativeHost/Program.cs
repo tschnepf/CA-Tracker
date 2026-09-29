@@ -4,7 +4,7 @@ using SmcCaTracker.Core.Storage;
 // Chrome starts this process when the TaskHub Helper extension sends a message and talks to
 // it over stdin/stdout. Nothing else may be written to stdout.
 var paths = AppPaths.Default;
-var handler = new NativeHostHandler(new SnapshotStore(paths));
+var handler = new NativeHostHandler(paths);
 
 try
 {

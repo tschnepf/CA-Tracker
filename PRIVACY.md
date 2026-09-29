@@ -95,7 +95,16 @@ list: item identifiers, type, number, title, status and status rank, whether it 
 responsible text, attachment count, created/modified/due dates, a link back to the item, and the
 names and company identifiers/names of the people who currently hold or will next hold each item.
 The logged-in user's name and company are included so the helper can tell which company "returned"
-refers to. For Procore, only the rows visible in the current grid are sent, always marked partial.
+refers to. For Procore, only the rows visible in the current grid are sent, always marked partial. So that the
+app can offer projects to connect, the extension also sends the list of projects you can open: your
+assigned Helix projects (id and name), and Procore company/project ids and names from the visible
+grid or from **Discover companies & projects**.
+
+When the CA Tracker app refreshes a project, it opens the project page in Chrome with a one-time
+random id in the link. The extension sends that id to the app's native host, which only accepts ids
+the app created in the last few minutes. The extension then scans the page as described above and
+returns the result. On Procore it continues from the RFIs list to the Submittals list, and only to
+pages on the same Procore site. It then closes that tab, unless the app is set not to.
 Comments, attachment contents, activity history, cookies, and credentials are never sent.
 
 The helper stores these lists in the Windows user's `%LOCALAPPDATA%\SMC-CA-Tracker` folder and uses them

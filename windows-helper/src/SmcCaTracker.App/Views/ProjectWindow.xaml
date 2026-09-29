@@ -1,0 +1,97 @@
+<Window x:Class="SmcCaTracker.App.Views.ProjectWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Project"
+        Width="680" Height="720" MinWidth="520" MinHeight="460"
+        WindowStartupLocation="CenterOwner"
+        ShowInTaskbar="False"
+        Style="{StaticResource AppWindow}">
+    <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+
+        <ScrollViewer Grid.Row="0" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+            <StackPanel Margin="20">
+                <Border Style="{StaticResource Card}" Margin="0,0,0,14">
+                    <StackPanel>
+                        <TextBlock Text="PROJECT" Style="{StaticResource SectionTitle}" />
+                        <TextBlock Text="Name" Foreground="{DynamicResource TextSecondary}" />
+                        <TextBox x:Name="NameBox" Margin="0,4,0,10" />
+                        <TextBlock Text="CA folder" Foreground="{DynamicResource TextSecondary}" />
+                        <DockPanel Margin="0,4,0,0">
+                            <Button DockPanel.Dock="Right" Content="Change…" Click="BrowseFolder_Click" Margin="8,0,0,0" />
+                            <TextBox x:Name="FolderBox" IsReadOnly="True" VerticalContentAlignment="Center" />
+                        </DockPanel>
+                        <TextBlock Style="{StaticResource Muted}" Margin="0,8,0,0" FontSize="12"
+                                   Text="Choosing a folder only records it in the tracker. Nothing in the folder changes." />
+                    </StackPanel>
+                </Border>
+
+                <Border Style="{StaticResource Card}" Margin="0,0,0,14">
+                    <StackPanel>
+                        <TextBlock Text="CONNECTION" Style="{StaticResource SectionTitle}" />
+                        <DockPanel>
+                            <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
+                                <Button Content="Connect…" Click="Connect_Click" Margin="8,0,0,0" />
+                                <Button x:Name="DisconnectButton" Content="Disconnect" Click="Disconnect_Click" Margin="8,0,0,0" />
+                            </StackPanel>
+                            <TextBlock x:Name="ConnectionText" VerticalAlignment="Center" TextWrapping="Wrap" />
+                        </DockPanel>
+                        <TextBlock Style="{StaticResource Muted}" Margin="0,8,0,0" FontSize="12"
+                                   Text="Connect the project to Helix or Procore so Refresh can read its RFIs and Submittals." />
+                    </StackPanel>
+                </Border>
+
+                <Border Style="{StaticResource Card}" Margin="0,0,0,14">
+                    <StackPanel>
+                        <TextBlock Text="RETURNED MEANS OUT OF THIS COMPANY'S COURT" Style="{StaticResource SectionTitle}" />
+                        <ListBox x:Name="CompanyList" MaxHeight="150" DisplayMemberPath="Label"
+                                 Background="{DynamicResource InputBackground}" BorderThickness="1"
+                                 BorderBrush="{DynamicResource LineBrush}" />
+                        <TextBlock Style="{StaticResource Muted}" Margin="0,8,0,0" FontSize="12"
+                                   Text="Companies appear here after the first refresh." />
+                    </StackPanel>
+                </Border>
+
+                <Border Style="{StaticResource Card}">
+                    <StackPanel>
+                        <TextBlock Text="FOLDER NAMES" Style="{StaticResource SectionTitle}" />
+                        <CheckBox x:Name="OverrideFoldersBox" Content="Use different folder names for this project"
+                                  Checked="OverrideFolders_Changed" Unchecked="OverrideFolders_Changed" Margin="0,0,0,8" />
+                        <Grid x:Name="OverrideGrid">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="170" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                            </Grid.RowDefinitions>
+                            <TextBlock Grid.Row="0" Text="RFI folder" VerticalAlignment="Center" />
+                            <TextBox Grid.Row="0" Grid.Column="1" x:Name="RfiBox" Margin="0,0,0,6" />
+                            <TextBlock Grid.Row="1" Text="Submittal folder" VerticalAlignment="Center" />
+                            <TextBox Grid.Row="1" Grid.Column="1" x:Name="SubmittalBox" Margin="0,0,0,6" />
+                            <TextBlock Grid.Row="2" Text="Returned subfolder" VerticalAlignment="Center" />
+                            <TextBox Grid.Row="2" Grid.Column="1" x:Name="ReturnedBox" />
+                        </Grid>
+                    </StackPanel>
+                </Border>
+            </StackPanel>
+        </ScrollViewer>
+
+        <Border Grid.Row="1" Padding="20,12" BorderBrush="{DynamicResource LineBrush}" BorderThickness="0,1,0,0"
+                Background="{DynamicResource SurfaceBackground}">
+            <DockPanel LastChildFill="False">
+                <Button x:Name="RemoveButton" DockPanel.Dock="Left" Content="Remove from tracker…" Click="Remove_Click" />
+                <TextBlock x:Name="ErrorText" DockPanel.Dock="Left" Foreground="{DynamicResource DangerBrush}"
+                           TextWrapping="Wrap" VerticalAlignment="Center" MaxWidth="300" Margin="12,0,0,0" />
+                <Button x:Name="SaveButton" DockPanel.Dock="Right" Content="Save" Style="{StaticResource AccentButton}"
+                        IsDefault="True" Click="Save_Click" />
+                <Button DockPanel.Dock="Right" Content="Cancel" IsCancel="True" Margin="0,0,8,0" />
+            </DockPanel>
+        </Border>
+    </Grid>
+</Window>

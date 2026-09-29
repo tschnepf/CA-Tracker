@@ -29,6 +29,7 @@ $files = @(
     'ui.js',
     'content-script.js',
     'procore-content-script.js',
+    'refresh-capture.js',
     'README.md',
     'PRIVACY.md'
 )

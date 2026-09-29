@@ -2,9 +2,11 @@ using System.Collections.ObjectModel;
 using System.IO;
 using System.Text.Json;
 using System.Windows.Threading;
+using SmcCaTracker.App.Services;
 using SmcCaTracker.Core.Comparison;
 using SmcCaTracker.Core.Matching;
 using SmcCaTracker.Core.Models;
+using SmcCaTracker.Core.Refresh;
 using SmcCaTracker.Core.Storage;
 
 namespace SmcCaTracker.App.ViewModels;
@@ -19,15 +21,20 @@ public static class Filters
 }
 
 /// <summary>
-/// State for the main window. Reading and comparing never changes a CA folder; every change
-/// goes through an OperationPlan that the window previews before anything runs.
+/// State for the main window. The app owns the projects: each is a CA folder, optionally
+/// connected to a Helix or Procore project. Refresh asks Chrome (through the extension) for fresh
+/// items. Reading and comparing never changes a CA folder; every change goes through an
+/// OperationPlan that the window previews before anything runs.
 /// </summary>
 public sealed class MainViewModel : ObservableObject, IDisposable
 {
     private readonly SettingsStore settingsStore;
     private readonly SnapshotStore snapshotStore;
+    private readonly RefreshRequestStore refreshStore;
+    private readonly ProjectCatalogStore catalogStore;
     private readonly Dictionary<string, List<RowViewModel>> rowsByType = new(StringComparer.OrdinalIgnoreCase);
     private readonly DispatcherTimer snapshotDebounce;
+    private readonly DispatcherTimer ticker;
     private FileSystemWatcher? watcher;
     private ProjectViewModel? selectedProject;
     private ProjectComparison? comparison;
@@ -35,7 +42,12 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     private string filter = Filters.Attention;
     private bool isBusy;
     private string statusMessage = "";
-    private int refreshVersion;
+    private string refreshMessage = "";
+    private bool refreshMessageIsError;
+    private string extensionStatus = "";
+    private int compareVersion;
+    private int tickCount;
+    private bool refreshStarting;
 
     public MainViewModel(AppPaths paths, SettingsStore settingsStore, TrackerSettings settings)
     {
@@ -43,13 +55,22 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         this.settingsStore = settingsStore;
         Settings = settings;
         snapshotStore = new SnapshotStore(paths);
+        refreshStore = new RefreshRequestStore(paths);
+        catalogStore = new ProjectCatalogStore(paths);
+        refreshStore.Cleanup(DateTimeOffset.Now);
+
         snapshotDebounce = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(800) };
         snapshotDebounce.Tick += async (_, _) =>
         {
             snapshotDebounce.Stop();
             await OnSnapshotsChangedAsync();
         };
+        ticker = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
+        ticker.Tick += async (_, _) => await OnTickAsync();
+        ticker.Start();
+
         LoadProjects();
+        UpdateExtensionStatus();
         WatchSnapshots();
     }
 
@@ -66,8 +87,9 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         {
             if (Set(ref selectedProject, value))
             {
+                SetRefreshMessage("", false);
                 OnHeaderChanged();
-                _ = RefreshAsync();
+                _ = CompareAsync();
             }
         }
     }
@@ -108,47 +130,87 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         set => Set(ref statusMessage, value);
     }
 
+    public string ExtensionStatus
+    {
+        get => extensionStatus;
+        private set => Set(ref extensionStatus, value);
+    }
+
     public bool HasProject => SelectedProject is not null;
     public bool HasNoProjects => Projects.Count == 0;
-    public bool HasCaFolder => SelectedProject?.HasCaFolder == true;
-    public bool NeedsCaFolder => HasProject && !HasCaFolder;
-    public string ProjectTitle => SelectedProject?.Name ?? "Choose a project";
-    public string CaFolderText => SelectedProject?.Mapping?.CaFolder ?? "No CA folder chosen yet";
+    public bool HasCaFolder => !string.IsNullOrWhiteSpace(SelectedProject?.Project.CaFolder);
+    public bool IsConnected => SelectedProject?.IsConnected == true;
+    public bool IsNotConnected => HasProject && !IsConnected;
+    public bool IsRefreshing => SelectedProject?.IsRefreshing == true;
+    public bool CanRefresh => HasProject && !IsRefreshing && !refreshStarting;
+    public string ProjectTitle => SelectedProject?.Name ?? "Choose or add a project";
+    public string CaFolderText => HasCaFolder ? SelectedProject!.Project.CaFolder : "No CA folder chosen";
+    public string ConnectionText => SelectedProject?.ConnectionText ?? "";
+    public string RefreshButtonText => IsRefreshing ? "Refreshing…" : IsConnected ? $"Refresh from {SelectedProject!.ProviderLabel}" : "Refresh";
 
-    public string ProjectSubtitle
+    public string DataTimestampText
     {
         get
         {
-            if (SelectedProject is null)
+            if (SelectedProject is null || !IsConnected)
             {
                 return "";
             }
 
             var snapshot = SelectedProject.Snapshot;
+            var label = SelectedProject.ProviderLabel;
             if (snapshot is null)
             {
-                return $"{SelectedProject.ProviderLabel} · No item data yet. Open this project in {SelectedProject.ProviderLabel} with the extension's Windows helper enabled.";
+                return $"{label} data: never refreshed";
             }
 
-            var partial = snapshot.Provider == Providers.Procore
-                ? " · Procore shows only the rows visible in its grid, so missing items are not flagged."
-                : "";
-            return $"{SelectedProject.ProviderLabel} · Item data from {Formatting.When(snapshot.ScannedAt)}{partial}";
+            var types = ItemTypes.All
+                .Select(type => (type, coverage: snapshot.CoverageFor(type)))
+                .Where(entry => entry.coverage is not null)
+                .ToList();
+            var distinctTimes = types.Select(entry => entry.coverage!.ScannedAt).Distinct().Count();
+            return distinctTimes > 1
+                ? $"{label} data: " + string.Join(" · ", types.Select(entry => $"{ItemTypes.Plural(entry.type)} {Formatting.When(entry.coverage!.ScannedAt)}"))
+                : $"{label} data refreshed {Formatting.When(snapshot.ScannedAt)}";
         }
     }
+
+    public string FolderTimestampText => comparison is null || !HasCaFolder
+        ? ""
+        : $"CA folder checked {Formatting.When(comparison.ComparedAt)}";
+
+    public string RefreshMessage => refreshMessage;
+    public bool HasRefreshMessage => refreshMessage.Length > 0;
+    public bool RefreshMessageIsError => refreshMessageIsError;
+
+    public string ProjectSubtitle
+    {
+        get
+        {
+            var snapshot = SelectedProject?.Snapshot;
+            if (snapshot is not null && string.Equals(snapshot.Provider, Providers.Procore, StringComparison.OrdinalIgnoreCase))
+            {
+                return "Procore shows only the rows visible in its RFI and Submittal lists, so folders missing from them are not flagged.";
+            }
+
+            return "";
+        }
+    }
+
+    public bool HasProjectSubtitle => ProjectSubtitle.Length > 0;
 
     public string CompanyText
     {
         get
         {
-            if (comparison is null)
+            if (comparison is null || !IsConnected)
             {
                 return "";
             }
 
             if (!comparison.Company.IsKnown)
             {
-                return "Returned: closed items only — no company is known yet. Choose one in Settings.";
+                return "Returned: closed items only until a company is known (refresh, or choose one in Edit project).";
             }
 
             var rule = Settings.Returned;
@@ -202,7 +264,8 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     public string SubmittalTabText => TabText(ItemTypes.Submittal);
 
     public string EmptyText => !HasProject ? ""
-        : !HasCaFolder ? "Choose this project's CA folder to compare it."
+        : !HasCaFolder ? "Choose this project's CA folder in Edit project."
+        : !IsConnected && Rows.Count == 0 ? "Connect this project to Helix or Procore, then Refresh, to compare its items."
         : Rows.Count == 0 && Filter == Filters.Attention ? "Nothing needs attention here."
         : Rows.Count == 0 ? "No items match this filter."
         : "";
@@ -216,26 +279,48 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     public IReadOnlyList<ComparisonRow> CheckedRows() =>
         rowsByType.Values.SelectMany(rows => rows).Where(row => row.IsChecked).Select(row => row.Row).ToList();
 
+    public IReadOnlyList<CatalogProject> KnownProviderProjects() => catalogStore.WithSnapshots(snapshotStore.LoadAll());
+
+    public ProviderSnapshot? SnapshotFor(TrackerProject project) =>
+        project.Connection is null ? null : snapshotStore.Load(project.Connection.Provider, project.Connection.ProjectId);
+
+    // ---- Projects -------------------------------------------------------------------------
+
     public void LoadProjects()
     {
-        var byKey = Projects.ToDictionary(project => project.Key);
-        var seen = new HashSet<string>();
-        foreach (var snapshot in snapshotStore.LoadAll())
+        var existing = Projects.ToDictionary(project => project.Id);
+        var settingsChanged = false;
+        foreach (var project in Settings.Projects)
         {
-            var project = Upsert(byKey, snapshot.Provider, snapshot.ProjectId);
-            project.Snapshot = snapshot;
-            project.Mapping = Settings.FindMapping(snapshot.Provider, snapshot.ProjectId);
-            seen.Add(project.Key);
+            if (!existing.TryGetValue(project.Id, out var viewModel))
+            {
+                viewModel = new ProjectViewModel(project);
+                Projects.Add(viewModel);
+            }
+            else if (!ReferenceEquals(viewModel.Project, project))
+            {
+                viewModel.Project = project;
+            }
+
+            var snapshot = SnapshotFor(project);
+            if (snapshot?.ScannedAt != viewModel.Snapshot?.ScannedAt
+                || snapshot?.ProjectId != viewModel.Snapshot?.ProjectId
+                || snapshot?.Items.Count != viewModel.Snapshot?.Items.Count)
+            {
+                viewModel.Snapshot = snapshot;
+            }
+
+            // A project connected from a pasted link learns its name from the first refresh.
+            if (project.Connection is not null && string.IsNullOrWhiteSpace(project.Connection.ProjectName)
+                && !string.IsNullOrWhiteSpace(snapshot?.ProjectName))
+            {
+                project.Connection.ProjectName = snapshot!.ProjectName;
+                settingsChanged = true;
+            }
         }
 
-        foreach (var mapping in Settings.Projects)
-        {
-            var project = Upsert(byKey, mapping.Provider, mapping.ProjectId);
-            project.Mapping = mapping;
-            seen.Add(project.Key);
-        }
-
-        foreach (var stale in Projects.Where(project => !seen.Contains(project.Key)).ToList())
+        var ids = Settings.Projects.Select(project => project.Id).ToHashSet();
+        foreach (var stale in Projects.Where(project => !ids.Contains(project.Id)).ToList())
         {
             Projects.Remove(stale);
         }
@@ -250,44 +335,261 @@ public sealed class MainViewModel : ObservableObject, IDisposable
             }
         }
 
-        OnPropertyChanged(nameof(HasNoProjects));
-    }
-
-    private ProjectViewModel Upsert(Dictionary<string, ProjectViewModel> byKey, string provider, string projectId)
-    {
-        var key = $"{provider}|{projectId}";
-        if (!byKey.TryGetValue(key, out var project))
+        if (settingsChanged)
         {
-            project = new ProjectViewModel(provider, projectId);
-            byKey[key] = project;
-            Projects.Add(project);
+            SaveSettings();
         }
 
-        return project;
+        OnPropertyChanged(nameof(HasNoProjects));
+        OnHeaderChanged();
     }
 
-    public async Task RefreshAsync()
+    public ProjectViewModel AddProject(TrackerProject project)
+    {
+        Settings.Projects.Add(project);
+        SaveSettings();
+        LoadProjects();
+        var viewModel = Projects.First(candidate => candidate.Id == project.Id);
+        SelectedProject = viewModel;
+        return viewModel;
+    }
+
+    /// <summary>Replaces a project with an edited copy. Only the app's settings change.</summary>
+    public async Task UpdateProjectAsync(TrackerProject edited)
+    {
+        var index = Settings.Projects.FindIndex(project => project.Id == edited.Id);
+        if (index < 0)
+        {
+            Settings.Projects.Add(edited);
+        }
+        else
+        {
+            Settings.Projects[index] = edited;
+        }
+
+        SaveSettings();
+        LoadProjects();
+        await CompareAsync();
+    }
+
+    /// <summary>Removes a project from the tracker. Its CA folder is not touched.</summary>
+    public void RemoveProject(string projectId)
+    {
+        Settings.Projects.RemoveAll(project => project.Id == projectId);
+        SaveSettings();
+        if (SelectedProject?.Id == projectId)
+        {
+            SelectedProject = null;
+        }
+
+        LoadProjects();
+        if (SelectedProject is null && Projects.Count > 0)
+        {
+            SelectedProject = Projects[0];
+        }
+    }
+
+    public TrackerProject CloneProject(TrackerProject project) =>
+        JsonSerializer.Deserialize<TrackerProject>(JsonSerializer.Serialize(project, TrackerJson.Options), TrackerJson.Options)
+        ?? new TrackerProject();
+
+    // ---- Refresh --------------------------------------------------------------------------
+
+    /// <summary>
+    /// Rechecks the CA folder and, for a connected project, opens the project in Chrome so the
+    /// extension reads fresh items. The request completes when the extension reports back.
+    /// </summary>
+    public async Task StartRefreshAsync()
     {
         var project = SelectedProject;
-        var version = ++refreshVersion;
+        if (project is null || project.IsRefreshing || refreshStarting)
+        {
+            return;
+        }
+
+        refreshStarting = true;
+        OnPropertyChanged(nameof(CanRefresh));
+        try
+        {
+            await StartRefreshCoreAsync(project);
+        }
+        finally
+        {
+            refreshStarting = false;
+            OnHeaderChanged();
+        }
+    }
+
+    private async Task StartRefreshCoreAsync(ProjectViewModel project)
+    {
+        await CompareAsync();
+        if (project.Project.Connection is null)
+        {
+            SetRefreshMessage("Folder checked. Connect this project to Helix or Procore to refresh its items.", false);
+            return;
+        }
+
+        RefreshRequest request;
+        try
+        {
+            request = refreshStore.Create(project.Project, Settings.Browser, DateTimeOffset.Now);
+        }
+        catch (Exception error)
+        {
+            SetRefreshMessage(error.Message, true);
+            return;
+        }
+
+        project.ActiveRefresh = request;
+        SetRefreshMessage($"Opening {project.ProviderLabel} in Chrome…", false);
+        try
+        {
+            ChromeLauncher.Open(request.UrlForStep(0), Settings.Browser);
+        }
+        catch (Exception error)
+        {
+            project.ActiveRefresh = refreshStore.Fail(request.Id, error.Message, DateTimeOffset.Now);
+            SetRefreshMessage($"Could not open Chrome: {error.Message}", true);
+        }
+    }
+
+    public void CancelRefresh()
+    {
+        var project = SelectedProject;
+        if (project?.ActiveRefresh is null || project.ActiveRefresh.IsFinished)
+        {
+            return;
+        }
+
+        project.ActiveRefresh = refreshStore.Cancel(project.ActiveRefresh.Id, DateTimeOffset.Now);
+        SetRefreshMessage("Refresh cancelled. Close the Chrome tab if it is still open.", false);
+        OnHeaderChanged();
+    }
+
+    private async Task OnTickAsync()
+    {
+        tickCount++;
+        if (tickCount % 5 == 0)
+        {
+            UpdateExtensionStatus();
+        }
+
+        foreach (var project in Projects.Where(project => project.IsRefreshing).ToList())
+        {
+            try
+            {
+                await TickRefreshAsync(project);
+            }
+            catch (Exception error) when (error is IOException or UnauthorizedAccessException or JsonException)
+            {
+                // The request file is being written by the native host; try again next second.
+            }
+        }
+    }
+
+    private async Task TickRefreshAsync(ProjectViewModel project)
+    {
+        {
+            var now = DateTimeOffset.Now;
+            var latest = refreshStore.Load(project.ActiveRefresh!.Id) ?? project.ActiveRefresh;
+            if (!latest.IsFinished && now > latest.ExpiresAt)
+            {
+                latest = refreshStore.Fail(latest.Id, TimeoutMessage(project), now) ?? new RefreshRequest
+                {
+                    Id = latest.Id,
+                    Provider = latest.Provider,
+                    Status = RefreshStatus.Failed,
+                    Error = TimeoutMessage(project),
+                    CreatedAt = latest.CreatedAt,
+                    FinishedAt = now
+                };
+            }
+
+            if (!latest.IsFinished)
+            {
+                if (project == SelectedProject)
+                {
+                    var waited = now - latest.CreatedAt;
+                    var phase = latest.ClaimedAt is null
+                        ? $"Waiting for Chrome to open {project.ProviderLabel}"
+                        : latest.Steps.Count > 1
+                            ? $"Reading {project.ProviderLabel} page {Math.Min(latest.CompletedSteps + 1, latest.Steps.Count)} of {latest.Steps.Count}"
+                            : $"Reading {project.ProviderLabel}";
+                    SetRefreshMessage($"{phase}… {waited:m\\:ss}", false);
+                }
+
+                return;
+            }
+
+            project.ActiveRefresh = latest;
+            project.Snapshot = SnapshotFor(project.Project);
+            if (project == SelectedProject)
+            {
+                if (latest.Status == RefreshStatus.Complete)
+                {
+                    SetRefreshMessage($"Refreshed from {project.ProviderLabel} {Formatting.When(latest.FinishedAt ?? now)} · {latest.ItemCount} items.", false);
+                    LoadProjects();
+                    await CompareAsync();
+                }
+                else if (latest.Status == RefreshStatus.Failed)
+                {
+                    SetRefreshMessage($"Refresh did not finish: {latest.Error}", true);
+                }
+
+                OnHeaderChanged();
+            }
+            else if (latest.Status == RefreshStatus.Complete)
+            {
+                project.Compared = false;
+            }
+        }
+    }
+
+    private static string TimeoutMessage(ProjectViewModel project) =>
+        $"Chrome did not report back. Check that you are signed in to {project.ProviderLabel} in Chrome, " +
+        "that the TaskHub Helper extension is up to date, and that its Windows helper is enabled.";
+
+    private void SetRefreshMessage(string message, bool isError)
+    {
+        refreshMessage = message;
+        refreshMessageIsError = isError;
+        OnPropertyChanged(nameof(RefreshMessage));
+        OnPropertyChanged(nameof(HasRefreshMessage));
+        OnPropertyChanged(nameof(RefreshMessageIsError));
+    }
+
+    private void UpdateExtensionStatus()
+    {
+        var contact = ExtensionContact.Load(Paths);
+        ExtensionStatus = contact is null
+            ? "Chrome extension has not connected yet"
+            : $"Chrome extension last connected {Formatting.When(contact.LastContactAt)}";
+    }
+
+    // ---- Comparison -----------------------------------------------------------------------
+
+    public async Task CompareAsync()
+    {
+        var project = SelectedProject;
+        var version = ++compareVersion;
         if (project is null)
         {
             comparison = null;
             rowsByType.Clear();
             RebuildRows();
+            OnHeaderChanged();
             return;
         }
 
-        var mapping = Settings.FindMapping(project.Provider, project.ProjectId)
-            ?? new ProjectMapping { Provider = project.Provider, ProjectId = project.ProjectId, ProjectName = project.Name };
+        var tracked = project.Project;
         var snapshot = project.Snapshot;
         var settings = Settings;
         IsBusy = true;
-        StatusMessage = mapping.CaFolder is null ? "" : $"Reading {mapping.CaFolder}…";
+        StatusMessage = string.IsNullOrWhiteSpace(tracked.CaFolder) ? "" : $"Reading {tracked.CaFolder}…";
         try
         {
-            var result = await Task.Run(() => ProjectComparer.Compare(snapshot, mapping, settings));
-            if (version != refreshVersion)
+            var result = await Task.Run(() => ProjectComparer.Compare(snapshot, tracked, settings));
+            if (version != compareVersion)
             {
                 return;
             }
@@ -312,9 +614,10 @@ public sealed class MainViewModel : ObservableObject, IDisposable
                 rowsByType[type.ItemType] = rows;
             }
 
-            project.AttentionCount = mapping.CaFolder is null ? 0 : result.Types.Values.Sum(type => type.AttentionCount);
-            project.Compared = mapping.CaFolder is not null;
-            StatusMessage = mapping.CaFolder is null ? "" : $"Compared {Formatting.When(result.ComparedAt)}.";
+            var hasFolder = !string.IsNullOrWhiteSpace(tracked.CaFolder);
+            project.AttentionCount = hasFolder ? result.Types.Values.Sum(type => type.AttentionCount) : 0;
+            project.Compared = hasFolder;
+            StatusMessage = "";
         }
         catch (Exception error)
         {
@@ -322,29 +625,13 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         }
         finally
         {
-            if (version == refreshVersion)
+            if (version == compareVersion)
             {
                 IsBusy = false;
                 RebuildRows();
                 OnHeaderChanged();
             }
         }
-    }
-
-    public async Task SetCaFolderAsync(string folder)
-    {
-        if (SelectedProject is null)
-        {
-            return;
-        }
-
-        var mapping = Settings.GetOrAddMapping(SelectedProject.Provider, SelectedProject.ProjectId, SelectedProject.Name);
-        mapping.CaFolder = folder;
-        SaveSettings();
-        SelectedProject.Mapping = null;
-        SelectedProject.Mapping = mapping;
-        OnHeaderChanged();
-        await RefreshAsync();
     }
 
     public void SelectAllReady()
@@ -376,13 +663,8 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     {
         Settings = updated;
         SaveSettings();
-        foreach (var project in Projects)
-        {
-            project.Mapping = Settings.FindMapping(project.Provider, project.ProjectId);
-        }
-
         LoadProjects();
-        await RefreshAsync();
+        await CompareAsync();
     }
 
     public void SaveSettings() => settingsStore.Save(Settings);
@@ -429,15 +711,18 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     {
         foreach (var name in new[]
                  {
-                     nameof(HasProject), nameof(HasCaFolder), nameof(NeedsCaFolder), nameof(ProjectTitle),
-                     nameof(ProjectSubtitle), nameof(CaFolderText), nameof(CompanyText), nameof(FolderWarning),
-                     nameof(HasFolderWarning), nameof(CanCreateTypeFolders), nameof(RfiTabText), nameof(SubmittalTabText),
-                     nameof(EmptyText), nameof(HasEmptyText), nameof(Comparison)
+                     nameof(HasProject), nameof(HasCaFolder), nameof(IsConnected), nameof(IsNotConnected), nameof(IsRefreshing), nameof(CanRefresh),
+                     nameof(ProjectTitle), nameof(CaFolderText), nameof(ConnectionText), nameof(RefreshButtonText),
+                     nameof(DataTimestampText), nameof(FolderTimestampText), nameof(ProjectSubtitle), nameof(HasProjectSubtitle),
+                     nameof(CompanyText), nameof(FolderWarning), nameof(HasFolderWarning), nameof(CanCreateTypeFolders),
+                     nameof(RfiTabText), nameof(SubmittalTabText), nameof(EmptyText), nameof(HasEmptyText), nameof(Comparison)
                  })
         {
             OnPropertyChanged(name);
         }
     }
+
+    // ---- Snapshots from Chrome ------------------------------------------------------------
 
     private void WatchSnapshots()
     {
@@ -464,15 +749,14 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         }
     }
 
+    // Snapshots also arrive when you simply browse a connected project in Chrome.
     private async Task OnSnapshotsChangedAsync()
     {
-        var selectedKey = SelectedProject?.Key;
         var before = SelectedProject?.Snapshot?.ScannedAt;
         LoadProjects();
-        if (selectedKey is not null && SelectedProject?.Snapshot?.ScannedAt != before)
+        if (SelectedProject is not null && !SelectedProject.IsRefreshing && SelectedProject.Snapshot?.ScannedAt != before)
         {
-            await RefreshAsync();
-            StatusMessage = $"New {SelectedProject?.ProviderLabel} data arrived {Formatting.When(DateTimeOffset.Now)}.";
+            await CompareAsync();
         }
     }
 
@@ -480,5 +764,6 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     {
         watcher?.Dispose();
         snapshotDebounce.Stop();
+        ticker.Stop();
     }
 }

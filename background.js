@@ -739,8 +739,71 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
 
 chrome.tabs.onRemoved.addListener((tabId) => {
   pendingReportDownloads.delete(tabId);
+  seenRefreshes.delete(tabId);
   void failProcoreDiscoveryForTab(tabId).catch(() => {});
 });
+
+// Refresh ids seen by refresh-capture.js at document_start, per tab, until the page's main content
+// script takes them. Kept in extension-only session storage so a sleeping service worker keeps them.
+const REFRESH_SEEN_PREFIX = "ca-tracker-refresh-tab:";
+const REFRESH_SEEN_TTL_MS = 2 * 60 * 1000;
+const seenRefreshes = new Map();
+
+function refreshSession() {
+  const session = chrome.storage && chrome.storage.session;
+  return session && typeof session.get === "function" && typeof session.set === "function" ? session : null;
+}
+
+async function rememberRefreshForTab(tabId, id) {
+  const entry = { id, at: Date.now() };
+  seenRefreshes.set(tabId, entry);
+  const session = refreshSession();
+  if (session) {
+    try {
+      await session.set({ [`${REFRESH_SEEN_PREFIX}${tabId}`]: entry });
+    } catch (_error) {
+      // The in-memory copy is enough while the worker stays awake.
+    }
+  }
+  return true;
+}
+
+async function takeRefreshForTab(tabId) {
+  const key = `${REFRESH_SEEN_PREFIX}${tabId}`;
+  let entry = seenRefreshes.get(tabId) || null;
+  seenRefreshes.delete(tabId);
+  const session = refreshSession();
+  if (session) {
+    try {
+      const stored = await session.get(key);
+      entry = entry || (stored && stored[key]) || null;
+      if (typeof session.remove === "function") await session.remove(key);
+    } catch (_error) {
+      // Fall back to the in-memory copy.
+    }
+  }
+  if (!entry || Date.now() - Number(entry.at) > REFRESH_SEEN_TTL_MS || !/^[a-f0-9]{32}$/.test(String(entry.id))) {
+    return null;
+  }
+  return entry.id;
+}
+
+// The native host decides whether an app-requested refresh continues on another page or is done.
+// A next page must stay on the same provider, and only the tab that ran the refresh is closed.
+function finishWindowsHelperRefresh(result, provider, tabId) {
+  const refresh = result && result.refresh;
+  if (!refresh) return result;
+  const next = typeof refresh.nextUrl === "string"
+    && TaskHubProviderCore.providerForUrl(refresh.nextUrl) === provider
+    ? refresh.nextUrl
+    : null;
+  if (refresh.done && refresh.closeTab && Number.isInteger(tabId)) {
+    setTimeout(() => removeReportTab(tabId), 1200);
+  }
+  return Object.assign({}, result, {
+    refresh: { done: Boolean(refresh.done), nextUrl: next, status: refresh.status || null, error: refresh.error || null }
+  });
+}
 
 async function handleMessage(message, sender) {
   if (!message || typeof message.type !== "string") {
@@ -965,7 +1028,39 @@ async function handleMessage(message, sender) {
     if (!message.snapshot || message.snapshot.provider !== provider) {
       throw new Error("The snapshot provider does not match the sending page.");
     }
-    return windowsHelperClient.sendSnapshot(message.snapshot);
+    const result = await windowsHelperClient.sendSnapshot(message.snapshot, {
+      catalog: message.catalog,
+      refresh: message.refresh
+    });
+    return finishWindowsHelperRefresh(result, provider, sender.tab.id);
+  }
+
+  if (message.type === "WINDOWS_HELPER_REFRESH_SEEN") {
+    if (!isSupportedTab(sender.tab) || typeof message.id !== "string" || !/^[a-f0-9]{32}$/.test(message.id)) {
+      throw new Error("Ignored an invalid CA Tracker refresh link.");
+    }
+    return rememberRefreshForTab(sender.tab.id, message.id);
+  }
+
+  if (message.type === "WINDOWS_HELPER_REFRESH_TAKE") {
+    if (!isSupportedTab(sender.tab)) {
+      throw new Error("CA Tracker refreshes must open on a supported Helix or Procore page.");
+    }
+    return takeRefreshForTab(sender.tab.id);
+  }
+
+  if (message.type === "WINDOWS_HELPER_REFRESH_CLAIM") {
+    if (!isSupportedTab(sender.tab)) {
+      throw new Error("CA Tracker refreshes must open on a supported Helix or Procore page.");
+    }
+    return windowsHelperClient.claimRefresh(message.id, TaskHubProviderCore.providerForUrl(sender.tab.url));
+  }
+
+  if (message.type === "WINDOWS_HELPER_REFRESH_FAILED") {
+    if (!isSupportedTab(sender.tab)) {
+      throw new Error("CA Tracker refreshes must open on a supported Helix or Procore page.");
+    }
+    return windowsHelperClient.refreshFailed(message.id, message.error);
   }
 
   throw new Error("Unsupported extension message.");

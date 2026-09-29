@@ -1,6 +1,6 @@
 {
   "name": "taskhub-helper",
-  "version": "2.2.0",
+  "version": "2.3.0",
   "private": true,
   "description": "Site-aware Helix and Procore activity extension with optional self-hosted Task Hub sync.",
   "scripts": {

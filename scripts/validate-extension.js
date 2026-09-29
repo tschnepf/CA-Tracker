@@ -19,6 +19,7 @@ const requiredFiles = [
   "integrations/taskhub/mapper.js",
   "integrations/windows-helper/client.js",
   "integrations/windows-helper/snapshot.js",
+  "refresh-capture.js",
   "options/options.js",
   "options/options.css"
 ].filter(Boolean);
