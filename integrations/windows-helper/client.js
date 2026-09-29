@@ -113,7 +113,7 @@
     async function claimRefresh(id, provider) {
       if (!validRefreshId(id)) throw new Error("Invalid refresh request.");
       if (!await hasPermission()) {
-        throw new Error("Enable the Windows helper in TaskHub Helper settings so the CA Tracker app can refresh.");
+        throw new Error("Enable the Windows helper in SMC-CA-Tracker extension settings so the CA Tracker app can refresh.");
       }
       const response = await sendNative({ type: "claimRefresh", id, provider });
       return response.request;

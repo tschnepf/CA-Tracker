@@ -1,6 +1,6 @@
-# TaskHub Helper privacy
+# SMC-CA-Tracker extension privacy
 
-TaskHub Helper activates only on its declared Helix and Procore application routes. The two provider
+The SMC-CA-Tracker extension activates only on its declared Helix and Procore application routes. The two provider
 adapters share rendering, filtering, cache limits, and Task Hub authentication but do not share
 provider credentials or page bridges.
 

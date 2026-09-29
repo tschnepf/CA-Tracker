@@ -2,14 +2,14 @@
 
 The CA Tracker app is where projects live. Each project is a CA folder on the Egnyte drive,
 optionally connected to one Helix or Procore project. **Refresh** opens that project in Chrome,
-where the TaskHub Helper extension reads its RFIs and Submittals and hands them back. The app then
+where the SMC-CA-Tracker extension reads its RFIs and Submittals and hands them back. The app then
 compares them with the CA folder and can move folders for returned items into `~Returned`. It never
 changes a folder without first showing a preview you can cancel.
 
 ```
 CA Tracker app ──Refresh──▶ opens Chrome at the project page (with a one-time refresh id)
       ▲                                  │
-      │                 TaskHub Helper extension claims the id, scans the page
+      │                 SMC-CA-Tracker extension claims the id, scans the page
       │                                  │
       └── %LOCALAPPDATA%\SMC-CA-Tracker ◀── SmcCaTracker.NativeHost.exe (Chrome native messaging)
 ```
@@ -31,7 +31,7 @@ Close the app before rebuilding, because Windows locks a running exe.
 1. Run `windows-helper\dist\SmcCaTracker.exe`.
 2. **Settings → Register with Chrome.** This writes a small file to `%LOCALAPPDATA%\SMC-CA-Tracker`
    and a registry key under `HKEY_CURRENT_USER` (and Edge's equivalent). No admin rights are needed.
-3. In Chrome, reload the TaskHub Helper extension, open its settings, and select **Enable Windows helper**.
+3. In Chrome, reload the SMC-CA-Tracker extension, open its settings, and select **Enable Windows helper**.
    The footer of the app then shows when the extension last connected.
 4. **New project…**: choose the project's CA folder (e.g. `Z:\Shared\Projects\CMH04\CA`). The name
    defaults to the folder above `CA`.

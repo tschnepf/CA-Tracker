@@ -547,7 +547,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
 
     private static string TimeoutMessage(ProjectViewModel project) =>
         $"Chrome did not report back. Check that you are signed in to {project.ProviderLabel} in Chrome, " +
-        "that the TaskHub Helper extension is up to date, and that its Windows helper is enabled.";
+        "that the SMC-CA-Tracker extension is up to date, and that its Windows helper is enabled.";
 
     private void SetRefreshMessage(string message, bool isError)
     {

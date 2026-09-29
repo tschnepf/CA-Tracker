@@ -15,7 +15,7 @@
     }
     const legacy = url.pathname.match(/^\/(\d+)\/project(?:\/|$)/i);
     if (legacy) return Object.freeze({ companyId: "", projectId: legacy[1] });
-    throw new Error("Open a Procore company or project tool before using TaskHub Helper.");
+    throw new Error("Open a Procore company or project tool before using SMC-CA-Tracker.");
   }
 
   function asIso(value) {

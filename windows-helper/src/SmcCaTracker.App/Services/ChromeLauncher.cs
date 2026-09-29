@@ -5,7 +5,7 @@ using SmcCaTracker.Core.Storage;
 
 namespace SmcCaTracker.App.Services;
 
-/// <summary>Opens a page in the user's Chrome so the TaskHub Helper extension can refresh it.</summary>
+/// <summary>Opens a page in the user's Chrome so the SMC-CA-Tracker extension can refresh it.</summary>
 public static class ChromeLauncher
 {
     private const string AppPathsKey = @"SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\chrome.exe";

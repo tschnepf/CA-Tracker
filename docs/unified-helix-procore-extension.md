@@ -2,7 +2,7 @@
 
 ## Product goal
 
-Ship one Manifest V3 Chrome extension, branded **TaskHub Helper**, that activates only on
+Ship one Manifest V3 Chrome extension, branded **SMC-CA-Tracker** (originally TaskHub Helper), that activates only on
 supported Helix or Procore application pages. The shared shell owns presentation, local
 preferences, bounded caching, TaskHub authentication, and normalized work-item behavior.
 Provider adapters own site detection, context discovery, record retrieval, deep links, and
@@ -16,7 +16,7 @@ from page traffic, or depends on private Procore JavaScript interfaces.
 ## Runtime shape
 
 ```text
-TaskHub Helper extension
+SMC-CA-Tracker extension
   provider-core.js              host and route classification
   activity-core.js              normalized filtering and assignment rules
   ui.js                         one sidebar, provider-aware labels and actions

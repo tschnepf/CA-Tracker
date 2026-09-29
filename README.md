@@ -1,4 +1,4 @@
-# TaskHub Helper for Helix and Procore
+# SMC-CA-Tracker for Helix and Procore
 
 A dependency-free Chrome Manifest V3 extension with one stable extension ID and two site adapters. It activates **My Helix Activity** on supported Helix pages and **My Procore Activity** on supported Procore company/project tool pages. Shared UI, filtering, bounded caching, Task Hub login, and sync infrastructure are reused; provider-specific data access remains isolated.
 
@@ -208,7 +208,7 @@ See [PRIVACY.md](PRIVACY.md) for exactly what is sent.
 
 ## Install in Chrome
 
-For a deployed Task Hub, open **Settings → Browser Extensions**, download the TaskHub Helper ZIP, extract it
+For a deployed Task Hub, open **Settings → Browser Extensions**, download the extension ZIP, extract it
 into a permanent folder, and use that folder in the steps below. Task Hub also shows whether the
 current account has connected or synced the extension.
 

@@ -9,6 +9,7 @@
         <Setter Property="FontFamily" Value="Segoe UI" />
         <Setter Property="FontSize" Value="13" />
         <Setter Property="UseLayoutRounding" Value="True" />
+        <Setter Property="Icon" Value="pack://application:,,,/SmcCaTracker;component/Assets/app.ico" />
     </Style>
 
     <Style x:Key="Card" TargetType="Border">
