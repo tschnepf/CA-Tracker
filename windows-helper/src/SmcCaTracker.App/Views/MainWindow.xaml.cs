@@ -867,7 +867,7 @@ public partial class MainWindow : Window
     private async void InstallUpdate_Click(object sender, RoutedEventArgs e)
     {
         var answer = MessageBox.Show(this,
-            $"{viewModel.UpdateText}? CA Tracker closes, installs the new version and starts again.\n\n{viewModel.UpdateNotes}",
+            $"{viewModel.UpdateText}? CA Tracker closes, installs the new version and starts again.\n\nFrom: {viewModel.UpdateSource}\n\n{viewModel.UpdateNotes}",
             "CA Tracker", MessageBoxButton.OKCancel, MessageBoxImage.Question);
         if (answer != MessageBoxResult.OK)
         {

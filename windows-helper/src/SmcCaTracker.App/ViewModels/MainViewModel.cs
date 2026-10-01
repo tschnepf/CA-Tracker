@@ -13,6 +13,7 @@ using SmcCaTracker.Core.Models;
 using SmcCaTracker.Core.Procore;
 using SmcCaTracker.Core.Refresh;
 using SmcCaTracker.Core.Storage;
+using SmcCaTracker.Core.Updates;
 
 namespace SmcCaTracker.App.ViewModels;
 
@@ -2446,6 +2447,8 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     public bool IsUpdateAvailable => update is not null;
     public string UpdateText => update is null ? "" : $"Update to {update.Version}";
     public string? UpdateNotes => update?.Notes;
+    /// <summary>Where the installer comes from, shown before installing so people can see it's the company's location.</summary>
+    public string? UpdateSource => update?.Installer;
 
     /// <summary>Starts the newer version's installer. Null when it started (the app should then close).</summary>
     public async Task<string?> StartUpdateAsync() =>
