@@ -10,3 +10,12 @@ Thumbs.db
 windows-helper/**/bin/
 windows-helper/**/obj/
 windows-helper/dist/
+
+# Installer output and the company's own settings file (the example is kept)
+windows-helper/installer/output/
+windows-helper/company/ca-tracker-company.json
+
+# Company server: Python caches and local test databases
+central/__pycache__/
+central/*.db
+windows-helper/build.log

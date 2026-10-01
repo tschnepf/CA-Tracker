@@ -6,11 +6,11 @@ namespace SmcCaTracker.Core.Storage;
 
 /// <summary>
 /// Stores the latest provider snapshot per project in %LOCALAPPDATA%\SMC-CA-Tracker\snapshots.
-/// Written by the native messaging host, read by the app.
+/// Written by the built-in browser window after each refresh, read by the main window.
 /// </summary>
 public sealed class SnapshotStore
 {
-    public const int MaxItems = 5000;
+    public const int MaxItems = 50000;
     private readonly AppPaths paths;
 
     public SnapshotStore(AppPaths paths)
@@ -139,6 +139,13 @@ public sealed class SnapshotStore
     }
 
     public ProviderSnapshot? Load(string provider, string projectId) => LoadFile(PathFor(provider, projectId));
+
+    /// <summary>When a project's saved item list last changed, without reading it; null if there is none.</summary>
+    public DateTime? LastWriteUtc(string provider, string projectId)
+    {
+        var path = PathFor(provider, projectId);
+        return File.Exists(path) ? File.GetLastWriteTimeUtc(path) : null;
+    }
 
     public IReadOnlyList<ProviderSnapshot> LoadAll()
     {

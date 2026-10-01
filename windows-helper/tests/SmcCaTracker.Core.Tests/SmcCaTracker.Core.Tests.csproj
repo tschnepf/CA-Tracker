@@ -14,5 +14,6 @@
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\..\src\SmcCaTracker.Core\SmcCaTracker.Core.csproj" />
+    <ProjectReference Include="..\..\src\SmcCaTracker.Data\SmcCaTracker.Data.csproj" />
   </ItemGroup>
 </Project>

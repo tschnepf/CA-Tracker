@@ -11,6 +11,21 @@
     <Resource Include="Assets\app.ico" />
   </ItemGroup>
   <ItemGroup>
+    <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.2903.40" />
+    <!-- Encrypts the company server access token for this Windows user (DPAPI). -->
+    <PackageReference Include="System.Security.Cryptography.ProtectedData" Version="9.0.0" />
+  </ItemGroup>
+  <ItemGroup>
+    <!-- The read-only scanning code the built-in browser runs inside Helix and Procore pages. -->
+    <EmbeddedResource Include="Scripts\bridge-core.js" LogicalName="ProviderScripts.bridge-core.js" />
+    <EmbeddedResource Include="Scripts\activity-core.js" LogicalName="ProviderScripts.activity-core.js" />
+    <EmbeddedResource Include="Scripts\procore-core.js" LogicalName="ProviderScripts.procore-core.js" />
+    <EmbeddedResource Include="Scripts\snapshot.js" LogicalName="ProviderScripts.snapshot.js" />
+    <EmbeddedResource Include="Scripts\sync-core.js" LogicalName="ProviderScripts.sync-core.js" />
+    <EmbeddedResource Include="Scripts\procore-sync.js" LogicalName="ProviderScripts.procore-sync.js" />
+  </ItemGroup>
+  <ItemGroup>
     <ProjectReference Include="..\SmcCaTracker.Core\SmcCaTracker.Core.csproj" />
+    <ProjectReference Include="..\SmcCaTracker.Data\SmcCaTracker.Data.csproj" />
   </ItemGroup>
 </Project>

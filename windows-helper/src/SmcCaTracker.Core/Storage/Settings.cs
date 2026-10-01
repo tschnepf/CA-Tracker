@@ -1,4 +1,5 @@
 using System.Text.Json;
+using SmcCaTracker.Core.Comparison;
 using SmcCaTracker.Core.Models;
 
 namespace SmcCaTracker.Core.Storage;
@@ -12,18 +13,21 @@ public enum ThemePreference
 
 public sealed class TrackerSettings
 {
-    public const string DefaultExtensionId = "kcngamkbiboiljpfbjpmjoekkfpbidbk";
-
     public int Version { get; set; } = 2;
     public ThemePreference Theme { get; set; } = ThemePreference.System;
     public FolderLayout Folders { get; set; } = new();
     public ReturnedRule Returned { get; set; } = new();
     public BrowserSettings Browser { get; set; } = new();
+    public SyncSettings Sync { get; set; } = new();
+
+    /// <summary>The company's CA Tracker server (optional): shares projects, disciplines and items.</summary>
+    public CentralSettings Central { get; set; } = new();
+
+    /// <summary>Procore: projects you chose not to sync, and when your projects were last listed.</summary>
+    public SmcCaTracker.Core.Procore.ProcoreSettings Procore { get; set; } = new();
 
     /// <summary>Projects defined in the app. Each has a CA folder and optionally one Helix or Procore project.</summary>
     public List<TrackerProject> Projects { get; set; } = new();
-
-    public List<string> AllowedExtensionIds { get; set; } = new() { DefaultExtensionId };
 
     public TrackerProject? FindProject(string id) =>
         Projects.FirstOrDefault(project => string.Equals(project.Id, id, StringComparison.Ordinal));
@@ -34,19 +38,36 @@ public sealed class TrackerSettings
             && string.Equals(project.Connection.ProjectId, projectId, StringComparison.Ordinal));
 }
 
-/// <summary>How the app opens Chrome when it asks the extension to refresh a project.</summary>
+/// <summary>Connection to the company's CA Tracker server.</summary>
+public sealed class CentralSettings
+{
+    /// <summary>The server's address (the company settings file may set it for everyone).</summary>
+    public string Server { get; set; } = "";
+
+    /// <summary>Your access token from the server, encrypted for this Windows user.</summary>
+    public string TokenProtected { get; set; } = "";
+}
+
+/// <summary>Keeping Helix items up to date in the background.</summary>
+public sealed class SyncSettings
+{
+    /// <summary>Re-read tracked Helix projects in the background while the app is open (only changed items are read).</summary>
+    public bool AutoSync { get; set; } = true;
+
+    /// <summary>Minutes between background reads.</summary>
+    public int IntervalMinutes { get; set; } = 15;
+
+    /// <summary>Hours after which a project's items are all read again, to catch items removed in Helix.</summary>
+    public int FullReadHours { get; set; } = 12;
+}
+
+/// <summary>How the built-in browser window behaves during a refresh.</summary>
 public sealed class BrowserSettings
 {
-    /// <summary>Full path to chrome.exe; empty means find it automatically.</summary>
-    public string ChromePath { get; set; } = "";
+    /// <summary>Close the browser window once the refresh has finished.</summary>
+    public bool CloseWindowWhenDone { get; set; } = true;
 
-    /// <summary>Chrome profile folder name such as "Default" or "Profile 1"; empty means Chrome's last used profile.</summary>
-    public string ProfileDirectory { get; set; } = "";
-
-    /// <summary>Close the tab the app opened once the refresh has finished.</summary>
-    public bool CloseTabWhenDone { get; set; } = true;
-
-    /// <summary>How long to wait for Chrome before reporting that a refresh did not finish.</summary>
+    /// <summary>How long each page may take to open and be read before the refresh is stopped.</summary>
     public int TimeoutSeconds { get; set; } = 300;
 }
 
@@ -67,6 +88,12 @@ public sealed class TrackerProject
 
     /// <summary>Per-project folder names; empty means use the default layout.</summary>
     public FolderLayout? FoldersOverride { get; set; }
+
+    /// <summary>Base Build / Tenant Fit Out: which part of the job this project covers.</summary>
+    public PhaseScope Scope { get; set; } = new();
+
+    /// <summary>Disciplines chosen by hand, keyed by item type and folder name (Disciplines.Key) or, for items without a folder yet, by item (Disciplines.ItemKey).</summary>
+    public Dictionary<string, string> Disciplines { get; set; } = new();
 
     public FolderLayout EffectiveFolders(FolderLayout defaults) => FoldersOverride ?? defaults;
 
@@ -107,7 +134,11 @@ public sealed class ProviderConnection
         : $"{Providers.Label(Provider)} · {ProjectName}";
 }
 
-/// <summary>Folder names inside a project's CA folder. Defaults: RFIs, Submittals, ~Returned.</summary>
+/// <summary>
+/// Where item folders live. Defaults: CA\RFIs, CA\Submittals, each with a ~Returned subfolder.
+/// The RFI and Submittal values are relative to the CA folder and the returned value is relative to
+/// each of those, unless a value is a full path (chosen with Browse when a project is laid out differently).
+/// </summary>
 public sealed class FolderLayout
 {
     public string RfiFolder { get; set; } = "RFIs";
@@ -124,14 +155,24 @@ public sealed class FolderLayout
         ReturnedFolder = ReturnedFolder
     };
 
+    /// <summary>The last part of a folder setting, for labels: "~Returned" or the name at the end of a full path.</summary>
+    public static string DisplayName(string value)
+    {
+        var name = Path.GetFileName(Path.TrimEndingDirectorySeparator(value ?? ""));
+        return string.IsNullOrEmpty(name) ? value ?? "" : name;
+    }
+
+    /// <summary>True when the returned folder is a full path, so RFIs and Submittals share it.</summary>
+    public bool ReturnedIsShared => Path.IsPathFullyQualified(ReturnedFolder ?? "");
+
     public IReadOnlyList<string> Validate()
     {
         var problems = new List<string>();
         void Check(string label, string value)
         {
-            if (!FolderNames.IsValid(value))
+            if (!FolderNames.IsValidSetting(value))
             {
-                problems.Add($"{label} folder name \"{value}\" is not a valid Windows folder name.");
+                problems.Add($"{label} folder \"{value}\" is not a valid Windows folder name or path.");
             }
         }
 
@@ -192,6 +233,36 @@ public static class FolderNames
 
         var stem = trimmed.Split('.')[0];
         return !Reserved.Contains(stem, StringComparer.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
+    /// A folder setting: a single name ("RFIs"), a relative path ("03 CA\RFIs"), or a full path
+    /// ("Z:\Projects\CMH04\Submittals" or "\\server\share\CA"). ".." is not allowed.
+    /// </summary>
+    public static bool IsValidSetting(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value) || value.Trim() != value)
+        {
+            return false;
+        }
+
+        var rest = value.Replace('/', '\\');
+        if (rest.Length >= 2 && char.IsAsciiLetter(rest[0]) && rest[1] == ':')
+        {
+            if (rest.Length < 3 || rest[2] != '\\')
+            {
+                return false;
+            }
+
+            rest = rest[3..];
+        }
+        else if (rest.StartsWith(@"\\", StringComparison.Ordinal))
+        {
+            rest = rest[2..];
+        }
+
+        var parts = rest.Split('\\', StringSplitOptions.RemoveEmptyEntries);
+        return parts.Length > 0 && parts.All(part => part != ".." && IsValid(part));
     }
 }
 
@@ -304,6 +375,13 @@ public sealed class SettingsStore
         settings.Returned.AlwaysReturnedStatuses ??= new List<string>();
         settings.Returned.NeverReturnedStatuses ??= new List<string>();
         settings.Browser ??= new BrowserSettings();
+        settings.Sync ??= new SyncSettings();
+        settings.Procore ??= new SmcCaTracker.Core.Procore.ProcoreSettings();
+        settings.Procore.SkippedProjectIds ??= new List<string>();
+        settings.Procore.DiscoverEveryHours = Math.Clamp(settings.Procore.DiscoverEveryHours, 1, 168);
+        settings.Central ??= new CentralSettings();
+        settings.Sync.IntervalMinutes = Math.Clamp(settings.Sync.IntervalMinutes, 5, 240);
+        settings.Sync.FullReadHours = Math.Clamp(settings.Sync.FullReadHours, 1, 168);
         settings.Projects = (settings.Projects ?? new List<TrackerProject>())
             .Where(project => project is not null && !string.IsNullOrWhiteSpace(project.Id))
             .ToList();
@@ -311,11 +389,10 @@ public sealed class SettingsStore
         {
             project.Name ??= "";
             project.CaFolder ??= "";
-        }
-        settings.AllowedExtensionIds ??= new List<string>();
-        if (settings.AllowedExtensionIds.Count == 0)
-        {
-            settings.AllowedExtensionIds.Add(TrackerSettings.DefaultExtensionId);
+            project.Scope ??= new PhaseScope();
+            project.Disciplines = (project.Disciplines ?? new Dictionary<string, string>())
+                .GroupBy(entry => entry.Key.ToLowerInvariant())
+                .ToDictionary(group => group.Key, group => group.Last().Value);
         }
 
         return settings;

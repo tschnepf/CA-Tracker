@@ -7,21 +7,26 @@ on:
     branches: [main]
 
 jobs:
-  extension:
+  scan-scripts:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
-      # Standalone checks. The Task Hub server-contract checks (Keycloak realm,
-      # .env examples, web packaging) are skipped unless an AnotherTaskManager
-      # checkout is available via TASKHUB_REPO_ROOT or as ../AnotherTaskManager.
-      - name: Validate and test extension
-        run: npm run check
-      - name: Package extension
-        run: node scripts/package-extension.js
+      - name: Test the Helix and Procore scan scripts
+        run: npm test
+
+  app:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+      - name: Test and build the app
+        run: powershell -ExecutionPolicy Bypass -File windows-helper\build.ps1
       - uses: actions/upload-artifact@v4
         with:
-          name: helix-my-activity
-          path: dist/helix-my-activity-*.zip
+          name: SMC-CA-Tracker
+          path: windows-helper/dist

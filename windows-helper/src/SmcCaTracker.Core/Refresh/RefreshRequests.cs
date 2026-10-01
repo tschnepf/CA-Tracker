@@ -16,14 +16,12 @@ public enum RefreshStatus
 }
 
 /// <summary>
-/// A refresh the app asked for. The app writes it and opens Chrome with its id in the URL; the
-/// extension claims it through the native host, sends a snapshot per step, and the host marks it done.
-/// Only requests created by the app can be claimed, so a link cannot trigger a refresh on its own.
+/// A refresh the app asked for. The app writes it and opens the built-in browser window, which
+/// claims it when the project page opens, records a snapshot per step, and marks it done. The main
+/// window follows the file to show progress, and cancels it if you press Cancel.
 /// </summary>
 public sealed class RefreshRequest
 {
-    public const string HashPrefix = "#ca-tracker-refresh=";
-
     public string Id { get; set; } = "";
     public string TrackerProjectId { get; set; } = "";
     public string Provider { get; set; } = "";
@@ -39,14 +37,13 @@ public sealed class RefreshRequest
     public DateTimeOffset? ClaimedAt { get; set; }
     public DateTimeOffset? FinishedAt { get; set; }
     public string? Error { get; set; }
-    public bool CloseTabWhenDone { get; set; } = true;
 
-    /// <summary>How long each stage may take: waiting for Chrome, and each page's scan.</summary>
+    /// <summary>How long each stage may take: waiting for the page to open, and each page's scan.</summary>
     public int TimeoutSeconds { get; set; } = 300;
 
     public bool IsFinished => Status is RefreshStatus.Complete or RefreshStatus.Failed or RefreshStatus.Cancelled;
 
-    public string UrlForStep(int step) => $"{Steps[step].Url}{HashPrefix}{Id}";
+    public string UrlForStep(int step) => Steps[step].Url;
 }
 
 public sealed record ClaimResult(RefreshRequest? Request, string? Error);
@@ -84,8 +81,7 @@ public sealed partial class RefreshRequestStore
             Steps = ProviderLinks.RefreshSteps(connection),
             CreatedAt = now,
             TimeoutSeconds = Math.Clamp(browser.TimeoutSeconds, 30, 1800),
-            ExpiresAt = now.AddSeconds(Math.Clamp(browser.TimeoutSeconds, 30, 1800)),
-            CloseTabWhenDone = browser.CloseTabWhenDone
+            ExpiresAt = now.AddSeconds(Math.Clamp(browser.TimeoutSeconds, 30, 1800))
         };
         Save(request);
         return request;
@@ -112,13 +108,13 @@ public sealed partial class RefreshRequestStore
     public void Save(RefreshRequest request) =>
         LocalFiles.WriteAllTextAtomic(PathFor(request.Id), JsonSerializer.Serialize(request, TrackerJson.Options));
 
-    /// <summary>Called when the extension opens a page carrying a refresh id.</summary>
+    /// <summary>Called when the built-in browser reaches the project page and starts reading it.</summary>
     public ClaimResult Claim(string? id, string provider, DateTimeOffset now)
     {
         var request = Load(id);
         if (request is null)
         {
-            return new ClaimResult(null, "This refresh was not started by the CA Tracker app on this computer.");
+            return new ClaimResult(null, "This refresh no longer exists.");
         }
 
         if (request.IsFinished)
@@ -139,7 +135,7 @@ public sealed partial class RefreshRequestStore
 
         request.Status = RefreshStatus.Running;
         request.ClaimedAt ??= now;
-        // Once Chrome has the page, give the scan its own full time budget.
+        // Once the page is open, give the scan its own full time budget.
         request.ExpiresAt = now.AddSeconds(request.TimeoutSeconds);
         Save(request);
         return new ClaimResult(request, null);
@@ -157,7 +153,7 @@ public sealed partial class RefreshRequestStore
         if (!string.Equals(request.Provider, snapshot.Provider, StringComparison.OrdinalIgnoreCase)
             || !string.Equals(request.ProviderProjectId, snapshot.ProjectId, StringComparison.Ordinal))
         {
-            Finish(request, RefreshStatus.Failed, "Chrome opened a different project than the one requested.", now);
+            Finish(request, RefreshStatus.Failed, "A different project opened than the one requested.", now);
             return new StepResult(request, null, true);
         }
 
@@ -182,6 +178,20 @@ public sealed partial class RefreshRequestStore
         request.ExpiresAt = now.AddSeconds(request.TimeoutSeconds);
         Save(request);
         return new StepResult(request, request.UrlForStep(request.CompletedSteps), false);
+    }
+
+    /// <summary>Pushes the deadline out while someone is signing in inside the built-in browser.</summary>
+    public RefreshRequest? KeepAlive(string? id, DateTimeOffset now)
+    {
+        var request = Load(id);
+        if (request is null || request.IsFinished)
+        {
+            return request;
+        }
+
+        request.ExpiresAt = now.AddSeconds(request.TimeoutSeconds);
+        Save(request);
+        return request;
     }
 
     public RefreshRequest? Fail(string? id, string error, DateTimeOffset now)

@@ -1,12 +1,10 @@
 {
-  "name": "taskhub-helper",
-  "version": "2.3.0",
+  "name": "smc-ca-tracker",
+  "version": "2.0.0",
   "private": true,
-  "description": "Site-aware Helix and Procore activity extension with optional self-hosted Task Hub sync.",
+  "description": "Tests for the read-only Helix and Procore scan scripts the SMC CA Tracker app runs in its built-in browser.",
   "scripts": {
-    "test": "node --test tests/*.test.js",
-    "check": "node scripts/validate-extension.js && node --test tests/*.test.js",
-    "package": "npm run check && node scripts/package-extension.js"
+    "test": "node --test windows-helper/tests/Scripts/*.test.js"
   },
   "engines": {
     "node": ">=18"

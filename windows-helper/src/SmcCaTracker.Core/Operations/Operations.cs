@@ -37,55 +37,65 @@ public sealed class OperationPlan
 
 public static class OperationPlanner
 {
-    /// <summary>Plans moving active item folders into the item type's returned folder.</summary>
+    /// <summary>
+    /// Plans moving active item folders into a returned folder: the nearest ~Returned going up from the
+    /// folder (e.g. Submittals\Elec\~Returned for Submittals\Elec\BB\P000210), keeping the BB/TFO
+    /// subfolder when that returned folder has one. Without any, the item type's ~Returned is created.
+    /// </summary>
     public static OperationPlan PlanMarkReturned(IEnumerable<ComparisonRow> rows, ProjectComparison comparison)
     {
         var operations = new List<PlannedOperation>();
         var targets = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        foreach (var group in rows.Where(row => row.Folder is not null).GroupBy(row => row.ItemType))
+        var creating = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var returnedName = FolderLayout.DisplayName(comparison.Folders.ReturnedFolder);
+        foreach (var row in rows.Where(row => row.Folder is not null)
+                     .OrderBy(row => row.ItemType)
+                     .ThenBy(row => row.SortNumber, Comparer<string>.Create(ItemNumber.CompareNatural)))
         {
-            var scan = comparison.For(group.Key).Scan;
-            var returnedName = comparison.Folders.ReturnedFolder;
-            var returnedExists = Directory.Exists(scan.ReturnedFolderPath);
-            if (!returnedExists)
+            var scan = comparison.For(row.ItemType).Scan;
+            var folder = row.Folder!;
+            var destinationParent = ReturnedDestination(folder, scan, comparison.Folders);
+            if (!Directory.Exists(destinationParent) && creating.Add(destinationParent))
             {
                 operations.Add(new PlannedOperation
                 {
                     Kind = OperationKind.CreateFolder,
-                    DestinationPath = scan.ReturnedFolderPath,
-                    Title = $"Create the {returnedName} folder in {ItemTypes.Plural(group.Key)}",
-                    BlockedReason = Directory.Exists(scan.TypeFolderPath) ? null : $"{scan.TypeFolderPath} does not exist."
+                    DestinationPath = destinationParent,
+                    Title = comparison.Folders.ReturnedIsShared
+                        ? $"Create the {returnedName} folder"
+                        : $"Create {Display(scan.TypeFolderPath, destinationParent)}",
+                    BlockedReason = Directory.Exists(Path.GetDirectoryName(destinationParent))
+                        ? null
+                        : $"{Path.GetDirectoryName(destinationParent)} does not exist."
                 });
             }
 
-            foreach (var row in group.OrderBy(row => row.SortNumber, Comparer<string>.Create(ItemNumber.CompareNatural)))
+            var destination = Path.Combine(destinationParent, folder.Name);
+            operations.Add(new PlannedOperation
             {
-                var folder = row.Folder!;
-                var destination = Path.Combine(scan.ReturnedFolderPath, folder.Name);
-                operations.Add(new PlannedOperation
-                {
-                    Kind = OperationKind.MoveFolder,
-                    SourcePath = folder.FullPath,
-                    DestinationPath = destination,
-                    Title = $"Move {folder.Name} to {returnedName}",
-                    Warning = row.Item is null
-                        ? "This folder was not matched to a provider item."
-                        : row.IsReturned ? null : $"The provider still shows this as: {CourtEvaluator.Describe(row.Court, comparison.Company)}.",
-                    BlockedReason = MoveProblem(folder, FolderLocation.Active, scan.TypeFolderPath, destination, targets)
-                });
-            }
+                Kind = OperationKind.MoveFolder,
+                SourcePath = folder.FullPath,
+                DestinationPath = destination,
+                Title = $"Move {folder.Name} to {Display(scan.TypeFolderPath, destinationParent)}",
+                Warning = row.Item is null
+                    ? "This folder was not matched to a provider item."
+                    : row.IsReturned ? null : $"The provider still shows this as: {CourtEvaluator.Describe(row.Court, comparison.Company)}.",
+                BlockedReason = MoveProblem(folder, FolderLocation.Active, destination, targets)
+            });
         }
 
-        var plan = new OperationPlan
+        return new OperationPlan
         {
             Title = "Mark as returned",
             Description = "These folders will be moved into their returned folder.",
             Operations = operations
         };
-        return plan;
     }
 
-    /// <summary>Plans moving folders out of the returned folder back into the item type folder.</summary>
+    /// <summary>
+    /// Plans moving folders out of a returned folder, back to where the returned folder sits (keeping
+    /// a BB/TFO subfolder when the active side has one too).
+    /// </summary>
     public static OperationPlan PlanMoveBack(IEnumerable<ComparisonRow> rows, ProjectComparison comparison)
     {
         var operations = new List<PlannedOperation>();
@@ -95,14 +105,15 @@ public static class OperationPlanner
         {
             var scan = comparison.For(row.ItemType).Scan;
             var folder = row.Folder!;
-            var destination = Path.Combine(scan.TypeFolderPath, folder.Name);
+            var destinationParent = ActiveDestination(folder, scan);
+            var destination = Path.Combine(destinationParent, folder.Name);
             operations.Add(new PlannedOperation
             {
                 Kind = OperationKind.MoveFolder,
                 SourcePath = folder.FullPath,
                 DestinationPath = destination,
-                Title = $"Move {folder.Name} back to {ItemTypes.Plural(row.ItemType)}",
-                BlockedReason = MoveProblem(folder, FolderLocation.Returned, scan.ReturnedFolderPath, destination, targets)
+                Title = $"Move {folder.Name} back to {Display(scan.TypeFolderPath, destinationParent)}",
+                BlockedReason = MoveProblem(folder, FolderLocation.Returned, destination, targets)
             });
         }
 
@@ -113,6 +124,66 @@ public static class OperationPlanner
             Operations = operations
         };
     }
+
+    /// <summary>The folder a returned item folder goes into. See <see cref="PlanMarkReturned"/>.</summary>
+    public static string ReturnedDestination(FolderEntry folder, TypeFolderScan scan, FolderLayout layout)
+    {
+        if (layout.ReturnedIsShared || string.IsNullOrEmpty(scan.TypeFolderPath))
+        {
+            return scan.ReturnedFolderPath;
+        }
+
+        var returnedName = Path.GetFileName(Path.TrimEndingDirectorySeparator(scan.ReturnedFolderPath));
+        var phase = Phases.Detect(folder.DetectionText);
+        var level = folder.ParentPath;
+        while (level.Length > 0 && FolderScanner.IsInside(level, scan.TypeFolderPath))
+        {
+            // "~Returned", or one with a note such as "~Returned (Base Build)".
+            var candidate = FolderScanner.FindReturnedChild(level, returnedName, phase);
+            if (candidate is not null)
+            {
+                // Keep the BB/TFO (and any other grouping) folders inside ~Returned, so the folder
+                // stays with its part; the plan creates them there if they're missing.
+                var relative = Path.GetRelativePath(level, folder.ParentPath);
+                return relative == "." ? candidate : Path.Combine(candidate, relative);
+            }
+
+            if (FolderScanner.SamePath(level, scan.TypeFolderPath))
+            {
+                break;
+            }
+
+            level = Path.GetDirectoryName(level) ?? "";
+        }
+
+        return scan.ReturnedFolderPath;
+    }
+
+    /// <summary>The folder a returned item folder moves back to. See <see cref="PlanMoveBack"/>.</summary>
+    public static string ActiveDestination(FolderEntry folder, TypeFolderScan scan)
+    {
+        if (string.IsNullOrEmpty(scan.TypeFolderPath))
+        {
+            return folder.ParentPath;
+        }
+
+        var returned = folder.ReturnedFolder ?? scan.ReturnedFolderPath;
+        var anchor = FolderScanner.IsInside(returned, scan.TypeFolderPath) && !FolderScanner.SamePath(returned, scan.TypeFolderPath)
+            ? Path.GetDirectoryName(Path.TrimEndingDirectorySeparator(returned)) ?? scan.TypeFolderPath
+            : scan.TypeFolderPath;
+        var relative = FolderScanner.IsInside(folder.ParentPath, returned) ? Path.GetRelativePath(returned, folder.ParentPath) : ".";
+        if (relative != "." && Directory.Exists(Path.Combine(anchor, relative)))
+        {
+            return Path.Combine(anchor, relative);
+        }
+
+        return anchor;
+    }
+
+    private static string Display(string typePath, string path) =>
+        typePath.Length > 0 && FolderScanner.IsInside(path, typePath)
+            ? Path.Combine(Path.GetFileName(Path.TrimEndingDirectorySeparator(typePath)), Path.GetRelativePath(typePath, path)).TrimEnd('.', Path.DirectorySeparatorChar)
+            : path;
 
     /// <summary>Plans creating missing RFI/Submittal folders in a project's CA folder.</summary>
     public static OperationPlan PlanCreateTypeFolders(ProjectComparison comparison)
@@ -144,7 +215,6 @@ public static class OperationPlanner
     private static string? MoveProblem(
         FolderEntry folder,
         FolderLocation expectedLocation,
-        string expectedParent,
         string destination,
         HashSet<string> targets)
     {
@@ -153,11 +223,6 @@ public static class OperationPlanner
             return expectedLocation == FolderLocation.Active
                 ? "This folder is already in the returned folder."
                 : "This folder is not in the returned folder.";
-        }
-
-        if (!SamePath(Path.GetDirectoryName(folder.FullPath), expectedParent))
-        {
-            return "This folder is not where the tracker expects it.";
         }
 
         if (!Directory.Exists(folder.FullPath))

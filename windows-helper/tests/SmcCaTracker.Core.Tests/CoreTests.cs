@@ -1,8 +1,8 @@
 using System.Text.Json;
 using SmcCaTracker.Core.Comparison;
+using SmcCaTracker.Core.Downloads;
 using SmcCaTracker.Core.Matching;
 using SmcCaTracker.Core.Models;
-using SmcCaTracker.Core.NativeMessaging;
 using SmcCaTracker.Core.Operations;
 using SmcCaTracker.Core.Refresh;
 using SmcCaTracker.Core.Storage;
@@ -205,40 +205,25 @@ public class SnapshotStoreTests
     }
 
     [Fact]
-    public void NativeHostStoresExtensionSnapshots()
+    public void SnapshotsReadFromThePageAreStoredAndReloaded()
     {
         using var temp = new TempFolder();
         var store = new SnapshotStore(new AppPaths(temp.Root));
-        var handler = new NativeHostHandler(new AppPaths(temp.Root));
+        // The shape snapshot.js posts back from the built-in browser.
         var json = """
-        {"type":"snapshot","snapshot":{"schemaVersion":1,"provider":"helix","accountId":null,"projectId":"p1",
+        {"schemaVersion":1,"provider":"helix","accountId":null,"projectId":"p1",
          "projectName":"Aligned CMH04","projectUrl":null,"itemTypes":["rfi"],"complete":true,
          "scannedAt":"2026-09-28T20:00:00.000Z","user":{"fullName":"Pat","companyId":"smc","company":"SMC"},
          "items":[{"itemType":"rfi","itemId":"i1","number":"RFI-012","title":"Slab","status":"Review","statusRank":800,
          "closed":false,"responsible":"","holders":[{"name":"Alex","companyId":"arch","company":"Arch","state":"current"}],
-         "attachmentCount":2,"createdAt":null,"modifiedAt":"2026-09-01T00:00:00.000Z","dueAt":null,"sourceUrl":"https://example.test"}]}}
+         "attachmentCount":2,"createdAt":null,"modifiedAt":"2026-09-01T00:00:00.000Z","dueAt":null,"sourceUrl":"https://example.test"}]}
         """;
-        var response = JsonDocument.Parse(handler.Handle(json)).RootElement;
-        Assert.True(response.GetProperty("ok").GetBoolean());
+        var snapshot = JsonSerializer.Deserialize<ProviderSnapshot>(json, TrackerJson.Options)!;
+        store.Save(snapshot);
         var stored = store.Load("helix", "p1");
         Assert.NotNull(stored);
         Assert.Equal("RFI-012", stored!.Items[0].Number);
         Assert.Equal("arch", stored.Items[0].Holders[0].CompanyId);
-
-        var ping = JsonDocument.Parse(handler.Handle("""{"type":"ping"}""")).RootElement;
-        Assert.True(ping.GetProperty("ok").GetBoolean());
-        var bad = JsonDocument.Parse(handler.Handle("""{"type":"snapshot","snapshot":{"provider":"egnyte"}}""")).RootElement;
-        Assert.False(bad.GetProperty("ok").GetBoolean());
-    }
-
-    [Fact]
-    public async Task ProtocolRoundTripsLengthPrefixedMessages()
-    {
-        using var stream = new MemoryStream();
-        await NativeMessageProtocol.WriteAsync(stream, """{"type":"ping"}""", CancellationToken.None);
-        stream.Position = 0;
-        Assert.Equal("""{"type":"ping"}""", await NativeMessageProtocol.ReadAsync(stream, CancellationToken.None));
-        Assert.Null(await NativeMessageProtocol.ReadAsync(stream, CancellationToken.None));
     }
 }
 
@@ -412,7 +397,7 @@ public class RefreshTests
     }
 
     [Fact]
-    public void OnlyAppCreatedRequestsCanBeClaimedAndCompleted()
+    public void OnlyExistingRequestsCanBeClaimedAndCompleted()
     {
         using var temp = new TempFolder();
         var paths = new AppPaths(temp.Root);
@@ -421,7 +406,7 @@ public class RefreshTests
         var request = store.Create(HelixProject(), new BrowserSettings(), now);
 
         Assert.Matches("^[a-f0-9]{32}$", request.Id);
-        Assert.EndsWith($"/Overview#ca-tracker-refresh={request.Id}", request.UrlForStep(0));
+        Assert.Equal("https://project.helixteam.com/Projects/p1/Overview", request.UrlForStep(0));
         Assert.Null(store.Claim(new string('a', 32), Providers.Helix, now).Request);
         Assert.Null(store.Claim(request.Id, Providers.Procore, now).Request);
 
@@ -465,27 +450,27 @@ public class RefreshTests
             Connection = new ProviderConnection { Provider = Providers.Procore, ProjectId = "34", AccountId = "12", ProjectName = "Tower" }
         };
         var request = new RefreshRequestStore(paths).Create(project, new BrowserSettings(), now);
-        var handler = new NativeHostHandler(paths, () => now);
+        var store = new RefreshRequestStore(paths);
+        Assert.NotNull(store.Claim(request.Id, Providers.Procore, now).Request);
 
-        var claim = JsonDocument.Parse(handler.Handle($$"""{"type":"claimRefresh","id":"{{request.Id}}","provider":"procore"}""")).RootElement;
-        Assert.True(claim.GetProperty("ok").GetBoolean());
-        Assert.Equal(0, claim.GetProperty("request").GetProperty("step").GetInt32());
+        var rfis = new ProviderSnapshot { Provider = Providers.Procore, ProjectId = "34", ProjectName = "Tower", ItemTypes = new List<string> { ItemTypes.Rfi } };
+        var first = store.CompleteStep(request.Id, 0, rfis, now.AddSeconds(5))!;
+        Assert.False(first.Done);
+        Assert.Equal("https://app.procore.com/webclients/host/companies/12/projects/34/tools/submittals", first.NextUrl);
+        Assert.Equal(1, first.Request.CompletedSteps);
 
-        var snapshotJson = $$$"""
-        {"type":"snapshot","refresh":{"id":"{{{request.Id}}}","step":0},
-         "catalog":{"provider":"procore","projects":[{"projectId":"34","accountId":"12","name":"Tower","host":"app.procore.com"}]},
-         "snapshot":{"schemaVersion":1,"provider":"procore","projectId":"34","projectName":"Tower","itemTypes":["rfi"],
-         "complete":false,"scannedAt":"2026-09-28T20:00:05Z","user":{"fullName":""},"items":[]}}
-        """;
-        var first = JsonDocument.Parse(handler.Handle(snapshotJson)).RootElement.GetProperty("refresh");
-        Assert.False(first.GetProperty("done").GetBoolean());
-        Assert.EndsWith($"/tools/submittals#ca-tracker-refresh={request.Id}", first.GetProperty("nextUrl").GetString());
+        var submittals = new ProviderSnapshot { Provider = Providers.Procore, ProjectId = "34", ProjectName = "Tower", ItemTypes = new List<string> { ItemTypes.Submittal } };
+        var second = store.CompleteStep(request.Id, 1, submittals, now.AddSeconds(10))!;
+        Assert.True(second.Done);
+        Assert.Equal(RefreshStatus.Complete, store.Load(request.Id)!.Status);
 
-        var second = JsonDocument.Parse(handler.Handle(snapshotJson.Replace("\"step\":0", "\"step\":1"))).RootElement.GetProperty("refresh");
-        Assert.True(second.GetProperty("done").GetBoolean());
-        Assert.True(second.GetProperty("closeTab").GetBoolean());
-        Assert.Contains(new ProjectCatalogStore(paths).Load(), project => project.ProjectId == "34" && project.AccountId == "12");
-        Assert.NotNull(ExtensionContact.Load(paths));
+        var catalog = new ProjectCatalogStore(paths);
+        catalog.Merge(new CatalogMessage
+        {
+            Provider = Providers.Procore,
+            Projects = new List<CatalogProject> { new() { ProjectId = "34", AccountId = "12", Name = "Tower", Host = "app.procore.com" } }
+        }, now);
+        Assert.Contains(catalog.Load(), project => project.ProjectId == "34" && project.AccountId == "12");
     }
 
     [Theory]
@@ -524,5 +509,541 @@ public class SettingsMigrationTests
         Assert.Equal("Z:/CMH04/CA", project.CaFolder);
         Assert.Equal("p1", project.Connection!.ProjectId);
         Assert.Equal(2, new SettingsStore(paths).Load().Version);
+    }
+}
+
+public class FolderSettingTests
+{
+    [Theory]
+    [InlineData("RFIs", true)]
+    [InlineData("~Returned", true)]
+    [InlineData(@"03 CA\RFIs", true)]
+    [InlineData(@"Z:\Shared\Projects\CMH04\Submittals", true)]
+    [InlineData(@"\\server\share\CA\RFIs", true)]
+    [InlineData(@"Z:", false)]
+    [InlineData(@"Z:RFIs", false)]
+    [InlineData(@"..\Other", false)]
+    [InlineData(@"RFIs\CON", false)]
+    [InlineData(@"RFI?s", false)]
+    [InlineData(" RFIs", false)]
+    public void FolderSettingsAcceptNamesRelativePathsAndFullPaths(string value, bool expected) =>
+        Assert.Equal(expected, FolderNames.IsValidSetting(value));
+
+    [Fact]
+    public void FoldersOutsideTheCaFolderAndASharedReturnedFolderAreScanned()
+    {
+        using var temp = new TempFolder();
+        var ca = temp.Make("CMH04", "CA");
+        var rfis = temp.Make("CMH04", "CA", "03 CA", "RFIs");
+        temp.Make("CMH04", "CA", "03 CA", "RFIs", "RFI-001 - Open");
+        var submittals = temp.Make("Elsewhere", "Submittals");
+        temp.Make("Elsewhere", "Submittals", "S-1 - Doors");
+        var returned = temp.Make("Archive", "Returned");
+        temp.Make("Archive", "Returned", "RFI-002 - Done");
+        temp.Make("Archive", "Returned", "S-2 - Done");
+
+        var settings = new TrackerSettings();
+        var project = new TrackerProject
+        {
+            Name = "CMH04",
+            CaFolder = ca,
+            Connection = new ProviderConnection { Provider = Providers.Helix, ProjectId = "p1" },
+            FoldersOverride = new FolderLayout
+            {
+                RfiFolder = Path.Combine("03 CA", "RFIs"),
+                SubmittalFolder = submittals,
+                ReturnedFolder = returned
+            }
+        };
+        settings.Projects.Add(project);
+        var snapshot = Build.Snapshot(
+            Build.Item("1", "RFI-001", holders: new[] { Build.Holder("smc", "current") }),
+            Build.Item("2", "RFI-002", closed: true),
+            Build.Item("3", "S-1", ItemTypes.Submittal, holders: new[] { Build.Holder("smc", "current") }),
+            Build.Item("4", "S-2", ItemTypes.Submittal, closed: true));
+
+        var comparison = ProjectComparer.Compare(snapshot, project, settings);
+        var rfiRows = comparison.For(ItemTypes.Rfi).Rows;
+        var submittalRows = comparison.For(ItemTypes.Submittal).Rows;
+
+        Assert.Equal(rfis, comparison.For(ItemTypes.Rfi).Scan.TypeFolderPath);
+        Assert.Equal(new[] { RowStatus.Open, RowStatus.Filed }, rfiRows.Select(row => row.Status).OrderBy(status => status));
+        Assert.Equal(new[] { RowStatus.Open, RowStatus.Filed }, submittalRows.Select(row => row.Status).OrderBy(status => status));
+        Assert.DoesNotContain(rfiRows, row => row.Status == RowStatus.NotInProvider);
+        Assert.Equal("Returned", FolderLayout.DisplayName(returned));
+    }
+}
+
+public class DisciplineTests
+{
+    [Theory]
+    [InlineData("P000210 - Elec - Lighting fixtures", "Electrical")]
+    [InlineData("RFI-012 - MECH duct clash", "Mechanical")]
+    [InlineData("RFI-013 Plbg riser", "Plbg")]
+    [InlineData("S-4 - Fire alarm devices", "Fire")]
+    [InlineData("S-5 - ICT pathways", "ICT")]
+    [InlineData("S-6 - Security_card readers", "Security")]
+    [InlineData("S-7 - Electrical gear", "Electrical")]
+    [InlineData("S-8 - Plumbing fixtures", "Plbg")]
+    [InlineData("S-9 - Elec + Mech coordination", "Electrical")]
+    [InlineData("S-10 - Firestopping", null)]
+    [InlineData("S-11 - Electrician access", null)]
+    [InlineData("RFI-014 - Door hardware", null)]
+    public void DetectsDisciplinesFromWholeWordsInFolderNames(string name, string? expected) =>
+        Assert.Equal(expected, Disciplines.Detect(name)?.Code);
+
+    [Fact]
+    public void ManualChoicesWinAndSurviveMovesIntoReturned()
+    {
+        var overrides = new Dictionary<string, string>
+        {
+            [Disciplines.Key(ItemTypes.Rfi, "RFI-001 - Elec conduit")] = "Mechanical",
+            [Disciplines.Key(ItemTypes.Rfi, "RFI-002 - Elec panel")] = Disciplines.NoneCode
+        };
+        Assert.Equal(("Mechanical", DisciplineSource.Manual),
+            Summary(Disciplines.Resolve(ItemTypes.Rfi, "RFI-001 - ELEC CONDUIT", null, overrides)));
+        Assert.Equal(((string?)null, DisciplineSource.Manual),
+            Summary(Disciplines.Resolve(ItemTypes.Rfi, "RFI-002 - Elec panel", null, overrides)));
+        Assert.Equal(("Electrical", DisciplineSource.Detected),
+            Summary(Disciplines.Resolve(ItemTypes.Submittal, "RFI-001 - Elec conduit", null, overrides)));
+        Assert.Equal(("Fire", DisciplineSource.Detected),
+            Summary(Disciplines.Resolve(ItemTypes.Rfi, null, "Fire sprinkler heads", overrides)));
+    }
+
+    [Fact]
+    public void AnEmptyChoiceMeansDetectAgain()
+    {
+        var overrides = new Dictionary<string, string>
+        {
+            [Disciplines.Key(ItemTypes.Rfi, "RFI-001 - Elec conduit")] = "",
+            [Disciplines.ItemKey(ItemTypes.Rfi, "abc123")] = "Mechanical"
+        };
+        // The folder's choice was cleared: the item's preset applies, then detection.
+        Assert.Equal(("Mechanical", DisciplineSource.Manual),
+            Summary(Disciplines.Resolve(ItemTypes.Rfi, "RFI-001 - Elec conduit", null, overrides, null, "abc123")));
+        Assert.Equal(("Electrical", DisciplineSource.Detected),
+            Summary(Disciplines.Resolve(ItemTypes.Rfi, "RFI-001 - Elec conduit", null, overrides)));
+    }
+
+    [Fact]
+    public void AnItemsPresetDisciplineAppliesBeforeAndAfterItHasAFolder()
+    {
+        var overrides = new Dictionary<string, string>
+        {
+            [Disciplines.ItemKey(ItemTypes.Submittal, "ABC123")] = "Mechanical"
+        };
+        // No folder yet: the preset beats the title.
+        Assert.Equal(("Mechanical", DisciplineSource.Manual),
+            Summary(Disciplines.Resolve(ItemTypes.Submittal, null, "Elec panel", overrides, null, "abc123")));
+        // Once downloaded into a folder, it still applies (a choice for the folder itself would win).
+        Assert.Equal(("Mechanical", DisciplineSource.Manual),
+            Summary(Disciplines.Resolve(ItemTypes.Submittal, "P000500 - Elec panel", null, overrides, null, "ABC123")));
+        overrides[Disciplines.Key(ItemTypes.Submittal, "P000500 - Elec panel")] = "Fire";
+        Assert.Equal(("Fire", DisciplineSource.Manual),
+            Summary(Disciplines.Resolve(ItemTypes.Submittal, "P000500 - Elec panel", null, overrides, null, "ABC123")));
+        // Other items and types are untouched.
+        Assert.Equal(("Electrical", DisciplineSource.Detected),
+            Summary(Disciplines.Resolve(ItemTypes.Rfi, null, "Elec panel", overrides, null, "ABC123")));
+    }
+
+    [Fact]
+    public void DownloadsGoIntoANewDisciplineFolderOnlyWhenTheTypeFolderIsSplitByDiscipline()
+    {
+        using var temp = new TempFolder();
+        temp.Make("CA", "Submittals", "Elec");
+        temp.Make("CA", "RFIs", "RFI-001 - Something");
+        var submittals = Path.Combine(temp.Root, "CA", "Submittals");
+        var rfis = Path.Combine(temp.Root, "CA", "RFIs");
+        Assert.Equal(Path.Combine(submittals, "Mech"),
+            FolderScanner.SuggestParent(submittals, Disciplines.Find("Mechanical"), null));
+        Assert.Equal(Path.Combine(submittals, "Elec"),
+            FolderScanner.SuggestParent(submittals, Disciplines.Find("Electrical"), null));
+        Assert.Equal(rfis, FolderScanner.SuggestParent(rfis, Disciplines.Find("Mechanical"), null));
+    }
+
+    [Fact]
+    public void ComparisonRowsCarryTheirDiscipline()
+    {
+        using var temp = new TempFolder();
+        var ca = temp.Make("CA");
+        temp.Make("CA", "RFIs", "RFI-001 - Elec conduit");
+        temp.Make("CA", "RFIs", "~Returned", "RFI-002 - Door hardware");
+        var settings = new TrackerSettings();
+        var project = new TrackerProject { Name = "P", CaFolder = ca };
+        project.Disciplines[Disciplines.Key(ItemTypes.Rfi, "RFI-002 - Door hardware")] = "Security";
+        var snapshot = Build.Snapshot(Build.Item("1", "RFI-001"), Build.Item("2", "RFI-002", closed: true));
+        var rows = ProjectComparer.Compare(snapshot, project, settings).For(ItemTypes.Rfi).Rows;
+        Assert.Equal("Electrical", rows.Single(row => row.Item?.ItemId == "1").Discipline?.Code);
+        var manual = rows.Single(row => row.Item?.ItemId == "2");
+        Assert.Equal("Security", manual.Discipline?.Code);
+        Assert.Equal(DisciplineSource.Manual, manual.DisciplineSource);
+    }
+
+    private static (string? Code, DisciplineSource Source) Summary((Discipline? Discipline, DisciplineSource Source) value) =>
+        (value.Discipline?.Code, value.Source);
+}
+
+public class PhaseTests
+{
+    [Theory]
+    [InlineData("RFI-012 - BB - Slab edge", ProjectPhase.BaseBuild)]
+    [InlineData("RFI-013 - Base Build lobby", ProjectPhase.BaseBuild)]
+    [InlineData("S-4 TFO Level 3 lighting", ProjectPhase.TenantFitOut)]
+    [InlineData("S-5 - Tenant Fit-Out Level 3", ProjectPhase.TenantFitOut)]
+    [InlineData("S-6 - Fitout doors", ProjectPhase.TenantFitOut)]
+    [InlineData(@"Z:\Projects\CMH04 TFO\CA", ProjectPhase.TenantFitOut)]
+    [InlineData("S-7 - BB and TFO interface", ProjectPhase.BaseBuild)]
+    [InlineData("S-8 - BBQ area", null)]
+    [InlineData("RFI-014 - Door hardware", null)]
+    public void DetectsTheProjectPart(string text, ProjectPhase? expected) =>
+        Assert.Equal(expected, Phases.Detect(text));
+
+    [Fact]
+    public void FoldersHiddenByThePartFilterAreCounted()
+    {
+        using var temp = new TempFolder();
+        temp.Make("CA", "RFIs", "RFI-001 - BB - Slab edge");
+        temp.Make("CA", "RFIs", "RFI-002 - Lobby doors");
+        temp.Make("CA", "RFIs", "RFI-003 - Door hardware");
+        temp.Make("CA", "RFIs", "RFI-004 - TFO - Level 3 lighting");
+        var project = new TrackerProject
+        {
+            Name = "CMH02 BB",
+            CaFolder = Path.Combine(temp.Root, "CA"),
+            Scope = new PhaseScope { Phase = ProjectPhase.BaseBuild, FilterFolders = true }
+        };
+
+        var filtered = ProjectComparer.Compare(null, project, new TrackerSettings()).For(ItemTypes.Rfi);
+        Assert.Equal(2, filtered.HiddenByPhase);
+        Assert.Single(filtered.Scan.Folders);
+
+        project.Scope.IncludeUnlabeled = true;
+        Assert.Equal(0, ProjectComparer.Compare(null, project, new TrackerSettings()).For(ItemTypes.Rfi).HiddenByPhase);
+    }
+
+    [Fact]
+    public void SplitProjectsKeepOnlyTheirPartOfSharedItemsAndFolders()
+    {
+        using var temp = new TempFolder();
+        var ca = temp.Make("CA");
+        temp.Make("CA", "RFIs", "RFI-001 - BB - Slab");
+        temp.Make("CA", "RFIs", "RFI-002 - TFO - Ceiling");
+        temp.Make("CA", "RFIs", "RFI-003 - Door hardware");
+        var snapshot = Build.Snapshot(
+            Build.Item("1", "RFI-001"),
+            Build.Item("2", "RFI-002"),
+            Build.Item("3", "RFI-003"),
+            Build.Item("4", "RFI-004"));
+        snapshot.Items[0].Contract = "Base Build";
+        snapshot.Items[1].Title = "TFO ceiling heights";
+        snapshot.Items[3].Title = "TFO lighting";
+        var settings = new TrackerSettings();
+        var fitOut = new TrackerProject
+        {
+            Name = "CMH04 TFO",
+            CaFolder = ca,
+            Scope = new PhaseScope { Phase = ProjectPhase.TenantFitOut, FilterItems = true, FilterFolders = true }
+        };
+
+        var rows = ProjectComparer.Compare(snapshot, fitOut, settings).For(ItemTypes.Rfi).Rows;
+        Assert.Equal(new[] { "RFI-002", "RFI-004" }, rows.Select(row => row.Item!.Number).OrderBy(number => number));
+        Assert.Equal("RFI-002 - TFO - Ceiling", rows.Single(row => row.Folder is not null).Folder!.Name);
+
+        fitOut.Scope.IncludeUnlabeled = true;
+        var withUnlabeled = ProjectComparer.Compare(snapshot, fitOut, settings).For(ItemTypes.Rfi).Rows;
+        Assert.Contains(withUnlabeled, row => row.Item?.Number == "RFI-003" && row.Folder is not null);
+
+        var whole = new TrackerProject { Name = "CMH04", CaFolder = ca };
+        Assert.Equal(4, ProjectComparer.Compare(snapshot, whole, settings).For(ItemTypes.Rfi).Rows.Count);
+    }
+}
+
+public class BuiltInBrowserTests
+{
+    [Fact]
+    public void KeepAliveExtendsAnOpenRefreshButNotAFinishedOne()
+    {
+        using var temp = new TempFolder();
+        var store = new RefreshRequestStore(new AppPaths(temp.Root));
+        var now = DateTimeOffset.Parse("2026-09-28T20:00:00Z");
+        var project = new TrackerProject
+        {
+            Name = "P",
+            Connection = new ProviderConnection { Provider = Providers.Helix, ProjectId = "p1" }
+        };
+        var request = store.Create(project, new BrowserSettings { TimeoutSeconds = 60 }, now);
+
+        store.KeepAlive(request.Id, now.AddSeconds(50));
+        Assert.Equal(now.AddSeconds(110), store.Load(request.Id)!.ExpiresAt);
+        Assert.NotNull(store.Claim(request.Id, Providers.Helix, now.AddSeconds(100)).Request);
+
+        store.Cancel(request.Id, now.AddSeconds(101));
+        store.KeepAlive(request.Id, now.AddSeconds(102));
+        Assert.Equal(RefreshStatus.Cancelled, store.Load(request.Id)!.Status);
+    }
+
+    [Fact]
+    public void AccountsRememberWhoSignedInUntilSignOut()
+    {
+        using var temp = new TempFolder();
+        var store = new AccountStore(new AppPaths(temp.Root));
+        var now = DateTimeOffset.Parse("2026-09-28T20:00:00Z");
+        Assert.Null(store.Get(Providers.Helix));
+
+        store.Record("Helix", "Pat Reviewer", "SMC", now);
+        store.Record(Providers.Procore, null, null, now);
+        store.Record(Providers.Helix, "", null, now.AddHours(1));
+        store.Record("egnyte", "x", null, now);
+
+        var helix = store.Get(Providers.Helix)!;
+        Assert.Equal("helix", helix.Provider);
+        Assert.Equal("Pat Reviewer", helix.UserName);
+        Assert.Equal("SMC", helix.Company);
+        Assert.Equal(now.AddHours(1), helix.SignedInAt);
+        Assert.Null(store.Get(Providers.Procore)!.UserName);
+        Assert.Equal(2, store.Load().Count);
+
+        store.Clear();
+        Assert.Empty(store.Load());
+    }
+
+    [Fact]
+    public void SettingsFromChromeVersionsStillLoad()
+    {
+        using var temp = new TempFolder();
+        var paths = new AppPaths(temp.Root);
+        File.WriteAllText(paths.SettingsFile, """
+        {"version":2,"theme":"Dark","browser":{"chromePath":"","profileDirectory":"","useBuiltInBrowser":false,
+         "closeTabWhenDone":false,"timeoutSeconds":120},
+         "projects":[{"id":"7d86","name":"CMH02","caFolder":"E:\\CA","connection":{"provider":"helix","projectId":"66bb"}}],
+         "allowedExtensionIds":["kcngamkbiboiljpfbjpmjoekkfpbidbk"]}
+        """);
+        var settings = new SettingsStore(paths).Load();
+        Assert.Equal(ThemePreference.Dark, settings.Theme);
+        Assert.Equal(120, settings.Browser.TimeoutSeconds);
+        Assert.True(settings.Browser.CloseWindowWhenDone);
+        Assert.Equal("66bb", Assert.Single(settings.Projects).Connection!.ProjectId);
+    }
+}
+
+public class ItemTimingTests
+{
+    private static readonly DateTime Today = new(2026, 9, 29);
+
+    private static SnapshotItem Item(DateTimeOffset? due, bool closed = false, params SnapshotHolder[] holders) => new()
+    {
+        ItemType = ItemTypes.Rfi,
+        ItemId = "1",
+        Number = "RFI-001",
+        Closed = closed,
+        DueAt = due,
+        Holders = holders.ToList()
+    };
+
+    private static DateTimeOffset Local(int month, int day) => new(new DateTime(2026, month, day, 12, 0, 0, DateTimeKind.Local));
+
+    [Fact]
+    public void DueFiltersUseLocalCalendarDays()
+    {
+        var overdue = Item(Local(9, 27));
+        var today = Item(Local(9, 29));
+        var soon = Item(Local(10, 3));
+        var later = Item(Local(10, 20));
+        var closed = Item(Local(9, 1), closed: true);
+        var none = Item(null);
+
+        Assert.Equal(-2, ItemTiming.DaysTillDue(overdue, Today));
+        Assert.Equal(0, ItemTiming.DaysTillDue(today, Today));
+        Assert.Null(ItemTiming.DaysTillDue(closed, Today));
+        Assert.True(ItemTiming.MatchesDue(overdue, DueFilter.Overdue, 7, Today));
+        Assert.False(ItemTiming.MatchesDue(closed, DueFilter.Overdue, 7, Today));
+        Assert.True(ItemTiming.MatchesDue(today, DueFilter.DueToday, 7, Today));
+        Assert.True(ItemTiming.MatchesDue(soon, DueFilter.DueWithin, 7, Today));
+        Assert.True(ItemTiming.MatchesDue(today, DueFilter.DueWithin, 7, Today));
+        Assert.False(ItemTiming.MatchesDue(later, DueFilter.DueWithin, 7, Today));
+        Assert.False(ItemTiming.MatchesDue(overdue, DueFilter.DueWithin, 7, Today));
+        Assert.False(ItemTiming.MatchesDue(none, DueFilter.DueToday, 7, Today));
+        Assert.True(ItemTiming.MatchesDue(none, DueFilter.Any, 7, Today));
+    }
+
+    [Fact]
+    public void DaysInCourtUsesTheEarliestCurrentHolder()
+    {
+        var item = Item(null, false,
+            new SnapshotHolder { Name = "Pat", State = "current", Since = Local(9, 20) },
+            new SnapshotHolder { Name = "Sam", State = "current", Since = Local(9, 25) },
+            new SnapshotHolder { Name = "Alex", State = "upcoming" },
+            new SnapshotHolder { Name = "pat", State = "current" });
+
+        Assert.Equal(9, ItemTiming.DaysInCourt(item, Today));
+        Assert.Equal(new[] { "Pat", "Sam" }, ItemTiming.CurrentHolders(item).Select(holder => holder.Name));
+        Assert.Null(ItemTiming.DaysInCourt(Item(null, false, new SnapshotHolder { Name = "Pat", State = "current" }), Today));
+        Assert.Empty(ItemTiming.CurrentHolders(Item(null, closed: true, new SnapshotHolder { Name = "Pat", State = "current" })));
+    }
+}
+
+public class DownloadNamingTests
+{
+    [Theory]
+    [InlineData("P000210", "Aligned CMH02 - Overhead Coiling Doors - Overhead Coiling - SD", "Aligned CMH02", "P000210 - Overhead Coiling Doors - Overhead Coiling - SD")]
+    [InlineData("P000210", "CMH02 - Overhead Coiling Doors", "Aligned CMH02", "P000210 - Overhead Coiling Doors")]
+    [InlineData("RFI-012", "Slab edge -- - pour break", "Tower", "RFI-012 - Slab edge - pour break")]
+    [InlineData("RFI-013", "What is A/B: 3\"?", null, "RFI-013 - What is A-B- 3")]
+    [InlineData("RFI-014", "", "Tower", "RFI-014")]
+    public void FolderNamesAreNumberThenName(string number, string title, string? project, string expected) =>
+        Assert.Equal(expected, DownloadNaming.FolderName(number, title, project));
+
+    [Fact]
+    public void PdfAttachmentsAreDatedAndNamesNeverCollide()
+    {
+        var uploaded = new DateTimeOffset(2026, 8, 3, 12, 0, 0, TimeSpan.Zero);
+        Assert.Equal("2026-08-03 Review markup.pdf", DownloadNaming.AttachmentFileName("Review markup.pdf", uploaded));
+        Assert.Equal("2026-08-03 Review.pdf", DownloadNaming.AttachmentFileName("2026-08-03 Review.pdf", uploaded));
+        Assert.Equal("photo.jpg", DownloadNaming.AttachmentFileName("photo.jpg", uploaded));
+        Assert.Equal("_con.txt", DownloadNaming.SafeFileName(@"..\con.txt", "x"));
+        Assert.Equal("a-b.pdf", DownloadNaming.SafeFileName("a:b.pdf", "x"));
+
+        using var temp = new TempFolder();
+        File.WriteAllText(Path.Combine(temp.Root, "a.pdf"), "");
+        var used = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        Assert.Equal("a (2).pdf", DownloadNaming.UniqueFileName(temp.Root, "a.pdf", used));
+        Assert.Equal("a (3).pdf", DownloadNaming.UniqueFileName(temp.Root, "a.pdf", used));
+        Assert.Equal("b", DownloadNaming.UniqueFileName(temp.Root, "b", used));
+    }
+}
+
+public class NestedFolderTests
+{
+    [Theory]
+    [InlineData("Elec", true)]
+    [InlineData("BB", true)]
+    [InlineData("TFO", true)]
+    [InlineData("Base Build", true)]
+    [InlineData("Mechanical", true)]
+    [InlineData("P000210 - Elec - Lighting", false)]
+    [InlineData("~Returned", false)]
+    [InlineData("Old stuff", false)]
+    public void RecognisesDisciplineAndPartFolders(string name, bool expected) =>
+        Assert.Equal(expected, FolderScanner.IsGroupFolder(name));
+
+    [Fact]
+    public void ItemFoldersInsideDisciplineAndPartFoldersAreFound()
+    {
+        using var temp = new TempFolder();
+        var ca = temp.Make("CA");
+        var elec = temp.Make("CA", "Submittals", "Elec");
+        temp.Make("CA", "Submittals", "Elec", "BB", "P000210 - Doors");
+        temp.Make("CA", "Submittals", "Elec", "TFO", "P000300 - Lights");
+        temp.Make("CA", "Submittals", "Elec", "~Returned", "P000100 - Old");
+        temp.Make("CA", "Submittals", "Mech", "P000400 - Duct");
+        File.WriteAllText(Path.Combine(elec, "DO NOT SAVE TO THIS FOLDER.txt"), "");
+
+        var scan = FolderScanner.Scan(ca, ItemTypes.Submittal, new FolderLayout());
+        Assert.Equal(4, scan.Folders.Count);
+        var doors = scan.Folders.Single(folder => folder.Name.StartsWith("P000210"));
+        Assert.Equal(new[] { "Elec", "BB" }, doors.Groups);
+        Assert.Equal(FolderLocation.Active, doors.Location);
+        Assert.Equal(Path.Combine("Elec", "BB"), doors.RelativeParent);
+        var old = scan.Folders.Single(folder => folder.Name.StartsWith("P000100"));
+        Assert.Equal(FolderLocation.Returned, old.Location);
+        Assert.Equal(new[] { "Elec" }, old.Groups);
+
+        // Returned goes to the nearest ~Returned, keeping BB (created there by the plan if missing).
+        Assert.Equal(Path.Combine(elec, "~Returned", "BB"), OperationPlanner.ReturnedDestination(doors, scan, new FolderLayout()));
+        var comparison = ProjectComparer.Compare(null, new TrackerProject { Name = "P", CaFolder = ca }, new TrackerSettings());
+        var doorsRow = comparison.For(ItemTypes.Submittal).Rows.Single(row => row.Folder?.Name.StartsWith("P000210") == true);
+        var plan = OperationPlanner.PlanMarkReturned(new[] { doorsRow }, comparison);
+        Assert.Equal(OperationKind.CreateFolder, plan.Operations[0].Kind);
+        Assert.Equal(Path.Combine(elec, "~Returned", "BB"), plan.Operations[0].DestinationPath);
+        Assert.False(plan.Operations[0].IsBlocked);
+        Assert.Equal(Path.Combine(elec, "~Returned", "BB", "P000210 - Doors"), plan.Operations[1].DestinationPath);
+        Assert.Equal(elec, OperationPlanner.ActiveDestination(old, scan));
+
+        // New download folders go into Elec\BB for an electrical Base Build item.
+        Assert.Equal(Path.Combine(elec, "BB"),
+            FolderScanner.SuggestParent(scan.TypeFolderPath, Disciplines.Find("Electrical"), ProjectPhase.BaseBuild));
+        Assert.Equal(scan.TypeFolderPath, FolderScanner.SuggestParent(scan.TypeFolderPath, null, null));
+    }
+
+    [Fact]
+    public void PartAndDisciplineComeFromTheFoldersAnItemSitsIn()
+    {
+        using var temp = new TempFolder();
+        temp.Make("CA", "Submittals", "Elec", "BB", "P000210 - Doors");
+        temp.Make("CA", "Submittals", "Elec", "TFO", "P000300 - Lights");
+        temp.Make("CA", "Submittals", "Mech", "P000400 - Duct");
+        var project = new TrackerProject
+        {
+            Name = "CMH02 BB",
+            CaFolder = Path.Combine(temp.Root, "CA"),
+            Scope = new PhaseScope { Phase = ProjectPhase.BaseBuild, FilterFolders = true }
+        };
+
+        var submittals = ProjectComparer.Compare(null, project, new TrackerSettings()).For(ItemTypes.Submittal);
+        var row = Assert.Single(submittals.Rows);
+        Assert.StartsWith("P000210", row.Folder!.Name);
+        Assert.Equal("Electrical", row.Discipline?.Code);
+        Assert.Equal(1, submittals.HiddenByPhase);
+    }
+}
+
+public class RevisionTests
+{
+    [Theory]
+    [InlineData("House Generator Fire Pump Breaker Clarification - 00001 - R0", 0)]
+    [InlineData("Overhead Coiling Doors - Rev 2", 2)]
+    [InlineData("Overhead Coiling Doors Rev. 3", 3)]
+    [InlineData("Doors REV#4", 4)]
+    [InlineData("Doors - Revision 5", 5)]
+    [InlineData("Doors R1 then R2", 2)]
+    [InlineData("Overhead Coiling Doors", null)]
+    [InlineData("RFI-012 Slab edge", null)]
+    [InlineData("R2D2 lighting", null)]
+    [InlineData("Revit model coordination", null)]
+    public void FindsTheRevisionInATitle(string title, int? expected) =>
+        Assert.Equal(expected, DownloadNaming.Revision(title));
+
+    [Fact]
+    public void RevisionFilesGoIntoAnRSubfolderReusingAnExistingOne()
+    {
+        using var temp = new TempFolder();
+        var item = temp.Make("P000210 - Doors");
+        Assert.Equal(Path.Combine(item, "R1"), DownloadNaming.RevisionFolder(item, 1));
+        temp.Make("P000210 - Doors", "Rev 2");
+        temp.Make("P000210 - Doors", "R03");
+        Assert.Equal(Path.Combine(item, "Rev 2"), DownloadNaming.RevisionFolder(item, 2));
+        Assert.Equal(Path.Combine(item, "R03"), DownloadNaming.RevisionFolder(item, 3));
+    }
+}
+
+public class ReturnedWithNoteTests
+{
+    [Theory]
+    [InlineData("~Returned", true)]
+    [InlineData("~Returned (Base Build)", true)]
+    [InlineData("~Returned - TFO", true)]
+    [InlineData("~ReturnedOld", false)]
+    [InlineData("Returned", false)]
+    public void RecognisesReturnedFoldersWithANote(string name, bool expected) =>
+        Assert.Equal(expected, FolderScanner.IsReturnedName(name, "~Returned"));
+
+    [Fact]
+    public void ReturnedFoldersInsidePartFoldersAreReturned()
+    {
+        using var temp = new TempFolder();
+        var ca = temp.Make("CA");
+        var bb = temp.Make("CA", "Submittals", "Elec", "BB");
+        temp.Make("CA", "Submittals", "Elec", "BB", "~Returned (Base Build)", "000641 - Lighting Controls Drawings");
+        temp.Make("CA", "Submittals", "Elec", "BB", "000700 - Panels");
+
+        var scan = FolderScanner.Scan(ca, ItemTypes.Submittal, new FolderLayout());
+        var returned = scan.Folders.Single(folder => folder.Name.StartsWith("000641"));
+        Assert.Equal(FolderLocation.Returned, returned.Location);
+        Assert.Equal(ProjectPhase.BaseBuild, Phases.Detect(returned.DetectionText));
+        Assert.Equal(bb, OperationPlanner.ActiveDestination(returned, scan));
+
+        var active = scan.Folders.Single(folder => folder.Name.StartsWith("000700"));
+        Assert.Equal(FolderLocation.Active, active.Location);
+        Assert.Equal(Path.Combine(bb, "~Returned (Base Build)"), OperationPlanner.ReturnedDestination(active, scan, new FolderLayout()));
     }
 }

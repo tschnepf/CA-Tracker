@@ -15,16 +15,14 @@ public sealed record ConnectOption(CatalogProject Project, string Title, string 
 public partial class ConnectWindow : Window
 {
     private readonly IReadOnlyList<CatalogProject> known;
-    private readonly BrowserSettings browser;
     private readonly bool loading;
 
-    public ConnectWindow(IReadOnlyList<CatalogProject> known, ProviderConnection? current, BrowserSettings browser)
+    public ConnectWindow(IReadOnlyList<CatalogProject> known, ProviderConnection? current)
     {
         loading = true;
         InitializeComponent();
         ThemeManager.Attach(this);
         this.known = known;
-        this.browser = browser;
         var provider = current?.Provider ?? Providers.Helix;
         HelixOption.IsChecked = provider == Providers.Helix;
         ProcoreOption.IsChecked = provider == Providers.Procore;
@@ -73,9 +71,11 @@ public partial class ConnectWindow : Window
         var label = Providers.Label(provider);
         EmptyText.Text = options.Count > 0 ? ""
             : search.Length > 0 ? "No matching projects."
-            : $"No {label} projects yet. Open any {label} project in Chrome (with the extension's Windows helper enabled) and its projects appear here, or paste a link below.";
+            : provider == Providers.Helix
+                ? "No Helix projects yet. Select Connect to Helix at the top of the main window to sign in and list your projects, or paste a project link below."
+                : "No Procore projects yet. Connect to Procore (Settings → Connections) and CA Tracker lists every project you can see, or paste a project's RFIs link below.";
         EmptyText.Visibility = options.Count > 0 ? Visibility.Collapsed : Visibility.Visible;
-        OpenSiteButton.Content = $"Open {label} in Chrome";
+        OpenSiteButton.Content = $"Open {label} to copy a link";
     }
 
     private static string Detail(CatalogProject project)
@@ -99,7 +99,12 @@ public partial class ConnectWindow : Window
     {
         try
         {
-            ChromeLauncher.Open(SelectedProvider == Providers.Procore ? "https://app.procore.com/" : "https://project.helixteam.com/", browser);
+            // Opens your usual web browser so you can find the project and copy its link.
+            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(
+                SelectedProvider == Providers.Procore ? "https://app.procore.com/" : "https://project.helixteam.com/")
+            {
+                UseShellExecute = true
+            });
         }
         catch (Exception error)
         {

@@ -3,6 +3,7 @@ using System.Windows;
 using Microsoft.Win32;
 using SmcCaTracker.App.Services;
 using SmcCaTracker.App.ViewModels;
+using SmcCaTracker.Core.Comparison;
 using SmcCaTracker.Core.Models;
 using SmcCaTracker.Core.Storage;
 
@@ -40,6 +41,15 @@ public partial class ProjectWindow : Window
         SubmittalBox.Text = effective.SubmittalFolder;
         ReturnedBox.Text = effective.ReturnedFolder;
         OverrideGrid.IsEnabled = folders is not null;
+
+        var scope = project.Scope ?? new PhaseScope();
+        PhaseWhole.IsChecked = scope.Phase == ProjectPhase.Whole;
+        PhaseBaseBuild.IsChecked = scope.Phase == ProjectPhase.BaseBuild;
+        PhaseFitOut.IsChecked = scope.Phase == ProjectPhase.TenantFitOut;
+        FilterItemsBox.IsChecked = scope.FilterItems;
+        FilterFoldersBox.IsChecked = scope.FilterFolders;
+        IncludeUnlabeledBox.IsChecked = scope.IncludeUnlabeled;
+        PhaseOptions.IsEnabled = scope.IsSplit;
         Loaded += (_, _) => NameBox.Focus();
     }
 
@@ -105,7 +115,7 @@ public partial class ProjectWindow : Window
 
     private void Connect_Click(object sender, RoutedEventArgs e)
     {
-        var window = new ConnectWindow(viewModel.KnownProviderProjects(), project.Connection, viewModel.Settings.Browser) { Owner = this };
+        var window = new ConnectWindow(viewModel.KnownProviderProjects(), project.Connection) { Owner = this };
         if (window.ShowDialog() == true && window.Result is not null)
         {
             project.Connection = window.Result;
@@ -120,6 +130,108 @@ public partial class ProjectWindow : Window
         ShowConnection();
         LoadCompanies();
     }
+
+    private void BrowseRfi_Click(object sender, RoutedEventArgs e) =>
+        BrowseSubfolder(RfiBox, FolderBox.Text, "Choose this project's RFI folder");
+
+    private void BrowseSubmittal_Click(object sender, RoutedEventArgs e) =>
+        BrowseSubfolder(SubmittalBox, FolderBox.Text, "Choose this project's Submittal folder");
+
+    private void BrowseReturned_Click(object sender, RoutedEventArgs e) =>
+        BrowseSubfolder(ReturnedBox, Resolve(FolderBox.Text, RfiBox.Text), "Choose the returned folder (inside the RFI folder, or one shared folder)");
+
+    /// <summary>
+    /// Opens a folder picker at the folder currently selected in <paramref name="box"/> (or the nearest
+    /// folder that exists). A choice inside <paramref name="baseFolder"/> is stored relative to it,
+    /// anything else as a full path.
+    /// </summary>
+    private void BrowseSubfolder(System.Windows.Controls.TextBox box, string? baseFolder, string title)
+    {
+        var dialog = new OpenFolderDialog { Title = title, Multiselect = false };
+        var start = NearestExisting(Resolve(baseFolder, box.Text.Trim())) ?? NearestExisting(baseFolder);
+        if (start is not null)
+        {
+            dialog.InitialDirectory = start;
+        }
+
+        if (dialog.ShowDialog(this) != true)
+        {
+            return;
+        }
+
+        var chosen = Path.TrimEndingDirectorySeparator(dialog.FolderName);
+        box.Text = IsInside(chosen, baseFolder)
+            ? Path.GetRelativePath(Path.GetFullPath(baseFolder!), chosen)
+            : chosen;
+        if (box == ReturnedBox && Path.IsPathFullyQualified(box.Text))
+        {
+            FolderNote.Text = "This returned folder is outside the RFI folder, so RFIs and Submittals will share it.";
+        }
+    }
+
+    private static string? Resolve(string? baseFolder, string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return baseFolder;
+        }
+
+        if (Path.IsPathFullyQualified(value))
+        {
+            return value;
+        }
+
+        return string.IsNullOrWhiteSpace(baseFolder) ? null : Path.Combine(baseFolder, value);
+    }
+
+    private static string? NearestExisting(string? path)
+    {
+        try
+        {
+            var current = string.IsNullOrWhiteSpace(path) ? null : Path.GetFullPath(path);
+            while (!string.IsNullOrEmpty(current))
+            {
+                if (Directory.Exists(current))
+                {
+                    return current;
+                }
+
+                current = Path.GetDirectoryName(current);
+            }
+        }
+        catch (Exception error) when (error is ArgumentException or NotSupportedException or PathTooLongException)
+        {
+        }
+
+        return null;
+    }
+
+    private static bool IsInside(string path, string? baseFolder)
+    {
+        if (string.IsNullOrWhiteSpace(baseFolder))
+        {
+            return false;
+        }
+
+        var root = Path.TrimEndingDirectorySeparator(Path.GetFullPath(baseFolder)) + Path.DirectorySeparatorChar;
+        return Path.GetFullPath(path).StartsWith(root, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private ProjectPhase SelectedPhase =>
+        PhaseBaseBuild.IsChecked == true ? ProjectPhase.BaseBuild
+        : PhaseFitOut.IsChecked == true ? ProjectPhase.TenantFitOut
+        : ProjectPhase.Whole;
+
+    private void Phase_Changed(object sender, RoutedEventArgs e)
+    {
+        PhaseOptions.IsEnabled = SelectedPhase != ProjectPhase.Whole;
+    }
+
+    /// <summary>Two projects may share a CA folder or a connection only as different parts of the same job.</summary>
+    private bool IsOtherPart(TrackerProject other) =>
+        SelectedPhase != ProjectPhase.Whole
+        && other.Scope is { IsSplit: true }
+        && other.Scope.Phase != SelectedPhase;
 
     private void OverrideFolders_Changed(object sender, RoutedEventArgs e)
     {
@@ -155,18 +267,18 @@ public partial class ProjectWindow : Window
         {
             problems.Add("Choose the project's CA folder.");
         }
-        else if (viewModel.Settings.Projects.Any(other => other.Id != project.Id
+        else if (viewModel.Settings.Projects.Any(other => other.Id != project.Id && !IsOtherPart(other)
                      && string.Equals(Path.TrimEndingDirectorySeparator(other.CaFolder), Path.TrimEndingDirectorySeparator(FolderBox.Text), StringComparison.OrdinalIgnoreCase)))
         {
-            problems.Add("Another project already uses this CA folder.");
+            problems.Add("Another project already uses this CA folder. If they are the Base Build and Tenant Fit Out parts of one job, set each project's part below.");
         }
 
-        if (project.Connection is not null && viewModel.Settings.Projects.Any(other => other.Id != project.Id
+        if (project.Connection is not null && viewModel.Settings.Projects.Any(other => other.Id != project.Id && !IsOtherPart(other)
                 && other.Connection is not null
                 && string.Equals(other.Connection.Provider, project.Connection.Provider, StringComparison.OrdinalIgnoreCase)
                 && string.Equals(other.Connection.ProjectId, project.Connection.ProjectId, StringComparison.Ordinal)))
         {
-            problems.Add($"Another project is already connected to {project.Connection.Label}.");
+            problems.Add($"Another project is already connected to {project.Connection.Label}. If they are the Base Build and Tenant Fit Out parts of one job, set each project's part below.");
         }
 
         FolderLayout? folders = null;
@@ -193,6 +305,13 @@ public partial class ProjectWindow : Window
         project.CompanyId = company?.Id;
         project.CompanyName = company?.Name;
         project.FoldersOverride = folders;
+        project.Scope = new PhaseScope
+        {
+            Phase = SelectedPhase,
+            FilterItems = SelectedPhase != ProjectPhase.Whole && FilterItemsBox.IsChecked == true,
+            FilterFolders = SelectedPhase != ProjectPhase.Whole && FilterFoldersBox.IsChecked == true,
+            IncludeUnlabeled = SelectedPhase != ProjectPhase.Whole && IncludeUnlabeledBox.IsChecked == true
+        };
         Result = project;
         DialogResult = true;
     }

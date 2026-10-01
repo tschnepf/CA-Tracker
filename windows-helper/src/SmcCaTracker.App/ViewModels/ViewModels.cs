@@ -37,10 +37,38 @@ public sealed class ProjectViewModel : ObservableObject
     private int attentionCount;
     private bool compared;
 
+    public const string PlaceholderPrefix = "provider|";
+
     public ProjectViewModel(TrackerProject project)
     {
         this.project = project;
     }
+
+    /// <summary>
+    /// A Helix or Procore project you can open that isn't set up in the tracker yet. It is listed
+    /// under "No CA folder yet" and is never saved until you choose its CA folder.
+    /// </summary>
+    public static ProjectViewModel ForProviderProject(CatalogProject source)
+    {
+        var connection = source.ToConnection();
+        return new ProjectViewModel(new TrackerProject
+        {
+            Id = $"{PlaceholderPrefix}{source.Provider}|{source.ProjectId}",
+            Name = source.Name,
+            CompanyId = source.AccountId,
+            CompanyName = source.AccountName,
+            Connection = connection
+        });
+    }
+
+    public static bool IsPlaceholderId(string? id) => id?.StartsWith(PlaceholderPrefix, StringComparison.Ordinal) == true;
+
+    public bool IsPlaceholder => IsPlaceholderId(project.Id);
+    public bool HasCaFolder => !string.IsNullOrWhiteSpace(project.CaFolder);
+
+    /// <summary>The section of the project list this project appears in.</summary>
+    public string GroupName => HasCaFolder ? "WITH A CA FOLDER" : "NO CA FOLDER YET";
+    public int GroupOrder => HasCaFolder ? 0 : 1;
 
     public string Id => project.Id;
 
@@ -64,6 +92,91 @@ public sealed class ProjectViewModel : ObservableObject
         }
     }
 
+    private SmcCaTracker.Core.Data.SyncRun? lastRun;
+
+    /// <summary>The latest background read of this project (to show when it failed).</summary>
+    public SmcCaTracker.Core.Data.SyncRun? LastRun
+    {
+        get => lastRun;
+        set
+        {
+            if (!ReferenceEquals(lastRun, value))
+            {
+                lastRun = value;
+                RaiseAll();
+            }
+        }
+    }
+
+    /// <summary>The latest read failed (and nothing was read since).</summary>
+    public bool LastReadFailed => lastRun is { Status: "failed" } run && (snapshot is null || run.StartedAt > snapshot.ScannedAt);
+
+    private bool isArchived;
+
+    /// <summary>Archived by you (hidden from your list unless "Show archived" is ticked; not synced).</summary>
+    public bool IsArchived
+    {
+        get => isArchived;
+        set
+        {
+            if (Set(ref isArchived, value))
+            {
+                RaiseAll();
+            }
+        }
+    }
+
+    /// <summary>Archived for you only: how it's remembered (by the Helix/Procore project when connected).</summary>
+    public string ArchiveKey => project.Connection is { } connection
+        ? $"{connection.Provider.ToLowerInvariant()}|{connection.ProjectId}"
+        : $"project|{project.Id}";
+
+    private bool isSyncSkipped;
+
+    /// <summary>Procore project set to not sync (it stays in the list, but isn't read).</summary>
+    public bool IsSyncSkipped
+    {
+        get => isSyncSkipped;
+        set
+        {
+            if (Set(ref isSyncSkipped, value))
+            {
+                RaiseAll();
+            }
+        }
+    }
+
+    /// <summary>Hover text for the project list: the company hosting it and why the last read failed.</summary>
+    public string ListToolTip
+    {
+        get
+        {
+            var lines = new List<string> { Name };
+            if (!string.IsNullOrWhiteSpace(project.CompanyName))
+            {
+                lines.Add($"Hosted by {project.CompanyName} in {ProviderLabel}");
+            }
+
+            if (IsArchived)
+            {
+                lines.Add("Archived (for you only). Right-click → Unarchive to bring it back.");
+            }
+            else if (IsSyncSkipped)
+            {
+                lines.Add("Not synced. Right-click → Sync this project to turn it back on.");
+            }
+            else if (LastReadFailed && !string.IsNullOrWhiteSpace(lastRun!.Error))
+            {
+                lines.Add($"Last read failed: {lastRun.Error}");
+            }
+
+            return string.Join(Environment.NewLine, lines);
+        }
+    }
+
+    private string CompanyPart =>
+        IsPlaceholder && !string.IsNullOrWhiteSpace(project.CompanyName) ? $" · {project.CompanyName}" : "";
+
     public RefreshRequest? ActiveRefresh
     {
         get => activeRefresh;
@@ -78,25 +191,75 @@ public sealed class ProjectViewModel : ObservableObject
     public bool IsConnected => project.Connection is not null;
     public string ProviderLabel => project.Connection is null ? "" : Providers.Label(project.Connection.Provider);
     public string ConnectionText => project.Connection?.Label ?? "Not connected to Helix or Procore";
-    public bool IsRefreshing => activeRefresh is { IsFinished: false };
+    public string PhaseText => project.Scope is { IsSplit: true } ? Phases.Short(project.Scope.Phase) : "";
+    public bool IsRefreshing => activeRefresh is { IsFinished: false } || syncDepth > 0;
+
+    private int syncDepth;
+
+    /// <summary>Being read in the background (Helix). Counted, so overlapping reads don't clear each other.</summary>
+    public bool IsSyncing => syncDepth > 0;
+
+    public void BeginSync()
+    {
+        syncDepth++;
+        if (syncDepth == 1)
+        {
+            RaiseAll();
+        }
+    }
+
+    public void EndSync()
+    {
+        if (syncDepth == 0)
+        {
+            return;
+        }
+
+        syncDepth--;
+        if (syncDepth == 0)
+        {
+            RaiseAll();
+        }
+    }
 
     public string Subtitle
     {
         get
         {
+            var part = PhaseText.Length > 0 ? $"{PhaseText} · " : "";
             if (project.Connection is null)
             {
-                return "Not connected";
+                return $"{part}Not connected";
+            }
+
+            if (IsArchived)
+            {
+                return $"{part}{(project.Connection is null ? "" : ProviderLabel + CompanyPart + " · ")}archived";
             }
 
             if (IsRefreshing)
             {
-                return $"{ProviderLabel} · refreshing…";
+                return $"{part}{ProviderLabel}{CompanyPart} · updating…";
+            }
+
+            if (IsSyncSkipped)
+            {
+                return $"{part}{ProviderLabel}{CompanyPart} · not synced";
+            }
+
+            if (LastReadFailed)
+            {
+                return $"{part}{ProviderLabel}{CompanyPart} · ⚠ last read failed {Formatting.When(lastRun!.StartedAt)}";
+            }
+
+            if (IsPlaceholder && snapshot is null)
+            {
+                return $"{ProviderLabel}{CompanyPart} · waiting for the first sync";
             }
 
             return snapshot is null
-                ? $"{ProviderLabel} · not refreshed yet"
-                : $"{ProviderLabel} · refreshed {Formatting.When(snapshot.ScannedAt)}";
+                ? $"{part}{ProviderLabel} · not refreshed yet"
+                : $"{part}{ProviderLabel}{CompanyPart} · refreshed {Formatting.When(snapshot.ScannedAt)}";
         }
     }
 
@@ -125,15 +288,51 @@ public sealed class ProjectViewModel : ObservableObject
         }
     }
 
-    public bool HasBadge => Compared && AttentionCount > 0;
-    public string BadgeText => AttentionCount.ToString();
+    private int? matchingCount;
+
+    /// <summary>How many of this project's items match the list's current filters (people, due, type, …).</summary>
+    public int? MatchingCount
+    {
+        get => matchingCount;
+        set
+        {
+            if (Set(ref matchingCount, value))
+            {
+                OnPropertyChanged(nameof(BadgeText));
+                OnPropertyChanged(nameof(HasBadge));
+            }
+        }
+    }
+
+    private int overdueCount;
+
+    /// <summary>How many of those matching items are overdue (shown in red before the total).</summary>
+    public int OverdueCount
+    {
+        get => overdueCount;
+        set
+        {
+            if (Set(ref overdueCount, value))
+            {
+                OnPropertyChanged(nameof(OverdueText));
+                OnPropertyChanged(nameof(HasOverdue));
+            }
+        }
+    }
+
+    public bool HasBadge => MatchingCount > 0;
+    public string BadgeText => MatchingCount?.ToString() ?? "";
+    public string OverdueText => OverdueCount.ToString();
+    public bool HasOverdue => OverdueCount > 0;
 
     private void RaiseAll()
     {
         foreach (var name in new[]
                  {
                      nameof(Project), nameof(Snapshot), nameof(ActiveRefresh), nameof(Name), nameof(IsConnected),
-                     nameof(ProviderLabel), nameof(ConnectionText), nameof(IsRefreshing), nameof(Subtitle)
+                     nameof(ProviderLabel), nameof(ConnectionText), nameof(PhaseText), nameof(IsRefreshing), nameof(Subtitle),
+                     nameof(HasCaFolder), nameof(GroupName), nameof(GroupOrder), nameof(IsPlaceholder),
+                     nameof(IsSyncSkipped), nameof(ListToolTip), nameof(IsArchived), nameof(ArchiveKey)
                  })
         {
             OnPropertyChanged(name);
@@ -145,17 +344,64 @@ public sealed class RowViewModel : ObservableObject
 {
     private bool isChecked;
 
-    public RowViewModel(ComparisonRow row, CompanyIdentity company, FolderLayout folders)
+    public RowViewModel(ComparisonRow row, ProjectViewModel project, ProjectComparison comparison, DateTime today)
     {
         Row = row;
+        Project = project;
+        Comparison = comparison;
+        var company = comparison.Company;
+        var folders = comparison.Folders;
         CourtText = row.Item is null ? "" : CourtEvaluator.Describe(row.Court, company);
+        Holders = ItemTiming.CurrentHolders(row.Item);
+        HolderNames = Holders.Select(holder => holder.Name.Trim()).ToList();
+        DaysInCourt = ItemTiming.DaysInCourt(row.Item, today);
+        DaysTillDue = ItemTiming.DaysTillDue(row.Item, today);
+        // Where the folder sits, e.g. "Submittals\Elec\BB" or "Submittals\Elec\~Returned".
+        var typeName = FolderLayout.DisplayName(folders.TypeFolder(row.ItemType));
         LocationText = row.Folder is null ? ""
-            : row.Folder.Location == FolderLocation.Returned
-                ? $"{folders.TypeFolder(row.ItemType)}\\{folders.ReturnedFolder}"
-                : folders.TypeFolder(row.ItemType);
+            : row.Folder.Location == FolderLocation.Returned && folders.ReturnedIsShared
+                ? FolderLayout.DisplayName(folders.ReturnedFolder)
+                : row.Folder.RelativeParent.Length == 0 ? typeName
+                : System.IO.Path.IsPathRooted(row.Folder.RelativeParent) ? row.Folder.RelativeParent
+                : $"{typeName}\\{row.Folder.RelativeParent}";
     }
 
     public ComparisonRow Row { get; }
+
+    /// <summary>The project this row belongs to (several can be shown at once).</summary>
+    public ProjectViewModel Project { get; }
+    public ProjectComparison Comparison { get; }
+    public string ProjectName => Project.Name;
+    public string TypeLabel => ItemTypes.Plural(Row.ItemType);
+
+    /// <summary>People the item is with now.</summary>
+    public IReadOnlyList<SnapshotHolder> Holders { get; }
+    public IReadOnlyList<string> HolderNames { get; }
+
+    /// <summary>Who has it: names, or the court summary when the site doesn't name anyone.</summary>
+    public string HolderText => HolderNames.Count > 0 ? string.Join(", ", HolderNames) : Row.Item is null ? "" : Row.Item.Closed ? "Closed" : CourtText;
+
+    /// <summary>Sorts people A–Z, with items that have nobody named last.</summary>
+    public string PersonSortKey => HolderNames.Count > 0 ? HolderNames[0] : "\uffff";
+
+    public int? DaysInCourt { get; }
+    public string DaysInCourtText => DaysInCourt is { } days ? days == 1 ? "1 day" : $"{days} days" : "";
+
+    public int? DaysTillDue { get; }
+    public string DueDateText => Row.Item?.DueAt is { } due ? due.ToLocalTime().ToString("MMM d, yyyy") : "";
+
+    public string DaysTillDueText => DaysTillDue switch
+    {
+        null => "",
+        < -1 => $"{-DaysTillDue} days overdue",
+        -1 => "1 day overdue",
+        0 => "Due today",
+        1 => "Tomorrow",
+        _ => $"In {DaysTillDue} days"
+    };
+
+    public bool IsOverdue => DaysTillDue < 0;
+    public bool IsDueToday => DaysTillDue == 0;
 
     public bool IsChecked
     {
@@ -163,7 +409,8 @@ public sealed class RowViewModel : ObservableObject
         set => Set(ref isChecked, value && CanSelect);
     }
 
-    public bool CanSelect => Row.Folder is not null;
+    /// <summary>Rows with a folder (for moves) or an item (for presetting its discipline) can be ticked.</summary>
+    public bool CanSelect => Row.Folder is not null || Row.Item is not null;
     public RowStatus Status => Row.Status;
     public string StatusText => ComparisonRow.StatusLabel(Row.Status);
     public string Number => Row.Item?.Number ?? "—";
@@ -173,7 +420,19 @@ public sealed class RowViewModel : ObservableObject
     public string FolderName => Row.Folder?.Name ?? "—";
     public string LocationText { get; }
     public string Detail => Row.Detail;
+    public string DisciplineText => Row.Discipline?.Label ?? (Row.DisciplineSource == DisciplineSource.Manual ? "None" : "—");
+    public bool DisciplineIsDetected => Row.DisciplineSource == DisciplineSource.Detected;
+
+    public string DisciplineToolTip => Row.DisciplineSource switch
+    {
+        DisciplineSource.Manual => Row.Folder is null ? "Set by hand; downloads go into this discipline's folder" : "Set by hand",
+        DisciplineSource.Detected => Row.Folder is null ? "Detected from the item title"
+            : Row.Folder.Groups.Count > 0 && Disciplines.Detect(Row.Folder.Name) is null ? $"From the folder it's in ({string.Join("\\", Row.Folder.Groups)})"
+            : "Detected from the folder name",
+        _ => "Not detected. Use Set to choose one."
+    };
     public bool HasFolder => Row.Folder is not null;
+    public bool HasItem => Row.Item is not null;
     public string? SourceUrl => Row.Item?.SourceUrl;
 
     public bool HasLink => Uri.TryCreate(SourceUrl, UriKind.Absolute, out var uri)
@@ -230,5 +489,131 @@ public static class Formatting
             : local.Date == DateTime.Today.AddDays(-1)
                 ? $"yesterday {local:h:mm tt}"
                 : $"{local:MMM d, h:mm tt}";
+    }
+}
+
+/// <summary>One site (Helix or Procore) on the Connections page and in the Sync window.</summary>
+public sealed class ConnectionViewModel : ObservableObject
+{
+    private string statusText = "";
+    private string lastSyncedText = "";
+    private string projectsText = "";
+    private int projectCount;
+    private bool isSignedIn;
+    private bool isSyncing;
+    private string syncMessage = "";
+
+    public ConnectionViewModel(string provider)
+    {
+        Provider = provider;
+    }
+
+    public string Provider { get; }
+    public string Label => Providers.Label(Provider);
+
+    /// <summary>Set while a sync is running; Stop asks it to finish after the current project.</summary>
+    public bool StopRequested { get; set; }
+
+    public string StatusText
+    {
+        get => statusText;
+        set => Set(ref statusText, value);
+    }
+
+    public string LastSyncedText
+    {
+        get => lastSyncedText;
+        set => Set(ref lastSyncedText, value);
+    }
+
+    public string ProjectsText
+    {
+        get => projectsText;
+        set => Set(ref projectsText, value);
+    }
+
+    public int ProjectCount
+    {
+        get => projectCount;
+        set
+        {
+            if (Set(ref projectCount, value))
+            {
+                OnPropertyChanged(nameof(CanSync));
+                OnPropertyChanged(nameof(IsListed));
+            }
+        }
+    }
+
+    public bool IsSignedIn
+    {
+        get => isSignedIn;
+        set
+        {
+            if (Set(ref isSignedIn, value))
+            {
+                OnPropertyChanged(nameof(ConnectButtonText));
+                OnPropertyChanged(nameof(IsListed));
+                OnPropertyChanged(nameof(CanSync));
+            }
+        }
+    }
+
+    /// <summary>Shown in the Sync window: signed in, or has projects connected to it.</summary>
+    public bool IsListed => IsSignedIn || ProjectCount > 0;
+
+    public string ConnectButtonText => IsSignedIn ? $"Reconnect to {Label}" : $"Connect to {Label}";
+
+    public bool IsSyncing
+    {
+        get => isSyncing;
+        set
+        {
+            if (Set(ref isSyncing, value))
+            {
+                OnPropertyChanged(nameof(CanSync));
+                OnPropertyChanged(nameof(IsNotSyncing));
+            }
+        }
+    }
+
+    public bool IsNotSyncing => !IsSyncing;
+    /// <summary>Procore can sync with no projects listed yet: Sync first finds them.</summary>
+    public bool CanSync => !IsSyncing
+        && (ProjectCount > 0 || (IsSignedIn && string.Equals(Provider, Providers.Procore, StringComparison.OrdinalIgnoreCase)));
+
+    public string SyncMessage
+    {
+        get => syncMessage;
+        set
+        {
+            if (Set(ref syncMessage, value))
+            {
+                OnPropertyChanged(nameof(HasSyncMessage));
+            }
+        }
+    }
+
+    public bool HasSyncMessage => !string.IsNullOrWhiteSpace(SyncMessage);
+}
+
+/// <summary>One name (or "Anyone at &lt;company&gt;") in the Person filter.</summary>
+public sealed class PersonChoiceViewModel : ObservableObject
+{
+    private bool isChecked;
+
+    public PersonChoiceViewModel(string name, bool isCompany)
+    {
+        Name = name;
+        IsCompany = isCompany;
+    }
+
+    public string Name { get; }
+    public bool IsCompany { get; }
+
+    public bool IsChecked
+    {
+        get => isChecked;
+        set => Set(ref isChecked, value);
     }
 }

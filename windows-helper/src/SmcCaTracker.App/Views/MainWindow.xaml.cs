@@ -1,3 +1,5 @@
+using System.ComponentModel;
+using System.Windows.Data;
 using System.Diagnostics;
 using System.IO;
 using System.Windows;
@@ -7,6 +9,7 @@ using Microsoft.Win32;
 using SmcCaTracker.App.Services;
 using SmcCaTracker.App.ViewModels;
 using SmcCaTracker.Core.Comparison;
+using SmcCaTracker.Core.Models;
 using SmcCaTracker.Core.Operations;
 using SmcCaTracker.Core.Storage;
 
@@ -16,22 +19,74 @@ public partial class MainWindow : Window
 {
     private readonly MainViewModel viewModel;
     private readonly OperationExecutor executor;
+    private readonly Dictionary<string, SignInWindow> signInWindows = new(StringComparer.OrdinalIgnoreCase);
+    private SyncWindow? syncWindow;
 
     public MainWindow(MainViewModel viewModel, AppPaths paths)
     {
         this.viewModel = viewModel;
         executor = new OperationExecutor(paths);
         InitializeComponent();
+
+        // The discipline filter offers the company's disciplines (or the defaults).
+        DisciplineBox.Items.Clear();
+        DisciplineBox.Items.Add(new ComboBoxItem { Content = "All", Tag = "", IsSelected = true });
+        foreach (var discipline in SmcCaTracker.Core.Comparison.Disciplines.All)
+        {
+            DisciplineBox.Items.Add(new ComboBoxItem { Content = discipline.Label, Tag = discipline.Code });
+        }
+
+        DisciplineBox.Items.Add(new ComboBoxItem { Content = "None", Tag = SmcCaTracker.Core.Comparison.Disciplines.NoneCode });
+        InitColumnFitting();
         DataContext = viewModel;
         ThemeManager.Attach(this);
-        Closed += (_, _) => viewModel.Dispose();
-        Loaded += (_, _) =>
+        viewModel.BrowserRefreshRequested += request =>
+            new BrowserWindow(request, viewModel.Paths, viewModel.Settings.Browser, viewModel.Store) { Owner = this }.Show();
+        // A sync found Procore's sign-in expired: open Connect to Procore so it's clear what to do.
+        viewModel.SignInRequested += provider => OpenSignIn(provider, signInExpired: true);
+        Closed += (_, _) =>
         {
-            if (viewModel.SelectedProject is null && viewModel.Projects.Count > 0)
+            ItemPanel.Shutdown();
+            viewModel.Dispose();
+        };
+        ItemPanel.CloseRequested += (_, _) => ShowItemPanel(false);
+        // Coming back to the app (e.g. from Explorer): check the CA folders straight away.
+        Activated += (_, _) => viewModel.CheckFoldersSoon();
+        GroupProjectList();
+        ApplyItemGrouping();
+        UpdateSortArrows();
+        viewModel.PropertyChanged += (_, args) =>
+        {
+            switch (args.PropertyName)
             {
-                viewModel.SelectedProject = viewModel.Projects[0];
+                case nameof(MainViewModel.SelectedProject):
+                case nameof(MainViewModel.SelectedProjects):
+                    SyncProjectList();
+                    UpdateColumns();
+                    break;
+                case nameof(MainViewModel.SortColumn):
+                case nameof(MainViewModel.SortDescending):
+                    UpdateSortArrows();
+                    break;
             }
         };
+        SettingsView.BackRequested += (_, _) => ShowProjects();
+        SettingsView.SaveRequested += async edited =>
+        {
+            // Apply only what General settings edits, onto the current settings, so projects
+            // changed meanwhile (for example by a sync) are kept.
+            var current = viewModel.CloneSettings();
+            current.Theme = edited.Theme;
+            current.Folders = edited.Folders;
+            current.Returned = edited.Returned;
+            current.Browser = edited.Browser;
+            current.Sync = edited.Sync;
+            ThemeManager.Apply(current.Theme);
+            await viewModel.ApplySettingsAsync(current);
+        };
+        SettingsView.ConnectRequested += OpenSignIn;
+        SettingsView.SyncRequested += async provider => await viewModel.SyncAsync(provider);
+        Loaded += (_, _) => RestoreView();
     }
 
     private void Type_Checked(object sender, RoutedEventArgs e)
@@ -39,6 +94,309 @@ public partial class MainWindow : Window
         if (DataContext is MainViewModel model && sender is FrameworkElement { Tag: string tag })
         {
             model.SelectedType = tag;
+            UpdateColumns();
+        }
+    }
+
+    /// <summary>Puts back last session's projects, filters, people, grouping and sort.</summary>
+    private void RestoreView()
+    {
+        var remembered = viewModel.RememberedProjectIds.ToHashSet(StringComparer.Ordinal);
+        var projects = viewModel.Projects.Where(project => remembered.Contains(project.Id)).ToList();
+        if (projects.Count > 0)
+        {
+            viewModel.SetSelectedProjects(projects,
+                projects.FirstOrDefault(project => project.Id == viewModel.RememberedPrimaryProjectId));
+        }
+        else if (viewModel.SelectedProject is null && viewModel.Projects.Count > 0)
+        {
+            viewModel.SelectedProject = viewModel.Projects.FirstOrDefault(project => project.HasCaFolder) ?? viewModel.Projects[0];
+        }
+
+        SyncProjectList();
+
+        // The toolbar shows the restored choices (setting them again changes nothing in the view model).
+        foreach (var radio in Descendants<RadioButton>(this))
+        {
+            if (radio.Tag is string tag && radio.GroupName is "Type" or "Filter")
+            {
+                radio.IsChecked = radio.GroupName == "Type" ? tag == viewModel.SelectedType : tag == viewModel.Filter;
+            }
+        }
+
+        SelectByTag(DueBox, viewModel.DueFilter.ToString());
+        SelectByTag(DisciplineBox, viewModel.DisciplineFilter);
+        SelectByTag(GroupBox, viewModel.GroupBy);
+        settingSortBox = true;
+        SelectByTag(SortBox, viewModel.SortBy);
+        settingSortBox = false;
+        ApplyItemGrouping();
+        UpdateSortArrows();
+        UpdateColumns();
+        viewModel.ViewStateRestored();
+    }
+
+    private static void SelectByTag(ComboBox box, string tag) =>
+        box.SelectedItem = box.Items.OfType<ComboBoxItem>().FirstOrDefault(item => item.Tag as string == tag);
+
+    private static IEnumerable<T> Descendants<T>(DependencyObject parent) where T : DependencyObject
+    {
+        foreach (var child in LogicalTreeHelper.GetChildren(parent).OfType<DependencyObject>())
+        {
+            if (child is T match)
+            {
+                yield return match;
+            }
+
+            foreach (var nested in Descendants<T>(child))
+            {
+                yield return nested;
+            }
+        }
+    }
+
+    // ---- Several projects, grouping and sorting ------------------------------------------------
+
+    private bool syncingProjectList;
+
+    private List<ProjectViewModel> ProcoreProjectsInSelection() =>
+        ProjectList.SelectedItems.OfType<ProjectViewModel>()
+            .Where(project => string.Equals(project.Project.Connection?.Provider, Providers.Procore, StringComparison.OrdinalIgnoreCase))
+            .ToList();
+
+    private List<ProjectViewModel> ProjectsInSelection() => ProjectList.SelectedItems.OfType<ProjectViewModel>().ToList();
+
+    /// <summary>
+    /// Right-click: archive or unarchive the selected projects (for you only), and for Procore projects
+    /// turn syncing on or off.
+    /// </summary>
+    private void ProjectList_ContextMenuOpening(object sender, ContextMenuEventArgs e)
+    {
+        var selected = ProjectsInSelection();
+        if (selected.Count == 0)
+        {
+            e.Handled = true;
+            return;
+        }
+
+        static Visibility Show(bool value) => value ? Visibility.Visible : Visibility.Collapsed;
+        var count = selected.Count;
+        ArchiveProjectMenu.Header = count > 1 ? $"Archive these {count} projects" : "Archive";
+        UnarchiveProjectMenu.Header = count > 1 ? $"Unarchive these {count} projects" : "Unarchive";
+        ArchiveProjectMenu.Visibility = Show(selected.Any(project => !project.IsArchived));
+        UnarchiveProjectMenu.Visibility = Show(selected.Any(project => project.IsArchived));
+
+        var procore = ProcoreProjectsInSelection().Where(project => !project.IsArchived).ToList();
+        var several = procore.Count > 1;
+        SyncProjectMenu.Header = several ? $"Sync these {procore.Count} projects" : "Sync this project";
+        SkipProjectMenu.Header = several ? $"Don't sync these {procore.Count} projects" : "Don't sync this project";
+        SyncProjectMenu.Visibility = Show(procore.Any(project => project.IsSyncSkipped));
+        SkipProjectMenu.Visibility = Show(procore.Any(project => !project.IsSyncSkipped));
+        SyncMenuSeparator.Visibility = Show(procore.Count > 0);
+    }
+
+    private void ArchiveProject_Click(object sender, RoutedEventArgs e) => viewModel.SetArchived(ProjectsInSelection(), archive: true);
+
+    private void UnarchiveProject_Click(object sender, RoutedEventArgs e) => viewModel.SetArchived(ProjectsInSelection(), archive: false);
+
+    private void ProjectsSplitter_DragCompleted(object sender, System.Windows.Controls.Primitives.DragCompletedEventArgs e) =>
+        viewModel.ProjectsPaneWidth = ProjectsColumn.ActualWidth;
+
+    private void SyncProject_Click(object sender, RoutedEventArgs e) => viewModel.SetSyncSkipped(ProcoreProjectsInSelection(), skipped: false);
+
+    private void SkipProject_Click(object sender, RoutedEventArgs e) => viewModel.SetSyncSkipped(ProcoreProjectsInSelection(), skipped: true);
+
+    private void ProjectList_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (syncingProjectList)
+        {
+            return;
+        }
+
+        // The project clicked last is the one the header describes.
+        var primary = e.AddedItems.OfType<ProjectViewModel>().LastOrDefault()
+            ?? (viewModel.SelectedProject is { } current && ProjectList.SelectedItems.Contains(current) ? current : null);
+        viewModel.SetSelectedProjects(ProjectList.SelectedItems.OfType<ProjectViewModel>().ToList(), primary);
+    }
+
+    /// <summary>Mirrors a selection made in code (e.g. a new project) in the project list.</summary>
+    private void SyncProjectList()
+    {
+        var wanted = viewModel.SelectedProjects;
+        var shown = ProjectList.SelectedItems.OfType<ProjectViewModel>().ToList();
+        if (wanted.Count == shown.Count && wanted.All(shown.Contains))
+        {
+            return;
+        }
+
+        syncingProjectList = true;
+        try
+        {
+            ProjectList.SelectedItems.Clear();
+            foreach (var project in wanted)
+            {
+                ProjectList.SelectedItems.Add(project);
+            }
+
+            if (viewModel.SelectedProject is not null)
+            {
+                ProjectList.ScrollIntoView(viewModel.SelectedProject);
+            }
+        }
+        finally
+        {
+            syncingProjectList = false;
+        }
+    }
+
+    /// <summary>Project column when several projects are shown; Type column when both types are.</summary>
+    private void UpdateColumns()
+    {
+        ProjectColumn.Visibility = viewModel.IsMultiProject ? Visibility.Visible : Visibility.Collapsed;
+        TypeColumn.Visibility = viewModel.SelectedType == ItemTypeChoices.Both ? Visibility.Visible : Visibility.Collapsed;
+        ScheduleColumnFit();
+    }
+
+    private void Group_Changed(object sender, SelectionChangedEventArgs e)
+    {
+        if (DataContext is MainViewModel model && GroupBox.SelectedItem is ComboBoxItem { Tag: string tag })
+        {
+            model.GroupBy = tag;
+            ApplyItemGrouping();
+        }
+    }
+
+    /// <summary>Headings in the item list. Rows arrive already ordered heading-first, then by the sort.</summary>
+    private void ApplyItemGrouping()
+    {
+        if (CollectionViewSource.GetDefaultView(viewModel.Rows) is not ICollectionView view)
+        {
+            return;
+        }
+
+        view.GroupDescriptions.Clear();
+        if (viewModel.GroupBy is GroupModes.Project or GroupModes.ProjectAndType)
+        {
+            view.GroupDescriptions.Add(new PropertyGroupDescription(nameof(RowViewModel.ProjectName)));
+        }
+
+        if (viewModel.GroupBy is GroupModes.Type or GroupModes.ProjectAndType)
+        {
+            view.GroupDescriptions.Add(new PropertyGroupDescription(nameof(RowViewModel.TypeLabel)));
+        }
+    }
+
+    private bool settingSortBox;
+
+    /// <summary>Column headings sort the whole list (within each heading when grouped).</summary>
+    private void ItemsGrid_Sorting(object sender, DataGridSortingEventArgs e)
+    {
+        e.Handled = true;
+        var column = e.Column.SortMemberPath;
+        if (string.IsNullOrEmpty(column))
+        {
+            return;
+        }
+
+        var descending = column == viewModel.SortColumn
+            ? !viewModel.SortDescending
+            : column is nameof(RowViewModel.DaysInCourt);
+        viewModel.SetSort(column, descending, fromHeader: true);
+        settingSortBox = true;
+        SortBox.SelectedIndex = -1;
+        settingSortBox = false;
+    }
+
+    private void UpdateSortArrows()
+    {
+        foreach (var column in ItemsGrid.Columns)
+        {
+            column.SortDirection = column.SortMemberPath == viewModel.SortColumn
+                ? viewModel.SortDescending ? ListSortDirection.Descending : ListSortDirection.Ascending
+                : null;
+        }
+    }
+
+    private void Discipline_Checked(object sender, RoutedEventArgs e)
+    {
+        if (DataContext is MainViewModel model && sender is FrameworkElement { Tag: string tag })
+        {
+            model.DisciplineFilter = tag;
+        }
+    }
+
+    private async void SetRowDiscipline_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is FrameworkElement { DataContext: RowViewModel row } && row.CanSelect)
+        {
+            await ChooseDisciplineAsync(new[] { row }, row.Row.Folder?.Name ?? $"{row.Number} - {row.Title}");
+        }
+    }
+
+    private async void SetTickedDiscipline_Click(object sender, RoutedEventArgs e)
+    {
+        var rows = viewModel.CheckedRows().Where(row => row.CanSelect).ToList();
+        if (rows.Count == 0)
+        {
+            ShowInfo("Tick the items you want to set a discipline for first (the box in the heading ticks everything shown).");
+            return;
+        }
+
+        await ChooseDisciplineAsync(rows, $"{rows.Count} ticked item{(rows.Count == 1 ? "" : "s")}");
+    }
+
+    private async Task ChooseDisciplineAsync(IReadOnlyList<RowViewModel> rows, string subject)
+    {
+        var current = rows.Count == 1 && rows[0].Row.DisciplineSource == DisciplineSource.Manual
+            ? rows[0].Row.Discipline?.Code ?? Disciplines.NoneCode
+            : null;
+        var window = new DisciplineWindow(subject, current) { Owner = this };
+        if (window.ShowDialog() == true)
+        {
+            await viewModel.SetDisciplineAsync(rows, window.Result);
+        }
+    }
+
+    private DateTime personPopupClosedAt;
+
+    private void PersonButton_Click(object sender, RoutedEventArgs e)
+    {
+        // Clicking the button while the list is open closes it (the click outside); don't reopen it.
+        if (DateTime.UtcNow - personPopupClosedAt < TimeSpan.FromMilliseconds(250))
+        {
+            return;
+        }
+
+        PersonPopup.IsOpen = !PersonPopup.IsOpen;
+    }
+
+    private void PersonPopup_Closed(object? sender, EventArgs e) => personPopupClosedAt = DateTime.UtcNow;
+
+    private void ClearPeople_Click(object sender, RoutedEventArgs e) => viewModel.ClearPeople();
+
+    private void Due_Changed(object sender, SelectionChangedEventArgs e)
+    {
+        if (DataContext is MainViewModel model && DueBox.SelectedItem is ComboBoxItem { Tag: string tag }
+            && Enum.TryParse<DueFilter>(tag, out var due))
+        {
+            model.DueFilter = due;
+        }
+    }
+
+    private void DisciplineBox_Changed(object sender, SelectionChangedEventArgs e)
+    {
+        if (DataContext is MainViewModel model && sender is ComboBox { SelectedItem: ComboBoxItem { Tag: string tag } })
+        {
+            model.DisciplineFilter = tag;
+        }
+    }
+
+    private void Sort_Changed(object sender, SelectionChangedEventArgs e)
+    {
+        if (!settingSortBox && DataContext is MainViewModel model && sender is ComboBox { SelectedItem: ComboBoxItem { Tag: string tag } })
+        {
+            model.SortBy = tag;
+            UpdateSortArrows();
         }
     }
 
@@ -50,25 +408,114 @@ public partial class MainWindow : Window
         }
     }
 
-    private async void NewProject_Click(object sender, RoutedEventArgs e)
+    /// <summary>Two sections in the project list: with a CA folder first, then without one.</summary>
+    private void GroupProjectList()
     {
-        var dialog = new OpenFolderDialog { Title = "Choose the new project's CA folder", Multiselect = false };
+        if (CollectionViewSource.GetDefaultView(viewModel.Projects) is not ListCollectionView view)
+        {
+            return;
+        }
+
+        // Archived projects are hidden unless "Show archived" is ticked.
+        view.Filter = item => item is not ProjectViewModel project || viewModel.IsShownInList(project);
+        view.IsLiveFiltering = true;
+        view.LiveFilteringProperties.Add(nameof(ProjectViewModel.IsArchived));
+        viewModel.ProjectFilterChanged += () => view.Refresh();
+        ProjectsColumn.Width = new GridLength(viewModel.ProjectsPaneWidth);
+        view.GroupDescriptions.Add(new PropertyGroupDescription(nameof(ProjectViewModel.GroupName)));
+        view.SortDescriptions.Add(new SortDescription(nameof(ProjectViewModel.GroupOrder), ListSortDirection.Ascending));
+        view.SortDescriptions.Add(new SortDescription(nameof(ProjectViewModel.Name), ListSortDirection.Ascending));
+        view.IsLiveGrouping = true;
+        view.IsLiveSorting = true;
+        view.LiveGroupingProperties.Add(nameof(ProjectViewModel.GroupName));
+        view.LiveSortingProperties.Add(nameof(ProjectViewModel.GroupOrder));
+        view.LiveSortingProperties.Add(nameof(ProjectViewModel.Name));
+    }
+
+    private async void NewProject_Click(object sender, RoutedEventArgs e) => await CreateProjectAsync(null);
+
+    /// <summary>
+    /// Creates a tracker project from a chosen CA folder. With <paramref name="fromProvider"/> (a Helix or
+    /// Procore project listed under "No CA folder yet") the new project is already connected to it.
+    /// </summary>
+    private async Task CreateProjectAsync(ProjectViewModel? fromProvider)
+    {
+        var dialog = new OpenFolderDialog
+        {
+            Title = fromProvider is null ? "Choose the new project's CA folder" : $"Choose the CA folder for {fromProvider.Name}",
+            Multiselect = false
+        };
         if (dialog.ShowDialog(this) != true)
         {
             return;
         }
 
+        // Creating a project only records it in the tracker's settings; nothing in the folder changes.
+        var draft = new TrackerProject
+        {
+            Name = fromProvider?.Name ?? TrackerProject.SuggestName(dialog.FolderName),
+            CaFolder = dialog.FolderName,
+            Connection = fromProvider is null ? null : viewModel.CloneProject(fromProvider.Project).Connection
+        };
+        var phase = (fromProvider is null ? null : Phases.Detect(fromProvider.Name)) ?? Phases.SuggestFromPath(dialog.FolderName);
         var existing = viewModel.Settings.Projects.FirstOrDefault(project =>
             string.Equals(Path.TrimEndingDirectorySeparator(project.CaFolder), Path.TrimEndingDirectorySeparator(dialog.FolderName), StringComparison.OrdinalIgnoreCase));
-        if (existing is not null)
+        if (existing is not null && fromProvider is not null && existing.Connection is null)
         {
-            ShowInfo($"That CA folder already belongs to the project \"{existing.Name}\".");
-            viewModel.SelectedProject = viewModel.Projects.FirstOrDefault(project => project.Id == existing.Id);
+            // The folder is already tracked but not connected: connect it rather than splitting it.
+            var connect = MessageBox.Show(
+                this,
+                $"That CA folder already belongs to \"{existing.Name}\", which isn't connected to Helix or Procore.\n\nConnect \"{existing.Name}\" to {fromProvider.ConnectionText}?",
+                "CA folder already used",
+                MessageBoxButton.YesNo,
+                MessageBoxImage.Question,
+                MessageBoxResult.Yes);
+            if (connect == MessageBoxResult.Yes)
+            {
+                var updated = viewModel.CloneProject(existing);
+                updated.Connection = viewModel.CloneProject(fromProvider.Project).Connection;
+                await viewModel.UpdateProjectAsync(updated);
+                viewModel.SelectedProject = viewModel.Projects.FirstOrDefault(project => project.Id == updated.Id);
+            }
+
             return;
         }
 
-        // Creating a project only records it in the tracker's settings; nothing in the folder changes.
-        var draft = new TrackerProject { Name = TrackerProject.SuggestName(dialog.FolderName), CaFolder = dialog.FolderName };
+        if (existing is not null)
+        {
+            var answer = MessageBox.Show(
+                this,
+                $"That CA folder already belongs to \"{existing.Name}\".\n\nIs this the other part of the same job (Base Build / Tenant Fit Out)? Choose Yes to add it as a separate project sharing this folder.",
+                "CA folder already used",
+                MessageBoxButton.YesNo,
+                MessageBoxImage.Question,
+                MessageBoxResult.No);
+            if (answer != MessageBoxResult.Yes)
+            {
+                viewModel.SelectedProject = viewModel.Projects.FirstOrDefault(project => project.Id == existing.Id);
+                return;
+            }
+
+            phase = existing.Scope?.Phase switch
+            {
+                ProjectPhase.BaseBuild => ProjectPhase.TenantFitOut,
+                ProjectPhase.TenantFitOut => ProjectPhase.BaseBuild,
+                _ => ProjectPhase.TenantFitOut
+            };
+            draft.Scope.FilterFolders = true;
+            if (fromProvider is null)
+            {
+                // Same Helix/Procore project for both parts: keep only this part's items.
+                draft.Connection = existing.Connection is null ? null : viewModel.CloneProject(existing).Connection;
+                draft.Scope.FilterItems = existing.Connection is not null;
+            }
+        }
+
+        draft.Scope.Phase = phase;
+        if (phase != ProjectPhase.Whole && Phases.Detect(draft.Name) != phase)
+        {
+            draft.Name = $"{draft.Name} {Phases.Short(phase)}";
+        }
         var window = new ProjectWindow(draft, isNew: true, viewModel) { Owner = this };
         if (window.ShowDialog() == true && window.Result is not null)
         {
@@ -81,6 +528,12 @@ public partial class MainWindow : Window
     {
         if (viewModel.SelectedProject is null)
         {
+            return;
+        }
+
+        if (viewModel.SelectedProject.IsPlaceholder)
+        {
+            await CreateProjectAsync(viewModel.SelectedProject);
             return;
         }
 
@@ -102,13 +555,13 @@ public partial class MainWindow : Window
 
     private async void Connect_Click(object sender, RoutedEventArgs e)
     {
-        if (viewModel.SelectedProject is null)
+        if (viewModel.SelectedProject is null || viewModel.SelectedProject.IsPlaceholder)
         {
             return;
         }
 
         var project = viewModel.CloneProject(viewModel.SelectedProject.Project);
-        var window = new ConnectWindow(viewModel.KnownProviderProjects(), project.Connection, viewModel.Settings.Browser) { Owner = this };
+        var window = new ConnectWindow(viewModel.KnownProviderProjects(), project.Connection) { Owner = this };
         if (window.ShowDialog() == true && window.Result is not null)
         {
             project.Connection = window.Result;
@@ -127,38 +580,43 @@ public partial class MainWindow : Window
 
     private void ClearTicks_Click(object sender, RoutedEventArgs e) => viewModel.ClearChecks();
 
+    /// <summary>The heading box: ticks everything shown, or unticks it all when everything already is.</summary>
+    private void TickAllShown_Click(object sender, RoutedEventArgs e) =>
+        viewModel.SetAllShownChecked(viewModel.AllShownChecked != true);
+
     private async void MarkReturned_Click(object sender, RoutedEventArgs e)
     {
-        if (viewModel.Comparison is null)
-        {
-            return;
-        }
-
-        var rows = viewModel.CheckedRows().Where(row => row.CanMarkReturned).ToList();
+        // A folder shown under both the BB and TFO projects is only planned once.
+        var rows = viewModel.CheckedRows().Where(row => row.Row.CanMarkReturned)
+            .DistinctBy(row => row.Row.Folder!.FullPath, StringComparer.OrdinalIgnoreCase)
+            .ToList();
         if (rows.Count == 0)
         {
             ShowInfo("Tick the active folders you want to move into the returned folder first. \"Tick all ready to return\" selects the suggested ones.");
             return;
         }
 
-        await PreviewAndRunAsync(OperationPlanner.PlanMarkReturned(rows, viewModel.Comparison));
+        // Each project's folders are planned against that project's own layout, then shown together.
+        await PreviewAndRunAsync(Merge(rows.GroupBy(row => row.Comparison)
+            .Select(group => OperationPlanner.PlanMarkReturned(group.Select(row => row.Row), group.Key))
+            .ToList()));
     }
 
     private async void MoveBack_Click(object sender, RoutedEventArgs e)
     {
-        if (viewModel.Comparison is null)
-        {
-            return;
-        }
-
-        var rows = viewModel.CheckedRows().Where(row => row.CanMoveBack).ToList();
+        // A folder shown under both the BB and TFO projects is only planned once.
+        var rows = viewModel.CheckedRows().Where(row => row.Row.CanMoveBack)
+            .DistinctBy(row => row.Row.Folder!.FullPath, StringComparer.OrdinalIgnoreCase)
+            .ToList();
         if (rows.Count == 0)
         {
             ShowInfo("Tick folders that are currently in the returned folder to move them back.");
             return;
         }
 
-        await PreviewAndRunAsync(OperationPlanner.PlanMoveBack(rows, viewModel.Comparison));
+        await PreviewAndRunAsync(Merge(rows.GroupBy(row => row.Comparison)
+            .Select(group => OperationPlanner.PlanMoveBack(group.Select(row => row.Row), group.Key))
+            .ToList()));
     }
 
     private async void CreateFolders_Click(object sender, RoutedEventArgs e)
@@ -168,6 +626,15 @@ public partial class MainWindow : Window
             await PreviewAndRunAsync(OperationPlanner.PlanCreateTypeFolders(viewModel.Comparison));
         }
     }
+
+    private static OperationPlan Merge(IReadOnlyList<OperationPlan> plans) => plans.Count == 1
+        ? plans[0]
+        : new OperationPlan
+        {
+            Title = plans[0].Title,
+            Description = plans[0].Description,
+            Operations = plans.SelectMany(plan => plan.Operations).ToList()
+        };
 
     /// <summary>Every folder change goes through here: preview, explicit confirmation, then run.</summary>
     private async Task PreviewAndRunAsync(OperationPlan plan)
@@ -200,7 +667,8 @@ public partial class MainWindow : Window
         var failed = results.Count(result => result.Outcome == OperationOutcome.Failed);
         viewModel.StatusMessage = $"{plan.Title}: {done} done, {failed} failed, {results.Count - done - failed} skipped.";
         new PreviewWindow(plan, results) { Owner = this }.ShowDialog();
-        await viewModel.CompareAsync();
+        // The app just changed folders: list them again rather than waiting for the background check.
+        await viewModel.RecheckFoldersAsync();
     }
 
     private void OpenRowFolder_Click(object sender, RoutedEventArgs e)
@@ -211,13 +679,68 @@ public partial class MainWindow : Window
         }
     }
 
-    private void OpenRowLink_Click(object sender, RoutedEventArgs e)
+    private void DownloadRow_Click(object sender, RoutedEventArgs e)
     {
-        if (sender is FrameworkElement { DataContext: RowViewModel { HasLink: true } row })
+        if (sender is not FrameworkElement { DataContext: RowViewModel row })
         {
+            return;
+        }
+
+        var request = viewModel.DownloadRequestFor(row);
+        if (request is null)
+        {
+            ShowInfo("Downloading is available for Helix items. Procore isn't supported yet.");
+            return;
+        }
+
+        var window = new DownloadWindow(request, viewModel.Paths) { Owner = this };
+        window.Downloaded += async (_, _) => await viewModel.RecheckFoldersAsync();
+        window.Show();
+    }
+
+    private async void OpenRowLink_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not FrameworkElement { DataContext: RowViewModel row } || row.Row.Item is not { } item)
+        {
+            return;
+        }
+
+        var connection = row.Project.Project.Connection;
+        if (connection is not null && string.Equals(connection.Provider, Providers.Helix, StringComparison.OrdinalIgnoreCase))
+        {
+            // Helix has no link to a single item: open its list in the item panel and open the item there.
+            var heading = $"{(item.ItemType == ItemTypes.Submittal ? "Submittal" : "RFI")} {item.Number} - {item.Title}";
+            ShowItemPanel(true);
+            await ItemPanel.OpenAsync(viewModel.Paths, viewModel.Store, item.ItemId, item.ItemType, connection.ProjectId, heading);
+            return;
+        }
+
+        if (row.HasLink)
+        {
+            // Procore rows link straight to the item.
             Process.Start(new ProcessStartInfo(row.SourceUrl!) { UseShellExecute = true });
         }
     }
+
+    /// <summary>Shows or hides the item panel beside the list (its width is kept while the app is open).</summary>
+    private void ShowItemPanel(bool show)
+    {
+        if (show == (ItemPanel.Visibility == Visibility.Visible))
+        {
+            return;
+        }
+
+        ItemPanel.Visibility = show ? Visibility.Visible : Visibility.Collapsed;
+        PanelSplitter.Visibility = ItemPanel.Visibility;
+        PanelSplitterColumn.Width = show ? new GridLength(10) : new GridLength(0);
+        ItemPanelColumn.Width = show ? itemPanelWidth : new GridLength(0);
+        if (!show)
+        {
+            itemPanelWidth = ItemPanelColumn.ActualWidth > 0 ? new GridLength(ItemPanelColumn.ActualWidth / Math.Max(1, ListColumn.ActualWidth), GridUnitType.Star) : itemPanelWidth;
+        }
+    }
+
+    private GridLength itemPanelWidth = new(0.9, GridUnitType.Star);
 
     private void Grid_MouseDoubleClick(object sender, MouseButtonEventArgs e)
     {
@@ -229,18 +752,114 @@ public partial class MainWindow : Window
         }
     }
 
-    private async void Settings_Click(object sender, RoutedEventArgs e)
+    private void OpenSignIn(string provider, bool signInExpired = false)
     {
-        var window = new SettingsWindow(viewModel.CloneSettings(), viewModel.Paths) { Owner = this };
-        if (window.ShowDialog() == true)
+        if (signInWindows.TryGetValue(provider, out var open))
         {
-            ThemeManager.Apply(window.Result.Theme);
-            await viewModel.ApplySettingsAsync(window.Result);
+            open.Activate();
+            return;
+        }
+
+        var window = new SignInWindow(provider, viewModel.Paths, viewModel.Store) { Owner = this, SignInExpired = signInExpired };
+        signInWindows[provider] = window;
+        var started = false;
+        var isProcore = ProviderSites.IsProcore(provider);
+        if (isProcore)
+        {
+            // The Connect window lists your Procore projects on its own signed-in page; then every
+            // project is synced. If it can't, the app looks for them in the background instead.
+            window.ProcoreProjectsFound += discovery =>
+            {
+                started = true;
+                viewModel.OnProcoreProjectsFound(discovery);
+            };
+            window.ProcoreDiscoveryFailed += _ =>
+            {
+                started = true;
+                viewModel.OnConnected(provider, signedIn: true);
+            };
         }
         else
         {
-            ThemeManager.Apply(viewModel.Settings.Theme);
+            window.SignedInDetected += () => viewModel.OnConnected(provider, signedIn: true);
         }
+
+        window.Closed += (_, _) =>
+        {
+            signInWindows.Remove(provider);
+            // Connect to Helix may have listed new projects under "No CA folder yet", and a fresh
+            // sign-in lets background reading try again. A Procore window closed before it finished
+            // listing projects hands the search to the background.
+            viewModel.OnConnected(provider, signedIn: isProcore && window.SignedIn && !started);
+        };
+        window.Show();
+    }
+
+    private void Settings_Click(object sender, RoutedEventArgs e) => ShowSettings(SettingsSection.General);
+
+    private async void InstallUpdate_Click(object sender, RoutedEventArgs e)
+    {
+        var answer = MessageBox.Show(this,
+            $"{viewModel.UpdateText}? CA Tracker closes, installs the new version and starts again.\n\n{viewModel.UpdateNotes}",
+            "CA Tracker", MessageBoxButton.OKCancel, MessageBoxImage.Question);
+        if (answer != MessageBoxResult.OK)
+        {
+            return;
+        }
+
+        var problem = await viewModel.StartUpdateAsync();
+        if (problem is null)
+        {
+            Application.Current.Shutdown();
+            return;
+        }
+
+        ShowInfo($"The update couldn't start: {problem}");
+    }
+
+    /// <summary>Shows the Settings page in place of the project list.</summary>
+    private void ShowSettings(SettingsSection section)
+    {
+        viewModel.RefreshAccounts();
+        if (SettingsView.Visibility != Visibility.Visible)
+        {
+            SettingsView.Open(viewModel.CloneSettings, viewModel.Paths, section);
+        }
+        else
+        {
+            SettingsView.ShowSectionFromOutside(section);
+        }
+
+        ProjectsPage.Visibility = Visibility.Collapsed;
+        SettingsView.Visibility = Visibility.Visible;
+        SettingsButton.IsEnabled = false;
+    }
+
+    private void ShowProjects()
+    {
+        // Undo a theme previewed but not saved.
+        ThemeManager.Apply(viewModel.Settings.Theme);
+        SettingsView.Visibility = Visibility.Collapsed;
+        ProjectsPage.Visibility = Visibility.Visible;
+        SettingsButton.IsEnabled = true;
+    }
+
+    private void Sync_Click(object sender, RoutedEventArgs e)
+    {
+        if (syncWindow is not null)
+        {
+            syncWindow.Activate();
+            return;
+        }
+
+        syncWindow = new SyncWindow(viewModel) { Owner = this };
+        syncWindow.ManageConnectionsRequested += (_, _) =>
+        {
+            syncWindow?.Close();
+            ShowSettings(SettingsSection.Connections);
+        };
+        syncWindow.Closed += (_, _) => syncWindow = null;
+        syncWindow.Show();
     }
 
     private void OpenInExplorer(string? path)

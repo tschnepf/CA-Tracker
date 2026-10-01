@@ -4,7 +4,7 @@ using SmcCaTracker.Core.Storage;
 
 namespace SmcCaTracker.Core.Refresh;
 
-/// <summary>A Helix or Procore project Chrome has seen, offered when connecting a tracker project.</summary>
+/// <summary>A Helix or Procore project seen during a refresh, offered when connecting a tracker project.</summary>
 public sealed class CatalogProject
 {
     public string Provider { get; set; } = "";
@@ -27,7 +27,7 @@ public sealed class CatalogProject
     };
 }
 
-/// <summary>The extension's list of projects the user can see, as sent after scans.</summary>
+/// <summary>The list of projects the user can see, as read during a refresh.</summary>
 public sealed class CatalogMessage
 {
     public string Provider { get; set; } = "";
@@ -110,37 +110,5 @@ public sealed class ProjectCatalogStore
         }
 
         return byKey.Values.OrderBy(project => project.Name, StringComparer.CurrentCultureIgnoreCase).ToList();
-    }
-}
-
-/// <summary>When the extension last talked to the helper, so the app can show whether Chrome is connected.</summary>
-public sealed class ExtensionContact
-{
-    public DateTimeOffset LastContactAt { get; set; }
-    public string LastMessage { get; set; } = "";
-
-    public static void Record(AppPaths paths, string message, DateTimeOffset now)
-    {
-        try
-        {
-            LocalFiles.WriteAllTextAtomic(paths.ContactFile, JsonSerializer.Serialize(
-                new ExtensionContact { LastContactAt = now, LastMessage = message }, TrackerJson.Options));
-        }
-        catch (Exception error) when (error is IOException or UnauthorizedAccessException)
-        {
-        }
-    }
-
-    public static ExtensionContact? Load(AppPaths paths)
-    {
-        try
-        {
-            var json = LocalFiles.ReadAllTextWithRetry(paths.ContactFile);
-            return json is null ? null : JsonSerializer.Deserialize<ExtensionContact>(json, TrackerJson.Options);
-        }
-        catch (JsonException)
-        {
-            return null;
-        }
     }
 }

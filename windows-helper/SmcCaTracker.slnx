@@ -1,7 +1,7 @@
 <Solution>
   <Folder Name="/src/">
     <Project Path="src/SmcCaTracker.Core/SmcCaTracker.Core.csproj" />
-    <Project Path="src/SmcCaTracker.NativeHost/SmcCaTracker.NativeHost.csproj" />
+    <Project Path="src/SmcCaTracker.Data/SmcCaTracker.Data.csproj" />
     <Project Path="src/SmcCaTracker.App/SmcCaTracker.App.csproj" />
   </Folder>
   <Folder Name="/tests/">

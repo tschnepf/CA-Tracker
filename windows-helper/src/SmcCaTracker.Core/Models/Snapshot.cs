@@ -1,8 +1,8 @@
 namespace SmcCaTracker.Core.Models;
 
 /// <summary>
-/// What the Chrome extension last saw in Helix or Procore for one project.
-/// Mirrors integrations/windows-helper/snapshot.js in the extension.
+/// What the last refresh read from Helix or Procore for one project.
+/// Mirrors SmcCaTracker.App/Scripts/snapshot.js, which builds it inside the page.
 /// </summary>
 public sealed class ProviderSnapshot
 {
@@ -50,6 +50,10 @@ public sealed class SnapshotItem
     public int? StatusRank { get; set; }
     public bool Closed { get; set; }
     public string Responsible { get; set; } = "";
+
+    /// <summary>Helix contract/package name, when known (used to tell Base Build from Tenant Fit Out).</summary>
+    public string Contract { get; set; } = "";
+
     public List<SnapshotHolder> Holders { get; set; } = new();
     public int AttachmentCount { get; set; }
     public DateTimeOffset? CreatedAt { get; set; }
@@ -66,6 +70,9 @@ public sealed class SnapshotHolder
 
     /// <summary>"current" (in court now) or "upcoming" (a later workflow step).</summary>
     public string State { get; set; } = "";
+
+    /// <summary>When the item reached this person (current holders only), if the site records it.</summary>
+    public DateTimeOffset? Since { get; set; }
 }
 
 public static class Providers

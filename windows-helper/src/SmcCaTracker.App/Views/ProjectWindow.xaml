@@ -46,6 +46,32 @@
 
                 <Border Style="{StaticResource Card}" Margin="0,0,0,14">
                     <StackPanel>
+                        <TextBlock Text="BASE BUILD / TENANT FIT OUT" Style="{StaticResource SectionTitle}" />
+                        <StackPanel Orientation="Horizontal" Margin="0,0,0,10">
+                            <RadioButton x:Name="PhaseWhole" GroupName="Phase" Content="Whole project" Checked="Phase_Changed" />
+                            <RadioButton x:Name="PhaseBaseBuild" GroupName="Phase" Content="Base Build (BB)" Checked="Phase_Changed" />
+                            <RadioButton x:Name="PhaseFitOut" GroupName="Phase" Content="Tenant Fit Out (TFO)" Checked="Phase_Changed" />
+                        </StackPanel>
+                        <StackPanel x:Name="PhaseOptions">
+                            <CheckBox x:Name="FilterItemsBox" Margin="0,0,0,6">
+                                <TextBlock TextWrapping="Wrap"
+                                           Text="The Helix/Procore project also holds the other part: only include items whose title, number or contract says this part." />
+                            </CheckBox>
+                            <CheckBox x:Name="FilterFoldersBox" Margin="0,0,0,6">
+                                <TextBlock TextWrapping="Wrap"
+                                           Text="The CA folders also hold the other part: only include folders whose name says this part." />
+                            </CheckBox>
+                            <CheckBox x:Name="IncludeUnlabeledBox" Margin="0,0,0,6">
+                                <TextBlock TextWrapping="Wrap" Text="Also include items and folders that mention neither BB nor TFO." />
+                            </CheckBox>
+                        </StackPanel>
+                        <TextBlock Style="{StaticResource Muted}" FontSize="12" Margin="0,4,0,0"
+                                   Text="Recognised words: BB, Base Build, Base Building · TFO, Tenant Fit Out, Fit-Out, Tenant Improvement. If each part has its own Helix/Procore project or its own folders, connect or Browse to those instead and leave the boxes unticked." />
+                    </StackPanel>
+                </Border>
+
+                <Border Style="{StaticResource Card}" Margin="0,0,0,14">
+                    <StackPanel>
                         <TextBlock Text="RETURNED MEANS OUT OF THIS COMPANY'S COURT" Style="{StaticResource SectionTitle}" />
                         <ListBox x:Name="CompanyList" MaxHeight="150" DisplayMemberPath="Label"
                                  Background="{DynamicResource InputBackground}" BorderThickness="1"
@@ -62,8 +88,9 @@
                                   Checked="OverrideFolders_Changed" Unchecked="OverrideFolders_Changed" Margin="0,0,0,8" />
                         <Grid x:Name="OverrideGrid">
                             <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="170" />
+                                <ColumnDefinition Width="150" />
                                 <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
                             </Grid.ColumnDefinitions>
                             <Grid.RowDefinitions>
                                 <RowDefinition Height="Auto" />
@@ -71,12 +98,17 @@
                                 <RowDefinition Height="Auto" />
                             </Grid.RowDefinitions>
                             <TextBlock Grid.Row="0" Text="RFI folder" VerticalAlignment="Center" />
-                            <TextBox Grid.Row="0" Grid.Column="1" x:Name="RfiBox" Margin="0,0,0,6" />
+                            <TextBox Grid.Row="0" Grid.Column="1" x:Name="RfiBox" Margin="0,0,0,6" VerticalContentAlignment="Center" />
+                            <Button Grid.Row="0" Grid.Column="2" Content="Browse…" Click="BrowseRfi_Click" Margin="8,0,0,6" />
                             <TextBlock Grid.Row="1" Text="Submittal folder" VerticalAlignment="Center" />
-                            <TextBox Grid.Row="1" Grid.Column="1" x:Name="SubmittalBox" Margin="0,0,0,6" />
+                            <TextBox Grid.Row="1" Grid.Column="1" x:Name="SubmittalBox" Margin="0,0,0,6" VerticalContentAlignment="Center" />
+                            <Button Grid.Row="1" Grid.Column="2" Content="Browse…" Click="BrowseSubmittal_Click" Margin="8,0,0,6" />
                             <TextBlock Grid.Row="2" Text="Returned subfolder" VerticalAlignment="Center" />
-                            <TextBox Grid.Row="2" Grid.Column="1" x:Name="ReturnedBox" />
+                            <TextBox Grid.Row="2" Grid.Column="1" x:Name="ReturnedBox" VerticalContentAlignment="Center" />
+                            <Button Grid.Row="2" Grid.Column="2" Content="Browse…" Click="BrowseReturned_Click" Margin="8,0,0,0" />
                         </Grid>
+                        <TextBlock x:Name="FolderNote" Style="{StaticResource Muted}" FontSize="12" Margin="0,8,0,0"
+                                   Text="Folders inside the CA folder are saved relative to it; folders elsewhere are saved as full paths. Returned is looked for inside each of the RFI and Submittal folders." />
                     </StackPanel>
                 </Border>
             </StackPanel>

@@ -4,7 +4,7 @@ using SmcCaTracker.Core.Storage;
 
 namespace SmcCaTracker.Core.Refresh;
 
-/// <summary>One page the extension opens during a refresh, and the item types that page provides.</summary>
+/// <summary>One page the built-in browser opens during a refresh, and the item types that page provides.</summary>
 public sealed class RefreshStep
 {
     public string Url { get; set; } = "";

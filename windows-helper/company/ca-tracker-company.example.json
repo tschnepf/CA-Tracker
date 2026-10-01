@@ -1,0 +1,20 @@
+{
+  "companyName": "SMC",
+  "folders": {
+    "rfiFolder": "RFIs",
+    "submittalFolder": "Submittals",
+    "returnedFolder": "~Returned"
+  },
+  "disciplines": [
+    { "code": "Electrical", "label": "Electrical", "folderToken": "Elec", "aliases": ["ELEC", "ELECTRICAL"] },
+    { "code": "Fire", "folderToken": "Fire", "aliases": ["FIRE"] },
+    { "code": "ICT", "aliases": ["ICT"] },
+    { "code": "Mechanical", "folderToken": "Mech", "aliases": ["MECH", "MECHANICAL"] },
+    { "code": "Plbg", "aliases": ["PLBG", "PLUMBING"] },
+    { "code": "Security", "aliases": ["SECURITY"] }
+  ],
+  "syncIntervalMinutes": 15,
+  "updateFeed": "\\\\server\\apps\\ca-tracker",
+  "centralServer": "",
+  "locked": ["folders", "disciplines"]
+}

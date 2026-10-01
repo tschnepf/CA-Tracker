@@ -1,0 +1,29 @@
+<Window x:Class="SmcCaTracker.App.Views.DisciplineWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Set discipline"
+        Width="420" SizeToContent="Height"
+        ResizeMode="NoResize"
+        WindowStartupLocation="CenterOwner"
+        ShowInTaskbar="False"
+        Style="{StaticResource AppWindow}">
+    <StackPanel Margin="20">
+        <TextBlock x:Name="SubjectText" FontWeight="SemiBold" TextWrapping="Wrap" Margin="0,0,0,12" />
+        <StackPanel x:Name="Options">
+            <RadioButton GroupName="Discipline" Content="Electrical (Elec)" Tag="Electrical" Margin="0,0,0,8" />
+            <RadioButton GroupName="Discipline" Content="Fire" Tag="Fire" Margin="0,0,0,8" />
+            <RadioButton GroupName="Discipline" Content="ICT" Tag="ICT" Margin="0,0,0,8" />
+            <RadioButton GroupName="Discipline" Content="Mechanical (Mech)" Tag="Mechanical" Margin="0,0,0,8" />
+            <RadioButton GroupName="Discipline" Content="Plbg" Tag="Plbg" Margin="0,0,0,8" />
+            <RadioButton GroupName="Discipline" Content="Security" Tag="Security" Margin="0,0,0,8" />
+            <RadioButton GroupName="Discipline" Content="None" Tag="None" Margin="0,0,0,8" />
+            <RadioButton GroupName="Discipline" Content="Detect from the folder name" Tag="" Margin="0,0,0,8" />
+        </StackPanel>
+        <TextBlock Style="{StaticResource Muted}" FontSize="12" Margin="0,4,0,16"
+                   Text="This is saved in the tracker only. Folder names are not changed." />
+        <DockPanel LastChildFill="False">
+            <Button DockPanel.Dock="Right" Content="Save" Style="{StaticResource AccentButton}" IsDefault="True" Click="Save_Click" />
+            <Button DockPanel.Dock="Right" Content="Cancel" IsCancel="True" Margin="0,0,8,0" />
+        </DockPanel>
+    </StackPanel>
+</Window>

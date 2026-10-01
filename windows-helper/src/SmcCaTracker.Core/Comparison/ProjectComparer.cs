@@ -47,6 +47,8 @@ public sealed class ComparisonRow
     public RowStatus Status { get; init; }
     public MatchKind Match { get; init; }
     public string Detail { get; init; } = "";
+    public Discipline? Discipline { get; init; }
+    public DisciplineSource DisciplineSource { get; init; }
 
     public bool NeedsAttention => Status is RowStatus.ReadyToReturn or RowStatus.Reopened or RowStatus.Duplicate
         or RowStatus.Ambiguous or RowStatus.NotInProvider;
@@ -80,6 +82,9 @@ public sealed class TypeComparison
     public DateTimeOffset? ScannedAt { get; init; }
     public IReadOnlyList<ComparisonRow> Rows { get; init; } = Array.Empty<ComparisonRow>();
 
+    /// <summary>Folders left out because their names say neither Base Build nor Tenant Fit Out.</summary>
+    public int HiddenByPhase { get; set; }
+
     public int Count(RowStatus status) => Rows.Count(row => row.Status == status);
     public int AttentionCount => Rows.Count(row => row.NeedsAttention);
 }
@@ -98,7 +103,19 @@ public sealed class ProjectComparison
 
 public static class ProjectComparer
 {
-    public static ProjectComparison Compare(ProviderSnapshot? snapshot, TrackerProject project, TrackerSettings settings)
+    /// <summary>Compares, listing the CA folders now (tests and one-off checks).</summary>
+    public static ProjectComparison Compare(ProviderSnapshot? snapshot, TrackerProject project, TrackerSettings settings) =>
+        Compare(snapshot, project, settings, (itemType, layout) => FolderScanner.Scan(project.CaFolder, itemType, layout));
+
+    /// <summary>
+    /// Compares using folder lists from <paramref name="scans"/> (the app passes the saved folder
+    /// index, so comparing doesn't wait on the drive).
+    /// </summary>
+    public static ProjectComparison Compare(
+        ProviderSnapshot? snapshot,
+        TrackerProject project,
+        TrackerSettings settings,
+        Func<string, FolderLayout, TypeFolderScan> scans)
     {
         var layout = project.EffectiveFolders(settings.Folders);
         var company = CompanyIdentity.For(project, snapshot);
@@ -106,8 +123,21 @@ public static class ProjectComparer
         var types = new Dictionary<string, TypeComparison>(StringComparer.OrdinalIgnoreCase);
         foreach (var itemType in ItemTypes.All)
         {
-            var scan = FolderScanner.Scan(project.CaFolder, itemType, layout);
-            types[itemType] = CompareType(itemType, scan, snapshot, company, holdersReported, settings.Returned);
+            var scan = scans(itemType, layout);
+            var hidden = 0;
+            if (project.Scope is { IsSplit: true, FilterFolders: true })
+            {
+                // Folders naming the other part are meant to be left out; only count unlabelled ones.
+                // BB/TFO can be in the folder name or a folder it sits in (Submittals\Elec\BB\…).
+                hidden = scan.Folders.Count(folder => !Phases.IncludesFolder(project.Scope, folder.DetectionText) && Phases.Detect(folder.DetectionText) is null);
+                scan = scan.WithFolders(scan.Folders.Where(folder => Phases.IncludesFolder(project.Scope, folder.DetectionText)).ToList());
+            }
+
+            var compared = CompareType(
+                itemType, scan, snapshot, company, holdersReported, settings.Returned, project.Disciplines,
+                item => Phases.IncludesItem(project.Scope, item));
+            compared.HiddenByPhase = hidden;
+            types[itemType] = compared;
         }
 
         return new ProjectComparison
@@ -126,13 +156,18 @@ public static class ProjectComparer
         ProviderSnapshot? snapshot,
         CompanyIdentity company,
         bool holdersReported,
-        ReturnedRule rule)
+        ReturnedRule rule,
+        IReadOnlyDictionary<string, string>? disciplines = null,
+        Func<SnapshotItem, bool>? includeItem = null)
     {
         var hasData = snapshot is not null && snapshot.Covers(itemType);
         var coverage = snapshot?.CoverageFor(itemType);
         var complete = hasData && (coverage?.Complete ?? snapshot!.Complete);
         var items = hasData
-            ? snapshot!.Items.Where(item => string.Equals(item.ItemType, itemType, StringComparison.OrdinalIgnoreCase)).ToList()
+            ? snapshot!.Items
+                .Where(item => string.Equals(item.ItemType, itemType, StringComparison.OrdinalIgnoreCase))
+                .Where(item => includeItem is null || includeItem(item))
+                .ToList()
             : new List<SnapshotItem>();
 
         var matches = FolderMatcher.Match(scan.Folders, items);
@@ -144,6 +179,12 @@ public static class ProjectComparer
         var rows = new List<ComparisonRow>();
         foreach (var match in matches)
         {
+            if (match.Item is null && scan.ReturnedShared && match.Folder.Location == FolderLocation.Returned)
+            {
+                // A shared returned folder also holds the other item type's folders.
+                continue;
+            }
+
             if (match.Item is null)
             {
                 var status = !hasData ? RowStatus.NoData
@@ -207,6 +248,24 @@ public static class ProjectComparer
                 Status = RowStatus.NoFolder
             });
         }
+
+        rows = rows.Select(row =>
+        {
+            var (discipline, source) = Disciplines.Resolve(itemType, row.Folder?.Name, row.Item?.Title, disciplines, row.Folder?.Groups, row.Item?.ItemId);
+            return new ComparisonRow
+            {
+                ItemType = row.ItemType,
+                Item = row.Item,
+                Folder = row.Folder,
+                Court = row.Court,
+                IsReturned = row.IsReturned,
+                Status = row.Status,
+                Match = row.Match,
+                Detail = row.Detail,
+                Discipline = discipline,
+                DisciplineSource = source
+            };
+        }).ToList();
 
         rows.Sort((left, right) =>
         {
