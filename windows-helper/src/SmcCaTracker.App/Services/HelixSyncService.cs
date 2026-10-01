@@ -298,11 +298,14 @@ public sealed class HelixSyncService : IDisposable
         }
 
         var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(60);
+        string? lastSeen = null;
         while (true)
         {
             ThrowIfStopped(started);
             if (DateTime.UtcNow > deadline)
             {
+                // Say what the page was showing, so a stuck page can be told from a sign-in problem.
+                AppLog.Warn("helix", $"The background Helix page never became ready. Last seen: {lastSeen ?? "no answer"} (at {core?.Source}).");
                 return Problem("Helix is taking too long to load. Try again in a minute.");
             }
 
@@ -329,8 +332,15 @@ public sealed class HelixSyncService : IDisposable
             }
 
             var state = answer is { } value && value.TryGetProperty("state", out var stateElement) ? stateElement.GetString() : null;
+            if (answer is { } seen && seen.ValueKind == JsonValueKind.Object)
+            {
+                string Field(string name) => seen.TryGetProperty(name, out var field) && field.ValueKind == JsonValueKind.String ? field.GetString() ?? "" : "";
+                lastSeen = $"{state} ({Field("reason")}) on {Field("path")} \"{Field("title")}\"";
+            }
+
             if (state == "signedOut")
             {
+                AppLog.Info("helix", $"The background Helix page is signed out: {lastSeen}.");
                 return Problem(SignInMessage, needsSignIn: true);
             }
 

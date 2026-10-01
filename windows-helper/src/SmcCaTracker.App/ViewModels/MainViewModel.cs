@@ -158,6 +158,15 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         store.Changed += OnStoreChanged;
         store.SaveFailed += OnSaveFailed;
 
+        syncProgressHide.Tick += (_, _) =>
+        {
+            syncProgressHide.Stop();
+            if (syncRuns.Count == 0)
+            {
+                IsSyncProgressVisible = false;
+            }
+        };
+
         ticker = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
         ticker.Tick += async (_, _) => await OnTickAsync();
         ticker.Start();
@@ -188,6 +197,14 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     public void OnConnected(string provider, bool signedIn = true)
     {
         LoadProjects();
+        if (signedIn && string.Equals(provider, Providers.Helix, StringComparison.OrdinalIgnoreCase))
+        {
+            // Signed in again: the hidden Helix page starts fresh and tracked projects sync now,
+            // not at the next 15-minute round.
+            helixSync.CloseBrowser(pause: TimeSpan.Zero);
+            lastAutoSync = DateTimeOffset.MinValue;
+        }
+
         if (string.Equals(provider, Providers.Procore, StringComparison.OrdinalIgnoreCase))
         {
             procoreSync.ResetPageReading();
@@ -215,11 +232,28 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     /// </summary>
     public event Action<string>? SignInRequested;
 
-    private bool procoreSignInRequested;
+    private readonly HashSet<string> signInRequested = new(StringComparer.OrdinalIgnoreCase);
 
     // ---- Archive (yours only) -------------------------------------------------------------
 
     private readonly HashSet<string> archived = new(StringComparer.OrdinalIgnoreCase);
+    private readonly HashSet<string> favorites = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>Adds projects to, or removes them from, your Favorites section (for you only).</summary>
+    public void SetFavorite(IEnumerable<ProjectViewModel> projects, bool favorite)
+    {
+        var changed = false;
+        foreach (var project in projects.ToList())
+        {
+            changed |= favorite ? favorites.Add(project.ArchiveKey) : favorites.Remove(project.ArchiveKey);
+            project.IsFavorite = favorite;
+        }
+
+        if (changed)
+        {
+            ScheduleViewStateSave();
+        }
+    }
     private bool showArchived;
     private double projectsPaneWidth = 290;
 
@@ -643,18 +677,20 @@ public sealed class MainViewModel : ObservableObject, IDisposable
 
         OnPropertyChanged(nameof(HasNoListedConnections));
 
-        // Procore needs you to sign in again: ask once (opening the Connect window), not on every
-        // check. Signing in clears it, so the next expiry asks again.
-        var procoreNeedsSignIn = store.Account(Providers.Procore) is { NeedsSignIn: true };
-        if (procoreNeedsSignIn && !procoreSignInRequested)
+        // Helix or Procore needs you to sign in again: ask once (opening its Connect window), not on
+        // every check. Signing in clears it, so the next expiry asks again.
+        foreach (var provider in Providers.All)
         {
-            procoreSignInRequested = true;
-            AppLog.Info("procore", "Procore needs a new sign-in: opening Connect to Procore.");
-            System.Windows.Application.Current?.Dispatcher.InvokeAsync(() => SignInRequested?.Invoke(Providers.Procore));
-        }
-        else if (!procoreNeedsSignIn)
-        {
-            procoreSignInRequested = false;
+            var needsSignIn = store.Account(provider) is { NeedsSignIn: true };
+            if (needsSignIn && signInRequested.Add(provider))
+            {
+                AppLog.Info(provider, $"{Providers.Label(provider)} needs a new sign-in: opening Connect to {Providers.Label(provider)}.");
+                System.Windows.Application.Current?.Dispatcher.InvokeAsync(() => SignInRequested?.Invoke(provider));
+            }
+            else if (!needsSignIn)
+            {
+                signInRequested.Remove(provider);
+            }
         }
     }
 
@@ -904,12 +940,28 @@ public sealed class MainViewModel : ObservableObject, IDisposable
             .GroupBy(project => project.Project.Connection!.ProjectId, StringComparer.Ordinal)
             .Select(group => group.ToList())
             .ToList();
+        var label = projects.Count > 0 ? projects[0].ProviderLabel : "";
         var ended = new HashSet<ProjectViewModel>();
+
+        // The project list shows each project's turn: waiting, syncing now, then a check when it's done.
         foreach (var project in projects)
         {
-            project.BeginSync();
+            project.IsQueued = true;
         }
 
+        void Finish(ProjectViewModel project)
+        {
+            project.EndSync();
+            project.IsQueued = false;
+            if (project.Project.Connection is { } connection)
+            {
+                project.LastRun = store.LastSyncRun(connection.Provider, connection.ProjectId);
+            }
+
+            project.MarkSynced();
+        }
+
+        var run = BeginSyncProgress(label, groups.Count);
         OnHeaderChanged();
         try
         {
@@ -921,10 +973,17 @@ public sealed class MainViewModel : ObservableObject, IDisposable
                     {
                         foreach (var done in groups[index - 1].Where(ended.Add))
                         {
-                            done.EndSync();
+                            Finish(done);
                         }
                     }
 
+                    foreach (var current in groups[index])
+                    {
+                        current.IsQueued = false;
+                        current.BeginSync();
+                    }
+
+                    UpdateSyncProgress(run, index, groups[index][0].Name);
                     starting?.Invoke(index, groups[index][0]);
                 });
         }
@@ -932,20 +991,113 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         {
             foreach (var project in projects.Where(ended.Add))
             {
-                project.EndSync();
-            }
-
-            foreach (var project in projects)
-            {
-                // The project may have been disconnected or edited while it was read.
-                if (project.Project.Connection is { } connection)
+                if (project.IsSyncing)
                 {
-                    project.LastRun = store.LastSyncRun(connection.Provider, connection.ProjectId);
+                    Finish(project);
+                }
+                else
+                {
+                    // Never reached (stopped, or the site needs a sign-in): no check mark.
+                    project.IsQueued = false;
+                    if (project.Project.Connection is { } connection)
+                    {
+                        project.LastRun = store.LastSyncRun(connection.Provider, connection.ProjectId);
+                    }
                 }
             }
 
+            EndSyncProgress(run, projects);
             OnHeaderChanged();
         }
+    }
+
+    // ---- Sync progress on the projects page -----------------------------------------------
+
+    private sealed class SyncProgressRun
+    {
+        public string Label = "";
+        public int Total;
+        public int Index;
+    }
+
+    private readonly List<SyncProgressRun> syncRuns = new();
+    private string syncProgressText = "";
+    private double syncProgressValue;
+    private bool isSyncProgressVisible;
+    private bool syncProgressRunning;
+    private readonly DispatcherTimer syncProgressHide = new() { Interval = TimeSpan.FromSeconds(20) };
+
+    /// <summary>What is syncing now ("Syncing Procore: Lubbock (3 of 9)"), or how the last sync ended.</summary>
+    public string SyncProgressText
+    {
+        get => syncProgressText;
+        private set => Set(ref syncProgressText, value);
+    }
+
+    /// <summary>0–100 across the projects in the sync that is running.</summary>
+    public double SyncProgressValue
+    {
+        get => syncProgressValue;
+        private set => Set(ref syncProgressValue, value);
+    }
+
+    public bool IsSyncProgressVisible
+    {
+        get => isSyncProgressVisible;
+        private set => Set(ref isSyncProgressVisible, value);
+    }
+
+    public bool IsSyncProgressRunning
+    {
+        get => syncProgressRunning;
+        private set => Set(ref syncProgressRunning, value);
+    }
+
+    private SyncProgressRun BeginSyncProgress(string label, int total)
+    {
+        var run = new SyncProgressRun { Label = label, Total = Math.Max(1, total) };
+        syncRuns.Add(run);
+        syncProgressHide.Stop();
+        IsSyncProgressVisible = true;
+        IsSyncProgressRunning = true;
+        SyncProgressValue = 0;
+        SyncProgressText = $"Syncing {label}: starting…";
+        return run;
+    }
+
+    private void UpdateSyncProgress(SyncProgressRun run, int index, string name)
+    {
+        run.Index = index;
+        if (syncRuns.LastOrDefault() != run)
+        {
+            return;
+        }
+
+        SyncProgressValue = 100.0 * index / run.Total;
+        SyncProgressText = run.Total == 1
+            ? $"Syncing {run.Label}: {name}…"
+            : $"Syncing {run.Label}: {name} ({index + 1} of {run.Total})…";
+    }
+
+    private void EndSyncProgress(SyncProgressRun run, IReadOnlyList<ProjectViewModel> projects)
+    {
+        syncRuns.Remove(run);
+        if (syncRuns.Count > 0)
+        {
+            var other = syncRuns[^1];
+            SyncProgressValue = 100.0 * other.Index / other.Total;
+            SyncProgressText = $"Syncing {other.Label}…";
+            return;
+        }
+
+        var failed = projects.Count(project => project.LastReadFailed);
+        var done = projects.Count(project => project.JustSynced && !project.LastReadFailed);
+        IsSyncProgressRunning = false;
+        SyncProgressValue = 100;
+        SyncProgressText = $"{run.Label} synced {DateTimeOffset.Now.ToLocalTime():h:mm tt}: {done} of {projects.Count} project{(projects.Count == 1 ? "" : "s")} updated" +
+            (failed > 0 ? $", {failed} couldn't be read (marked ⚠)." : ".");
+        syncProgressHide.Stop();
+        syncProgressHide.Start();
     }
 
     private Task<ProviderSyncResult> SyncHelixAsync(
@@ -1220,7 +1372,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
             {
                 var part = Phases.Short(scope.Phase);
                 problems.Add($"{hidden} folder{(hidden == 1 ? " is" : "s are")} hidden because the name says neither BB nor TFO. " +
-                    $"To include them in {part}, open Edit project → Base Build / Tenant Fit Out and tick \"Also include items and folders that mention neither BB nor TFO\".");
+                    $"To include them in {part}, open Edit project → Base Build / Tenant Fit Out and check \"Also include items and folders that mention neither BB nor TFO\".");
             }
 
             return string.Join("  ", problems);
@@ -1254,7 +1406,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
 
     public int CheckedCount => allRows.Count(row => row.IsChecked);
 
-    public string SelectionText => CheckedCount == 0 ? "Nothing ticked" : $"{CheckedCount} ticked";
+    public string SelectionText => CheckedCount == 0 ? "Nothing checked" : $"{CheckedCount} checked";
 
     /// <summary>Header tick: true when every tickable shown row is ticked, null when some are, false when none.</summary>
     public bool? AllShownChecked
@@ -1365,6 +1517,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         foreach (var project in Projects)
         {
             project.IsSyncSkipped = IsSyncSkipped(project);
+            project.IsFavorite = favorites.Contains(project.ArchiveKey);
             var isArchived = archived.Contains(project.ArchiveKey);
             if (project.IsArchived != isArchived)
             {
@@ -1698,6 +1851,12 @@ public sealed class MainViewModel : ObservableObject, IDisposable
 
     private async Task OnTickAsync()
     {
+        var now = DateTimeOffset.Now;
+        foreach (var project in Projects)
+        {
+            project.ExpireJustSynced(now);
+        }
+
         // Procore refreshes run in the browser window and are tracked through their request files.
         foreach (var project in Projects.Where(project => project.ActiveRefresh is { IsFinished: false }).ToList())
         {
@@ -2781,6 +2940,12 @@ public sealed class MainViewModel : ObservableObject, IDisposable
             archived.Add(key);
         }
 
+        favorites.Clear();
+        foreach (var key in view.FavoriteProjects ?? new List<string>())
+        {
+            favorites.Add(key);
+        }
+
         showArchived = view.ShowArchived;
         projectsPaneWidth = view.ProjectsPaneWidth is >= 200 and <= 700 ? view.ProjectsPaneWidth : 290;
         rememberedPeople.Clear();
@@ -2826,6 +2991,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
             SortDescending = sortDescending,
             SortPreset = sortBy,
             ArchivedProjects = archived.OrderBy(key => key, StringComparer.OrdinalIgnoreCase).ToList(),
+            FavoriteProjects = favorites.OrderBy(key => key, StringComparer.OrdinalIgnoreCase).ToList(),
             ShowArchived = showArchived,
             ProjectsPaneWidth = projectsPaneWidth
         });

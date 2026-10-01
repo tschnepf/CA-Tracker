@@ -910,6 +910,16 @@ public class DownloadNamingTests
         Assert.Equal("a (3).pdf", DownloadNaming.UniqueFileName(temp.Root, "a.pdf", used));
         Assert.Equal("b", DownloadNaming.UniqueFileName(temp.Root, "b", used));
     }
+
+    [Fact]
+    public void FilesAlreadyDownloadedAreRecognisedWhateverTheyWereSavedAs()
+    {
+        var key = DownloadNaming.MatchKey("Review Markup.pdf");
+        Assert.Equal(key, DownloadNaming.MatchKey("2026-08-03 Review Markup.pdf"));
+        Assert.Equal(key, DownloadNaming.MatchKey("review markup (2).PDF"));
+        Assert.Equal(key, DownloadNaming.MatchKey(@"Z:\CA\RFIs\RFI-001\2026-08-03_Review  Markup.pdf"));
+        Assert.NotEqual(key, DownloadNaming.MatchKey("Review Markup Rev 1.pdf"));
+    }
 }
 
 public class NestedFolderTests

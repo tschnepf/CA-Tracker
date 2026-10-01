@@ -67,8 +67,26 @@ public sealed class ProjectViewModel : ObservableObject
     public bool HasCaFolder => !string.IsNullOrWhiteSpace(project.CaFolder);
 
     /// <summary>The section of the project list this project appears in.</summary>
-    public string GroupName => HasCaFolder ? "WITH A CA FOLDER" : "NO CA FOLDER YET";
-    public int GroupOrder => HasCaFolder ? 0 : 1;
+    public string GroupName => ShowAsFavorite ? "FAVORITES" : HasCaFolder ? "WITH A CA FOLDER" : "NO CA FOLDER YET";
+    public int GroupOrder => ShowAsFavorite ? -1 : HasCaFolder ? 0 : 1;
+
+    // An archived favorite shows (dimmed, when archived ones are shown) in its usual section.
+    private bool ShowAsFavorite => isFavorite && !isArchived;
+
+    private bool isFavorite;
+
+    /// <summary>One of your favorites: listed first, under "Favorites" (for you only).</summary>
+    public bool IsFavorite
+    {
+        get => isFavorite;
+        set
+        {
+            if (Set(ref isFavorite, value))
+            {
+                RaiseAll();
+            }
+        }
+    }
 
     public string Id => project.Id;
 
@@ -157,6 +175,11 @@ public sealed class ProjectViewModel : ObservableObject
                 lines.Add($"Hosted by {project.CompanyName} in {ProviderLabel}");
             }
 
+            if (IsFavorite)
+            {
+                lines.Add("★ Favorite (for you only). Right-click → Remove from favorites.");
+            }
+
             if (IsArchived)
             {
                 lines.Add("Archived (for you only). Right-click → Unarchive to bring it back.");
@@ -199,6 +222,49 @@ public sealed class ProjectViewModel : ObservableObject
     /// <summary>Being read in the background (Helix). Counted, so overlapping reads don't clear each other.</summary>
     public bool IsSyncing => syncDepth > 0;
 
+    private bool isQueued;
+    private DateTimeOffset? syncedUntil;
+
+    /// <summary>Waiting its turn in a sync that is running now.</summary>
+    public bool IsQueued
+    {
+        get => isQueued;
+        set
+        {
+            if (Set(ref isQueued, value))
+            {
+                RaiseAll();
+            }
+        }
+    }
+
+    /// <summary>Finished syncing a moment ago (shows a check for a minute).</summary>
+    public bool JustSynced => syncedUntil is { } until && until > DateTimeOffset.Now;
+
+    public void MarkSynced()
+    {
+        syncedUntil = DateTimeOffset.Now.AddSeconds(60);
+        RaiseAll();
+    }
+
+    /// <summary>Called every second: the "just synced" check goes away after a minute.</summary>
+    public void ExpireJustSynced(DateTimeOffset now)
+    {
+        if (syncedUntil is { } until && until <= now)
+        {
+            syncedUntil = null;
+            RaiseAll();
+        }
+    }
+
+    /// <summary>For the project list's status mark: syncing, queued, done, failed or nothing.</summary>
+    public string SyncState =>
+        IsSyncing || activeRefresh is { IsFinished: false } ? "syncing"
+        : isQueued ? "queued"
+        : JustSynced && LastReadFailed ? "failed"
+        : JustSynced ? "done"
+        : "";
+
     public void BeginSync()
     {
         syncDepth++;
@@ -239,7 +305,17 @@ public sealed class ProjectViewModel : ObservableObject
 
             if (IsRefreshing)
             {
-                return $"{part}{ProviderLabel}{CompanyPart} · updating…";
+                return $"{part}{ProviderLabel}{CompanyPart} · syncing now…";
+            }
+
+            if (isQueued)
+            {
+                return $"{part}{ProviderLabel}{CompanyPart} · waiting to sync…";
+            }
+
+            if (JustSynced && !LastReadFailed && snapshot is not null)
+            {
+                return $"{part}{ProviderLabel}{CompanyPart} · synced just now ({snapshot.Items.Count} items)";
             }
 
             if (IsSyncSkipped)
@@ -332,7 +408,8 @@ public sealed class ProjectViewModel : ObservableObject
                      nameof(Project), nameof(Snapshot), nameof(ActiveRefresh), nameof(Name), nameof(IsConnected),
                      nameof(ProviderLabel), nameof(ConnectionText), nameof(PhaseText), nameof(IsRefreshing), nameof(Subtitle),
                      nameof(HasCaFolder), nameof(GroupName), nameof(GroupOrder), nameof(IsPlaceholder),
-                     nameof(IsSyncSkipped), nameof(ListToolTip), nameof(IsArchived), nameof(ArchiveKey)
+                     nameof(IsSyncSkipped), nameof(ListToolTip), nameof(IsArchived), nameof(ArchiveKey), nameof(IsFavorite),
+                     nameof(IsQueued), nameof(JustSynced), nameof(SyncState)
                  })
         {
             OnPropertyChanged(name);

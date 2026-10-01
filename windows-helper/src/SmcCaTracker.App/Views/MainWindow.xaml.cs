@@ -84,7 +84,7 @@ public partial class MainWindow : Window
             ThemeManager.Apply(current.Theme);
             await viewModel.ApplySettingsAsync(current);
         };
-        SettingsView.ConnectRequested += OpenSignIn;
+        SettingsView.ConnectRequested += provider => OpenSignIn(provider);
         SettingsView.SyncRequested += async provider => await viewModel.SyncAsync(provider);
         Loaded += (_, _) => RestoreView();
     }
@@ -183,6 +183,10 @@ public partial class MainWindow : Window
         var count = selected.Count;
         ArchiveProjectMenu.Header = count > 1 ? $"Archive these {count} projects" : "Archive";
         UnarchiveProjectMenu.Header = count > 1 ? $"Unarchive these {count} projects" : "Unarchive";
+        FavoriteProjectMenu.Header = count > 1 ? $"Add these {count} to favorites" : "Add to favorites";
+        UnfavoriteProjectMenu.Header = count > 1 ? $"Remove these {count} from favorites" : "Remove from favorites";
+        FavoriteProjectMenu.Visibility = Show(selected.Any(project => !project.IsFavorite));
+        UnfavoriteProjectMenu.Visibility = Show(selected.Any(project => project.IsFavorite));
         ArchiveProjectMenu.Visibility = Show(selected.Any(project => !project.IsArchived));
         UnarchiveProjectMenu.Visibility = Show(selected.Any(project => project.IsArchived));
 
@@ -194,6 +198,10 @@ public partial class MainWindow : Window
         SkipProjectMenu.Visibility = Show(procore.Any(project => !project.IsSyncSkipped));
         SyncMenuSeparator.Visibility = Show(procore.Count > 0);
     }
+
+    private void FavoriteProject_Click(object sender, RoutedEventArgs e) => viewModel.SetFavorite(ProjectsInSelection(), favorite: true);
+
+    private void UnfavoriteProject_Click(object sender, RoutedEventArgs e) => viewModel.SetFavorite(ProjectsInSelection(), favorite: false);
 
     private void ArchiveProject_Click(object sender, RoutedEventArgs e) => viewModel.SetArchived(ProjectsInSelection(), archive: true);
 
@@ -338,11 +346,11 @@ public partial class MainWindow : Window
         var rows = viewModel.CheckedRows().Where(row => row.CanSelect).ToList();
         if (rows.Count == 0)
         {
-            ShowInfo("Tick the items you want to set a discipline for first (the box in the heading ticks everything shown).");
+            ShowInfo("Check the items you want to set a discipline for first (the box in the heading checks everything shown).");
             return;
         }
 
-        await ChooseDisciplineAsync(rows, $"{rows.Count} ticked item{(rows.Count == 1 ? "" : "s")}");
+        await ChooseDisciplineAsync(rows, $"{rows.Count} checked item{(rows.Count == 1 ? "" : "s")}");
     }
 
     private async Task ChooseDisciplineAsync(IReadOnlyList<RowViewModel> rows, string subject)
@@ -592,7 +600,7 @@ public partial class MainWindow : Window
             .ToList();
         if (rows.Count == 0)
         {
-            ShowInfo("Tick the active folders you want to move into the returned folder first. \"Tick all ready to return\" selects the suggested ones.");
+            ShowInfo("Check the active folders you want to move into the returned folder first. \"Check all ready to return\" selects the suggested ones.");
             return;
         }
 
@@ -610,7 +618,7 @@ public partial class MainWindow : Window
             .ToList();
         if (rows.Count == 0)
         {
-            ShowInfo("Tick folders that are currently in the returned folder to move them back.");
+            ShowInfo("Check folders that are currently in the returned folder to move them back.");
             return;
         }
 
@@ -676,6 +684,65 @@ public partial class MainWindow : Window
         if (sender is FrameworkElement { DataContext: RowViewModel row })
         {
             OpenInExplorer(row.Row.Folder?.FullPath);
+        }
+    }
+
+    private bool batchDownloading;
+
+    /// <summary>
+    /// Downloads the checked items one after another: each opens in the download window to choose its
+    /// files; after it's downloaded (or skipped) the next one opens. Stop or closing the window ends it.
+    /// </summary>
+    private async void DownloadChecked_Click(object sender, RoutedEventArgs e)
+    {
+        if (batchDownloading)
+        {
+            return;
+        }
+
+        var rows = viewModel.CheckedRows().Where(row => row.Row.Item is not null).ToList();
+        if (rows.Count == 0)
+        {
+            ShowInfo("Check the items you want to download first (the box in the heading checks everything shown).");
+            return;
+        }
+
+        var requests = rows.Select(viewModel.DownloadRequestFor).OfType<DownloadRequest>()
+            .GroupBy(request => $"{request.ProjectId}|{request.ItemType}|{request.ItemId}")
+            .Select(group => group.First())
+            .ToList();
+        var notHelix = rows.Count - requests.Count;
+        if (requests.Count == 0)
+        {
+            ShowInfo("Downloading is available for Helix items. Procore isn't supported yet.");
+            return;
+        }
+
+        if (notHelix > 0)
+        {
+            ShowInfo($"{notHelix} checked item{(notHelix == 1 ? " is" : "s are")} from Procore and will be skipped (Procore downloads aren't supported yet).");
+        }
+
+        batchDownloading = true;
+        try
+        {
+            for (var index = 0; index < requests.Count; index++)
+            {
+                var window = new DownloadWindow(requests[index], viewModel.Paths, index, requests.Count) { Owner = this };
+                var closed = new TaskCompletionSource();
+                window.Downloaded += async (_, _) => await viewModel.RecheckFoldersAsync();
+                window.Closed += (_, _) => closed.TrySetResult();
+                window.Show();
+                await closed.Task;
+                if (!window.ContinueBatch)
+                {
+                    break;
+                }
+            }
+        }
+        finally
+        {
+            batchDownloading = false;
         }
     }
 

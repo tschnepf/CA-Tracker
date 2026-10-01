@@ -24,6 +24,12 @@ public static partial class DownloadNaming
     [GeneratedRegex(@"[. ]+$")]
     private static partial Regex TrailingDotsAndSpaces();
 
+    [GeneratedRegex(@"^\d{4}-\d{2}-\d{2}[\s_-]+")]
+    private static partial Regex LeadingDate();
+
+    [GeneratedRegex(@"\s*\(\d+\)$")]
+    private static partial Regex CopyNumber();
+
     [GeneratedRegex(@"[. \-–—]+$")]
     private static partial Regex TrailingSeparators();
 
@@ -160,6 +166,21 @@ public static partial class DownloadNaming
         var alreadyDated = name.StartsWith(date, StringComparison.Ordinal)
             && (name.Length == date.Length || char.IsWhiteSpace(name[date.Length]) || name[date.Length] is '_' or '-');
         return alreadyDated ? name : $"{date} {name}";
+    }
+
+    /// <summary>
+    /// How a file is recognised as already downloaded, whatever it was saved as: case, a leading upload
+    /// date ("2026-08-03 "), a copy number (" (2)") and extra spaces don't count. So "Markup.pdf" from
+    /// Helix matches "2026-08-03 Markup.pdf" or "markup (2).pdf" in the folder.
+    /// </summary>
+    public static string MatchKey(string? fileName)
+    {
+        var name = Path.GetFileName(fileName ?? "").Trim();
+        var dot = name.LastIndexOf('.');
+        var stem = dot > 0 ? name[..dot] : name;
+        var extension = dot > 0 ? name[dot..] : "";
+        stem = CopyNumber().Replace(LeadingDate().Replace(stem, ""), "");
+        return Spaces().Replace($"{stem}{extension}", " ").Trim().ToLowerInvariant();
     }
 
     /// <summary>A name not already used in the folder or this download: "file.pdf", "file (2).pdf", …</summary>

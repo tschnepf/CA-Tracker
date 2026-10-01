@@ -55,6 +55,9 @@
             <Button x:Name="AllButton" DockPanel.Dock="Left" Content="Select all" Click="All_Click" Margin="0,0,6,0" />
             <Button x:Name="NoneButton" DockPanel.Dock="Left" Content="Select none" Click="None_Click" />
             <Button x:Name="CloseButton" DockPanel.Dock="Right" Content="Cancel" Click="Close_Click" />
+            <!-- Downloading several checked items: stops before the rest. -->
+            <Button x:Name="StopBatchButton" DockPanel.Dock="Right" Content="Stop" Click="StopBatch_Click" Margin="0,0,8,0"
+                    Visibility="Collapsed" ToolTip="Don't go on to the remaining checked items" />
             <Button x:Name="DownloadButton" DockPanel.Dock="Right" Content="Download" Style="{StaticResource AccentButton}"
                     Click="Download_Click" Margin="0,0,8,0" IsEnabled="False" />
             <Button x:Name="OpenFolderButton" DockPanel.Dock="Right" Content="Open folder" Click="OpenFolder_Click"

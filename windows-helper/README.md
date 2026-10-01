@@ -128,7 +128,7 @@ folders without BB/TFO in their name are left out, and a note above the list say
 
 Each project in the list shows two numbers, e.g. **1 | 10**: overdue items (red when there are any)
 and all items matching the current filters. Both count only items that match the filters: the type (Both,
-RFIs, Submittals), Open/All or folder view, ticked people, due filter and discipline. Filter to one
+RFIs, Submittals), Open/All or folder view, checked people, due filter and discipline. Filter to one
 person and every project shows how many items that person has there. Projects you aren't viewing are
 counted in the background from their last refresh; a project with nothing matching shows no number.
 
@@ -136,7 +136,7 @@ counted in the background from their last refresh; a project with nothing matchi
 
 Ctrl-click or Shift-click projects in the list to show all their items together. The header then
 describes the project clicked last, and **Refresh** refreshes each selected project in turn.
-Folder actions (Mark as returned, Move back, Set discipline, Download) work on ticked items from any
+Folder actions (Mark as returned, Move back, Set discipline, Download) work on checked items from any
 of the shown projects, each against its own CA folder.
 
 - **Both / RFIs / Submittals** choose the item types; Both shows RFIs and Submittals in one list.
@@ -158,9 +158,9 @@ is matched alongside. The tabs show how many are open.
 
 - **Open / All items** choose between items that aren't closed and every item. **Needs attention**,
   **Ready to return**, **No folder** and **In returned** are the folder views.
-- **Person**: who has the item now (Helix "In court", Procore "Ball In Court"). Tick as many people
+- **Person**: who has the item now (Helix "In court", Procore "Ball In Court"). Check as many people
   as you like; *Anyone at <your company>* covers everyone at your company, and **Everyone** clears
-  the ticks.
+  the checks.
 - **Due**: *Overdue*, *Due today*, or *Due within # days* (today through # days from now). The due date
   is the earliest of the due, requested review and contractual review dates.
 - **Discipline**: from the folder name, or set by hand.
@@ -201,7 +201,7 @@ CA Tracker works out for each item under `expected`; correct the wrong ones and 
 ## Downloading an RFI or Submittal
 
 **Download** on an item's row (Helix items) opens a window listing the item's Details PDF and its
-current attachments, with each file's name and upload date. Tick the files you want. They go into a
+current attachments, with each file's name and upload date. Check the files you want. They go into a
 folder named `<number> - <name>` (e.g. `P000210 - Overhead Coiling Doors`), with a leading project
 name or code taken off the name:
 
@@ -212,8 +212,8 @@ name or code taken off the name:
 - Otherwise a new folder is made in the project's RFI or Submittal folder.
 - **Change…** picks somewhere else (needed for projects without a CA folder).
 
-Nothing is written until you select **Download**. Files already in the folder start unticked and are
-never replaced; a ticked duplicate is saved as `name (2).pdf`. PDFs get their upload date in front of
+Nothing is written until you select **Download**. Files already in the folder start unchecked and are
+never replaced; a checked duplicate is saved as `name (2).pdf`. PDFs get their upload date in front of
 the name (`2026-08-03 Review markup.pdf`), and the Details PDF is created by Helix's own export. Each
 saved file is added to `journal.jsonl`. Procore downloads aren't supported yet.
 
@@ -323,10 +323,10 @@ Build / Tenant Fit Out**, choose the part, then pick how the two are separated:
 - **Separate Helix/Procore projects or separate CA folders:** connect or choose each project's own.
   Nothing needs ticking.
 - **BB and TFO subfolders** (e.g. `CA\BB\RFIs`): use **Browse** under Folder names.
-- **One Helix/Procore project for both:** tick *only include items whose title, number or contract
+- **One Helix/Procore project for both:** check *only include items whose title, number or contract
   says this part*.
-- **One set of CA folders for both:** tick *only include folders whose name says this part*.
-- Tick *also include items and folders that mention neither* if unlabelled ones belong to this part.
+- **One set of CA folders for both:** check *only include folders whose name says this part*.
+- Check *also include items and folders that mention neither* if unlabelled ones belong to this part.
 
 The words recognised are BB, Base Build and Base Building for Base Build, and TFO, Tenant Fit Out,
 Fit-Out and Tenant Improvement for Tenant Fit Out. Two projects can share a connection or CA folder
@@ -341,13 +341,13 @@ for example `P000210 - Elec - Lighting` gives Electrical, and `Electrical`, `Mec
 are recognised too. Items with no folder yet are detected from their title. Detected disciplines show
 in italics.
 
-Use **Set** in the Discipline column, or tick folders and choose **Set discipline…**, to pick one by
+Use **Set** in the Discipline column, or check folders and choose **Set discipline…**, to pick one by
 hand, mark a folder as having none, or go back to detecting it. Choices are saved in the tracker per
 folder name, so they follow a folder into `~Returned`. Folders are never renamed. The **Discipline**
 filter above the list shows one discipline at a time.
 
-**Presetting before a download.** Items with no folder yet can be ticked too. The box in the list's
-heading ticks every item shown (click again to untick them all). Choose **Set discipline…** (or **Set**
+**Presetting before a download.** Items with no folder yet can be checked too. The box in the list's
+heading checks every item shown (click again to uncheck them all). Choose **Set discipline…** (or **Set**
 on one row) and the choice is saved for those items. **Download** then puts the new
 `<number> - <name>` folder inside that discipline's folder (e.g. `Submittals\Mech`, or `Submittals\Mech\BB`
 for a Base Build project). If the Submittal or RFI folder is split by discipline but has no folder for
@@ -382,7 +382,7 @@ shown as "Not in last Procore view", never as missing.
 
 ## Changes always need a preview
 
-**Mark ticked as returned…**, **Move ticked back to active…** and **Create missing folders…** all
+**Mark checked as returned…**, **Move checked back to active…** and **Create missing folders…** all
 open a preview listing every folder that would be created or moved, with its full From and To paths.
 Anything that can't be done safely (the destination already exists, the folder has moved, two folders
 would land in the same place) is shown in red and skipped. Cancel is the default button. After you

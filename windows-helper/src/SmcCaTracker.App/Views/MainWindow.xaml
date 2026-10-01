@@ -55,10 +55,8 @@
         <Border Grid.Row="0" Padding="20,14" BorderBrush="{DynamicResource LineBrush}" BorderThickness="0,0,0,1"
                 Background="{DynamicResource SurfaceBackground}">
             <DockPanel LastChildFill="False">
-                <StackPanel DockPanel.Dock="Left" Orientation="Vertical">
+                <StackPanel DockPanel.Dock="Left" Orientation="Vertical" VerticalAlignment="Center">
                     <TextBlock Text="CA Tracker" FontSize="18" FontWeight="SemiBold" />
-                    <TextBlock Text="Each project's CA folder, compared with Helix or Procore"
-                               Foreground="{DynamicResource TextSecondary}" />
                 </StackPanel>
                 <Button x:Name="SettingsButton" DockPanel.Dock="Right" Content="Settings" Click="Settings_Click" VerticalAlignment="Center" />
                 <Button DockPanel.Dock="Right" Content="{Binding UpdateText}" Click="InstallUpdate_Click" VerticalAlignment="Center"
@@ -96,11 +94,21 @@
             <Border Grid.Column="0" Style="{StaticResource Card}" Padding="10">
                 <DockPanel>
                     <TextBlock DockPanel.Dock="Top" Text="PROJECTS" Style="{StaticResource SectionTitle}" Margin="6,4,0,8" />
+                    <!-- What is syncing now, then how the sync ended (hides after a little while). -->
+                    <Border DockPanel.Dock="Top" Margin="4,0,4,8" Padding="8,6" CornerRadius="6" Background="{DynamicResource AccentSoftBrush}"
+                            Visibility="{Binding IsSyncProgressVisible, Converter={StaticResource Visible}}">
+                        <StackPanel>
+                            <TextBlock Text="{Binding SyncProgressText}" FontSize="11.5" TextWrapping="Wrap" />
+                            <ProgressBar Value="{Binding SyncProgressValue, Mode=OneWay}" Maximum="100" Height="3" Margin="0,5,0,0"
+                                         BorderThickness="0" Background="{DynamicResource LineBrush}" Foreground="{DynamicResource AccentBrush}"
+                                         Visibility="{Binding IsSyncProgressRunning, Converter={StaticResource Visible}}" />
+                        </StackPanel>
+                    </Border>
                     <Button DockPanel.Dock="Bottom" Style="{StaticResource AccentButton}" Content="New project…"
                             Click="NewProject_Click" Margin="4,8,4,2" />
                     <CheckBox DockPanel.Dock="Bottom" Content="{Binding ShowArchivedText}" IsChecked="{Binding ShowArchived}"
                               Margin="6,8,4,0" Visibility="{Binding HasArchived, Converter={StaticResource Visible}}"
-                              ToolTip="Archived projects are hidden and not synced, for you only. Tick to show them (dimmed) and unarchive them." />
+                              ToolTip="Archived projects are hidden and not synced, for you only. Check to show them (dimmed) and unarchive them." />
                     <Grid>
                         <ListBox x:Name="ProjectList" ItemsSource="{Binding Projects}" SelectionMode="Extended"
                                  SelectionChanged="ProjectList_SelectionChanged"
@@ -110,6 +118,9 @@
                             <!-- Procore projects can be left out of syncing (they stay in the list). -->
                             <ListBox.ContextMenu>
                                 <ContextMenu>
+                                    <MenuItem x:Name="FavoriteProjectMenu" Header="Add to favorites" Click="FavoriteProject_Click" />
+                                    <MenuItem x:Name="UnfavoriteProjectMenu" Header="Remove from favorites" Click="UnfavoriteProject_Click" />
+                                    <Separator />
                                     <MenuItem x:Name="ArchiveProjectMenu" Header="Archive" Click="ArchiveProject_Click"
                                               ToolTip="Hide it from your list and stop syncing it. For you only: nothing changes in Helix, Procore or on the company server." />
                                     <MenuItem x:Name="UnarchiveProjectMenu" Header="Unarchive" Click="UnarchiveProject_Click" />
@@ -151,7 +162,56 @@
                                             <ColumnDefinition Width="Auto" />
                                         </Grid.ColumnDefinitions>
                                         <StackPanel>
-                                            <TextBlock Text="{Binding Name}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
+                                            <DockPanel>
+                                                <!-- Sync status: spinning while syncing, dot while waiting, check when done, ⚠ if it failed. -->
+                                                <TextBlock DockPanel.Dock="Left" Margin="0,0,5,0" Width="12" TextAlignment="Center"
+                                                           RenderTransformOrigin="0.5,0.55">
+                                                    <TextBlock.RenderTransform>
+                                                        <RotateTransform Angle="0" />
+                                                    </TextBlock.RenderTransform>
+                                                    <TextBlock.Style>
+                                                        <Style TargetType="TextBlock">
+                                                            <Setter Property="Visibility" Value="Collapsed" />
+                                                            <Style.Triggers>
+                                                                <DataTrigger Binding="{Binding SyncState}" Value="syncing">
+                                                                    <Setter Property="Visibility" Value="Visible" />
+                                                                    <Setter Property="Text" Value="⟳" />
+                                                                    <Setter Property="Foreground" Value="{DynamicResource AccentBrush}" />
+                                                                    <DataTrigger.EnterActions>
+                                                                        <BeginStoryboard x:Name="SpinSync">
+                                                                            <Storyboard>
+                                                                                <DoubleAnimation Storyboard.TargetProperty="(TextBlock.RenderTransform).(RotateTransform.Angle)"
+                                                                                                 From="0" To="360" Duration="0:0:1.2" RepeatBehavior="Forever" />
+                                                                            </Storyboard>
+                                                                        </BeginStoryboard>
+                                                                    </DataTrigger.EnterActions>
+                                                                    <DataTrigger.ExitActions>
+                                                                        <StopStoryboard BeginStoryboardName="SpinSync" />
+                                                                    </DataTrigger.ExitActions>
+                                                                </DataTrigger>
+                                                                <DataTrigger Binding="{Binding SyncState}" Value="queued">
+                                                                    <Setter Property="Visibility" Value="Visible" />
+                                                                    <Setter Property="Text" Value="•" />
+                                                                    <Setter Property="Foreground" Value="{DynamicResource TextMuted}" />
+                                                                </DataTrigger>
+                                                                <DataTrigger Binding="{Binding SyncState}" Value="done">
+                                                                    <Setter Property="Visibility" Value="Visible" />
+                                                                    <Setter Property="Text" Value="✓" />
+                                                                    <Setter Property="Foreground" Value="{DynamicResource SuccessBrush}" />
+                                                                </DataTrigger>
+                                                                <DataTrigger Binding="{Binding SyncState}" Value="failed">
+                                                                    <Setter Property="Visibility" Value="Visible" />
+                                                                    <Setter Property="Text" Value="⚠" />
+                                                                    <Setter Property="Foreground" Value="{DynamicResource DangerBrush}" />
+                                                                </DataTrigger>
+                                                            </Style.Triggers>
+                                                        </Style>
+                                                    </TextBlock.Style>
+                                                </TextBlock>
+                                                <TextBlock DockPanel.Dock="Left" Text="★" Margin="0,0,5,0" Foreground="{DynamicResource AccentBrush}"
+                                                           Visibility="{Binding IsFavorite, Converter={StaticResource Visible}}" />
+                                                <TextBlock Text="{Binding Name}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
+                                            </DockPanel>
                                             <TextBlock Text="{Binding Subtitle}" FontSize="11.5" Foreground="{DynamicResource TextSecondary}"
                                                        TextTrimming="CharacterEllipsis" />
                                         </StackPanel>
@@ -254,7 +314,6 @@
                             </TextBlock.Style>
                         </TextBlock>
 
-                        <TextBlock Text="{Binding CompanyText}" Style="{StaticResource Muted}" Margin="0,10,0,0" />
                         <TextBlock Text="{Binding ProjectSubtitle}" Style="{StaticResource Muted}" Margin="0,4,0,0" FontSize="12"
                                    Visibility="{Binding HasProjectSubtitle, Converter={StaticResource Visible}}" />
                         <DockPanel Margin="0,8,0,0" Visibility="{Binding HasFolderWarning, Converter={StaticResource Visible}}">
@@ -294,7 +353,7 @@
                         <TextBlock Text="Person" VerticalAlignment="Center" Margin="2,0,8,0" Foreground="{DynamicResource TextSecondary}" />
                         <Grid Margin="0,0,18,0">
                             <Button x:Name="PersonButton" Click="PersonButton_Click" MinWidth="180" HorizontalContentAlignment="Stretch"
-                                    Padding="10,5" ToolTip="Who has the item now (in court / ball in court). Tick one or more people.">
+                                    Padding="10,5" ToolTip="Who has the item now (in court / ball in court). Check one or more people.">
                                 <DockPanel>
                                     <Path DockPanel.Dock="Right" VerticalAlignment="Center" Margin="10,0,0,0"
                                           Data="M 0 0 L 4 4 L 8 0" Stroke="{DynamicResource TextSecondary}" StrokeThickness="1.5" />
@@ -310,7 +369,7 @@
                                             <TextBlock DockPanel.Dock="Left" Text="Who has it now" Style="{StaticResource SectionTitle}"
                                                        VerticalAlignment="Center" Margin="2,0,0,0" />
                                             <Button DockPanel.Dock="Right" Style="{StaticResource LinkButton}" Content="Everyone"
-                                                    Click="ClearPeople_Click" ToolTip="Clear the ticks and show everyone" />
+                                                    Click="ClearPeople_Click" ToolTip="Clear the checks and show everyone" />
                                         </DockPanel>
                                         <TextBlock DockPanel.Dock="Top" Style="{StaticResource Muted}" FontSize="12" Margin="2,0,0,6"
                                                    Text="No one has open items here yet. Refresh to read them."
@@ -402,13 +461,13 @@
                                 <DataGridTemplateColumn.Header>
                                     <CheckBox Click="TickAllShown_Click" HorizontalAlignment="Center"
                                               IsChecked="{Binding DataContext.AllShownChecked, RelativeSource={RelativeSource AncestorType=DataGrid}, Mode=OneWay}"
-                                              ToolTip="Tick or untick every item shown" />
+                                              ToolTip="Check or uncheck every item shown" />
                                 </DataGridTemplateColumn.Header>
                                 <DataGridTemplateColumn.CellTemplate>
                                     <DataTemplate>
                                         <CheckBox IsChecked="{Binding IsChecked, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
                                                   IsEnabled="{Binding CanSelect}" HorizontalAlignment="Center"
-                                                  ToolTip="Tick to set its discipline or include its folder in a move" />
+                                                  ToolTip="Check to set its discipline or include its folder in a move" />
                                     </DataTemplate>
                                 </DataGridTemplateColumn.CellTemplate>
                             </DataGridTemplateColumn>
@@ -531,13 +590,15 @@
                         <DockPanel LastChildFill="False">
                             <TextBlock DockPanel.Dock="Left" Text="{Binding SelectionText}" VerticalAlignment="Center"
                                        Foreground="{DynamicResource TextSecondary}" Margin="4,0,16,0" />
-                            <Button DockPanel.Dock="Left" Content="Tick all ready to return" Click="SelectReady_Click" Margin="0,0,6,0" />
-                            <Button DockPanel.Dock="Left" Content="Clear ticks" Click="ClearTicks_Click" Margin="0,0,6,0" />
-                            <Button DockPanel.Dock="Left" Content="Set discipline…" Click="SetTickedDiscipline_Click"
-                                    ToolTip="Set the discipline of the ticked items. Items with no folder yet download into that discipline's folder." />
-                            <Button DockPanel.Dock="Right" Style="{StaticResource AccentButton}" Content="Mark ticked as returned…"
+                            <Button DockPanel.Dock="Left" Content="Check all ready to return" Click="SelectReady_Click" Margin="0,0,6,0" />
+                            <Button DockPanel.Dock="Left" Content="Clear checks" Click="ClearTicks_Click" Margin="0,0,6,0" />
+                            <Button DockPanel.Dock="Left" Content="Set discipline…" Click="SetTickedDiscipline_Click" Margin="0,0,6,0"
+                                    ToolTip="Set the discipline of the checked items. Items with no folder yet download into that discipline's folder." />
+                            <Button DockPanel.Dock="Left" Content="Download checked…" Click="DownloadChecked_Click"
+                                    ToolTip="Download the checked items one after another: for each, choose the files and where they go" />
+                            <Button DockPanel.Dock="Right" Style="{StaticResource AccentButton}" Content="Mark checked as returned…"
                                     Click="MarkReturned_Click" />
-                            <Button DockPanel.Dock="Right" Content="Move ticked back to active…" Click="MoveBack_Click" Margin="0,0,8,0" />
+                            <Button DockPanel.Dock="Right" Content="Move checked back to active…" Click="MoveBack_Click" Margin="0,0,8,0" />
                         </DockPanel>
                     </Border>
                 </Grid>

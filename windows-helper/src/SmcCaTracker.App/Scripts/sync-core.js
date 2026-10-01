@@ -124,24 +124,45 @@
   }
 
   // Whether this page can sync yet: the signed-in user and Helix's data service are loaded.
+  // Where the page is, for the log when Helix never becomes ready.
+  function pageInfo(windowObject) {
+    const location = windowObject && windowObject.location;
+    const doc = windowObject && windowObject.document;
+    return {
+      path: location && location.pathname ? String(location.pathname) : "",
+      title: doc && doc.title ? String(doc.title).slice(0, 80) : ""
+    };
+  }
+
+  // A sign-in page without a password box yet (email first, or a "Sign in" / company sign-in button).
+  function looksSignedOut(doc) {
+    if (!doc || typeof doc.querySelector !== "function") return false;
+    if (doc.querySelector('input[type="email"], input[name*="email" i], input[autocomplete="username"]')) return true;
+    const buttons = typeof doc.querySelectorAll === "function" ? Array.from(doc.querySelectorAll("button, a, input[type=submit]")) : [];
+    return buttons.some((button) => /^\s*(sign|log)\s*in\b/i.test(String(button.innerText || button.value || button.textContent || "")));
+  }
+
   function readiness(windowObject) {
     const doc = windowObject && windowObject.document;
     if (doc && doc.querySelector && doc.querySelector('input[type="password"]')) {
-      return { state: "signedOut" };
+      return Object.assign({ state: "signedOut", reason: "password-form" }, pageInfo(windowObject));
     }
     const user = Bridge.currentUser(windowObject);
     if (!user) {
-      return { state: "loading" };
+      if (looksSignedOut(doc)) {
+        return Object.assign({ state: "signedOut", reason: "sign-in-page" }, pageInfo(windowObject));
+      }
+      return Object.assign({ state: "loading", reason: windowObject && windowObject.UserInfo ? "no-user-details" : "no-user-info" }, pageInfo(windowObject));
     }
     try {
       Bridge.syncContext(windowObject, "check", "check");
       // resolveMaster is reached through listAssignedProjects/readProjectItems; check it directly here.
       if (!(windowObject.Master && typeof windowObject.Master.readFromCollection === "function")
         && !(windowObject.featureScriptHandler && typeof windowObject.featureScriptHandler.getCurrentMasterObject === "function")) {
-        return { state: "loading" };
+        return Object.assign({ state: "loading", reason: "no-data-service" }, pageInfo(windowObject));
       }
-    } catch (_error) {
-      return { state: "loading" };
+    } catch (error) {
+      return Object.assign({ state: "loading", reason: `context: ${String(error && error.message || error).slice(0, 120)}` }, pageInfo(windowObject));
     }
     return { state: "ready", user: { fullName: user.fullName, company: user.company || null } };
   }

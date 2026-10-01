@@ -29,6 +29,12 @@ public sealed class ViewState
     /// </summary>
     public List<string> ArchivedProjects { get; set; } = new();
 
+    /// <summary>
+    /// Your favorite projects, listed first under "Favorites". Personal to this PC like the archive,
+    /// and remembered the same way.
+    /// </summary>
+    public List<string> FavoriteProjects { get; set; } = new();
+
     /// <summary>Show archived projects in the list (dimmed) so they can be unarchived.</summary>
     public bool ShowArchived { get; set; }
 
@@ -66,6 +72,7 @@ public sealed class ViewStateStore
             state.SortColumn ??= "Number";
             state.SortPreset ??= "";
             state.ArchivedProjects ??= new List<string>();
+            state.FavoriteProjects ??= new List<string>();
             return state;
         }
         catch (Exception error) when (error is JsonException or IOException or UnauthorizedAccessException)

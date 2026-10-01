@@ -123,6 +123,15 @@ test("readiness reports sign-in forms, loading pages and ready pages", () => {
   assert.equal(Sync.readiness(page).state, "ready");
   assert.equal(Sync.readiness(Object.assign({}, page, { UserInfo: {} })).state, "loading");
   assert.equal(Sync.readiness(Object.assign({}, page, { document: { querySelector: () => ({}) } })).state, "signedOut");
+  // A sign-in page that asks for the email first (no password box yet) counts as signed out.
+  const emailFirst = { document: { querySelector: (selector) => (/email/.test(selector) ? {} : null), querySelectorAll: () => [] } };
+  assert.equal(Sync.readiness(emailFirst).state, "signedOut");
+  const signInButton = { document: { querySelector: () => null, querySelectorAll: () => [{ innerText: "Sign in with Microsoft" }] } };
+  assert.equal(Sync.readiness(signInButton).state, "signedOut");
+  const loading = Sync.readiness({ location: { pathname: "/Home" }, document: { title: "Helix", querySelector: () => null, querySelectorAll: () => [] } });
+  assert.equal(loading.state, "loading");
+  assert.equal(loading.reason, "no-user-info");
+  assert.equal(loading.path, "/Home");
 });
 
 test("a changes-only read drops items deleted or moved to another project", async () => {

@@ -123,16 +123,36 @@ public partial class DownloadWindow : Window
 
     private string? reportError;
 
-    public DownloadWindow(DownloadRequest request, AppPaths paths)
+    private readonly int batchIndex;
+    private readonly int batchCount;
+
+    private bool InBatch => batchCount > 1;
+    private bool LastInBatch => batchIndex >= batchCount - 1;
+
+    /// <summary>
+    /// Downloading several checked items: true when the next item should open (Skip, or this one was
+    /// downloaded); false when you stopped or closed the window.
+    /// </summary>
+    public bool ContinueBatch { get; private set; }
+
+    public DownloadWindow(DownloadRequest request, AppPaths paths, int batchIndex = 0, int batchCount = 1)
     {
         InitializeComponent();
         ThemeManager.Attach(this);
         this.request = request;
         this.paths = paths;
+        this.batchIndex = batchIndex;
+        this.batchCount = batchCount;
         folderName = DownloadNaming.FolderName(request.Number, request.Title, request.ProjectName);
         var label = request.ItemType == ItemTypes.Submittal ? "Submittal" : "RFI";
-        Title = $"Download {label} {request.Number} — CA Tracker";
-        HeadingText.Text = $"Download {label} {folderName}";
+        var position = InBatch ? $"Item {batchIndex + 1} of {batchCount} · " : "";
+        Title = $"{position}Download {label} {request.Number} — CA Tracker";
+        HeadingText.Text = $"{position}Download {label} {folderName}";
+        if (InBatch)
+        {
+            CloseButton.Content = LastInBatch ? "Skip" : "Skip to next";
+            StopBatchButton.Visibility = LastInBatch ? Visibility.Collapsed : Visibility.Visible;
+        }
         revision = DownloadNaming.Revision(request.Title, request.Number);
         destination = request.ExistingFolder is not null
             ? WithRevision(request.ExistingFolder)
@@ -182,9 +202,22 @@ public partial class DownloadWindow : Window
             BuildList(prepared);
             DownloadButton.IsEnabled = files.Count > 0;
             var reportNote = report is null && reportError is not null ? $" {reportError} The attachments can still be downloaded." : "";
+            var warning = files.Count == 0 ? null : ExistingFolderWarning();
             SetStatus(files.Count == 0
                 ? $"Helix has no files for this item.{reportNote}"
-                : $"Tick the files to download, check where they'll be saved, then select Download. Nothing is saved until then.{reportNote}");
+                : warning is not null
+                    ? $"{warning}{reportNote}"
+                    : $"Check the files to download, confirm where they'll be saved, then select Download. Nothing is saved until then.{reportNote}");
+            if (warning is not null)
+            {
+                StatusText.SetResourceReference(System.Windows.Controls.TextBlock.ForegroundProperty, "WarningBrush");
+                if (newPdfCount == 0 && InBatch)
+                {
+                    // Nothing new here: moving on is the likely choice.
+                    CloseButton.Style = (Style)FindResource("AccentButton");
+                    DownloadButton.ClearValue(StyleProperty);
+                }
+            }
         }
         catch (OperationCanceledException)
         {
@@ -377,18 +410,96 @@ public partial class DownloadWindow : Window
         element.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.String ? value.GetString() : null;
 
     /// <summary>Notes files already in the destination; on first load those start unticked.</summary>
+    private bool folderExisted;
+    private int newPdfCount;
+
+    /// <summary>The item already has a folder (its matched folder, or the folder files would go into).</summary>
+    private bool FolderAlreadyExists =>
+        (request.ExistingFolder is not null && Directory.Exists(request.ExistingFolder))
+        || (destination is not null && Directory.Exists(destination));
+
+    /// <summary>
+    /// Files already somewhere in the item's folder (revision subfolders included), by
+    /// <see cref="DownloadNaming.MatchKey"/>, so a file saved with a date in front or as a copy still counts.
+    /// </summary>
+    private HashSet<string> ExistingFileKeys()
+    {
+        var keys = new HashSet<string>(StringComparer.Ordinal);
+        var roots = new[] { request.ExistingFolder, destination }
+            .Where(path => !string.IsNullOrWhiteSpace(path) && Directory.Exists(path))
+            .Distinct(StringComparer.OrdinalIgnoreCase);
+        foreach (var root in roots)
+        {
+            try
+            {
+                foreach (var path in Directory.EnumerateFiles(root!, "*", SearchOption.AllDirectories).Take(5000))
+                {
+                    keys.Add(DownloadNaming.MatchKey(path));
+                }
+            }
+            catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+            {
+            }
+        }
+
+        return keys;
+    }
+
+    /// <summary>
+    /// Marks files already in the item's folder. When the folder already exists nothing is checked by
+    /// default, except PDFs from Helix that aren't in it yet (items added to the RFI/Submittal since).
+    /// </summary>
     private void MarkExisting(bool untickExisting)
     {
+        var keys = ExistingFileKeys();
+        folderExisted = FolderAlreadyExists;
+        newPdfCount = 0;
         foreach (var file in files)
         {
-            var exists = destination is not null && File.Exists(Path.Combine(destination, file.TargetName));
-            file.StatusText = exists ? "Already in folder (a copy is added if ticked)" : "";
-            if (exists && untickExisting)
+            var exists = keys.Contains(DownloadNaming.MatchKey(file.TargetName))
+                || keys.Contains(DownloadNaming.MatchKey(file.Name))
+                || (destination is not null && File.Exists(Path.Combine(destination, file.TargetName)));
+            bool check;
+            if (exists)
             {
-                file.IsChecked = false;
+                file.StatusText = "Already in folder (a copy is added if checked)";
+                check = false;
+            }
+            else if (!folderExisted)
+            {
+                file.StatusText = "";
+                check = true;
+            }
+            else if (file.IsReport)
+            {
+                file.StatusText = "Folder exists: check to save a fresh copy";
+                check = false;
+            }
+            else if (file.TargetName.EndsWith(".pdf", StringComparison.OrdinalIgnoreCase))
+            {
+                file.StatusText = "New: not in the folder yet";
+                newPdfCount++;
+                check = true;
+            }
+            else
+            {
+                file.StatusText = "New (not a PDF): check to download";
+                check = false;
+            }
+
+            if (untickExisting)
+            {
+                file.IsChecked = check;
             }
         }
     }
+
+    /// <summary>The warning shown when the item already has a folder.</summary>
+    private string? ExistingFolderWarning() => !folderExisted
+        ? null
+        : newPdfCount > 0
+            ? $"⚠ This item already has a folder. {newPdfCount} PDF{(newPdfCount == 1 ? "" : "s")} in Helix {(newPdfCount == 1 ? "isn't" : "aren't")} in it yet and {(newPdfCount == 1 ? "is" : "are")} checked; everything else is left unchecked. Select Download to add {(newPdfCount == 1 ? "it" : "them")}."
+            : "⚠ This item already has a folder and nothing new was found in Helix, so nothing is checked. Check files only if you want extra copies.";
 
     /// <summary>
     /// A revised item (its title says "Rev 2" or "R2") whose folder already exists gets its files in
@@ -459,7 +570,18 @@ public partial class DownloadWindow : Window
         }
     }
 
-    private void Close_Click(object sender, RoutedEventArgs e) => Close();
+    private void Close_Click(object sender, RoutedEventArgs e)
+    {
+        // In a batch, Skip / Next goes on to the next checked item.
+        ContinueBatch = InBatch && !LastInBatch;
+        Close();
+    }
+
+    private void StopBatch_Click(object sender, RoutedEventArgs e)
+    {
+        ContinueBatch = false;
+        Close();
+    }
 
     private async void Download_Click(object sender, RoutedEventArgs e)
     {
@@ -477,11 +599,12 @@ public partial class DownloadWindow : Window
         var selected = files.Where(file => file.IsChecked).ToList();
         if (selected.Count == 0)
         {
-            SetStatus("Tick at least one file.");
+            SetStatus("Check at least one file.");
             return;
         }
 
         SetBusy(true);
+        StatusText.SetResourceReference(System.Windows.Controls.TextBlock.ForegroundProperty, "TextSecondary");
         var saved = 0;
         var failed = 0;
         try
@@ -530,7 +653,21 @@ public partial class DownloadWindow : Window
                 ? $"Saved {saved} file{(saved == 1 ? "" : "s")} to {destination}."
                 : $"Saved {saved}, {failed} failed (see the list). Nothing was replaced.");
             OpenFolderButton.Visibility = saved > 0 ? Visibility.Visible : Visibility.Collapsed;
-            CloseButton.Content = "Close";
+            CloseButton.Content = InBatch && !LastInBatch ? "Next item" : "Close";
+            if (InBatch && !LastInBatch && failed == 0 && saved > 0)
+            {
+                // All saved: go on to the next checked item by itself.
+                SetStatus($"Saved {saved} file{(saved == 1 ? "" : "s")} to {destination}. Opening the next item…");
+                ContinueBatch = true;
+                _ = Dispatcher.InvokeAsync(async () =>
+                {
+                    await Task.Delay(1200);
+                    if (IsLoaded)
+                    {
+                        Close();
+                    }
+                });
+            }
         }
         catch (OperationCanceledException)
         {

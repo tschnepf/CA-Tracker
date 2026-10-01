@@ -66,7 +66,7 @@
                             </CheckBox>
                         </StackPanel>
                         <TextBlock Style="{StaticResource Muted}" FontSize="12" Margin="0,4,0,0"
-                                   Text="Recognised words: BB, Base Build, Base Building · TFO, Tenant Fit Out, Fit-Out, Tenant Improvement. If each part has its own Helix/Procore project or its own folders, connect or Browse to those instead and leave the boxes unticked." />
+                                   Text="Recognised words: BB, Base Build, Base Building · TFO, Tenant Fit Out, Fit-Out, Tenant Improvement. If each part has its own Helix/Procore project or its own folders, connect or Browse to those instead and leave the boxes unchecked." />
                     </StackPanel>
                 </Border>
 
