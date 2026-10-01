@@ -329,7 +329,7 @@ public static class ProviderScripts
                   try {
                     const result = await HelixBridgeCore.openItem(window, request.itemId, request.itemType, request.projectId);
                     if (result && result.opened) {
-                      post({ type: "opened" });
+                      post({ type: "opened", itemId: request.itemId });
                       return;
                     }
                     lastError = new Error("Helix didn't open the item.");
@@ -342,7 +342,7 @@ public static class ProviderScripts
                 }
                 throw lastError || new Error("Helix did not finish loading.");
               } catch (error) {
-                post({ type: "error", message: String(error && error.message || error) });
+                post({ type: "error", itemId: request.itemId, message: String(error && error.message || error) });
               }
             })(
             """ + request + ");";

@@ -1,0 +1,418 @@
+From 99fe5e29d1b9c2aafa5625c0953af7bab51355b5 Mon Sep 17 00:00:00 2001
+From: "Claude Fable 5.1" <noreply@anthropic.com>
+Date: Thu, 1 Oct 2026 16:23:28 -0700
+Subject: [PATCH 2/5] Fix #2: rebuild tracker.db only when SQLite says it is
+ corrupt
+
+OpenStore caught every exception and moved tracker.db aside, so a file
+merely held by a backup tool, a database viewer or a second copy of the
+app lost all local data on the next start.
+
+- New DatabaseOpener (Data): opens the database, runs PRAGMA quick_check,
+  and classifies failures. Only SQLITE_CORRUPT / SQLITE_NOTADB or a
+  failed quick_check count as corrupt. SQLITE_BUSY / LOCKED / CANTOPEN
+  and IOException sharing violations are "in use": retried 5x at 500 ms,
+  then the app tells the person to close the other program and exits
+  with code 1. Anything else keeps the file and runs in memory as before.
+- SetAside copies tracker.db (+wal/+shm) to tracker.db.<stamp>.bad before
+  a fresh one is started, and the dialog names the copy.
+
+Tests: DatabaseOpenerTests - random bytes -> Corrupt and SetAside keeps
+an identical copy; a file held with FileShare.None -> InUse, not renamed,
+opens normally once released; error-code classification.
+
+Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_012FcZmvTPSZepfx3fMqvoPu
+---
+ .../src/SmcCaTracker.App/App.xaml.cs          |  94 +++++++-----
+ .../src/SmcCaTracker.Data/DatabaseOpener.cs   | 143 ++++++++++++++++++
+ .../DatabaseOpenerTests.cs                    |  79 ++++++++++
+ 3 files changed, 282 insertions(+), 34 deletions(-)
+ create mode 100644 windows-helper/src/SmcCaTracker.Data/DatabaseOpener.cs
+ create mode 100644 windows-helper/tests/SmcCaTracker.Core.Tests/DatabaseOpenerTests.cs
+
+diff --git a/windows-helper/src/SmcCaTracker.App/App.xaml.cs b/windows-helper/src/SmcCaTracker.App/App.xaml.cs
+index 123baa0..ea3c73a 100644
+--- a/windows-helper/src/SmcCaTracker.App/App.xaml.cs
++++ b/windows-helper/src/SmcCaTracker.App/App.xaml.cs
+@@ -93,6 +93,10 @@ public partial class App : Application
+                 window.Show();
+             }
+         }
++        catch (DatabaseInUseException)
++        {
++            Shutdown(1);
++        }
+         catch (Exception error)
+         {
+             AppLog.Error("app", "CA Tracker could not start", error);
+@@ -103,15 +107,57 @@ public partial class App : Application
+ 
+     /// <summary>
+     /// Opens the database (importing the JSON files of an earlier version the first time) and loads it.
+-    /// A database that can't be read is set aside and rebuilt from the last JSON backup; as a last
+-    /// resort the app runs in memory and says so.
++    /// A database another program holds is retried, then the app says so and closes. Only a database
++    /// SQLite reports as corrupt is set aside (a copy is kept) and rebuilt from the last JSON backup; any
++    /// other problem leaves the file alone and the app runs in memory and says so.
+     /// </summary>
+     private static TrackerStore OpenStore(AppPaths paths)
+     {
+-        SqlitePersistence? database = null;
++        var opened = DatabaseOpener.Open(paths.DatabaseFile);
++        switch (opened.Outcome)
++        {
++            case DatabaseOpenOutcome.Opened:
++                return Load(paths, opened.Database!);
++
++            case DatabaseOpenOutcome.InUse:
++                AppLog.Error("app", "The database is in use by another program", opened.Error);
++                MessageBox.Show(
++                    "CA Tracker's database is in use by another program (a backup or sync tool, or a database viewer) or can't be accessed. " +
++                    "Close that program and start CA Tracker again.",
++                    "CA Tracker",
++                    MessageBoxButton.OK,
++                    MessageBoxImage.Error);
++                throw new DatabaseInUseException(opened.Error);
++
++            case DatabaseOpenOutcome.Corrupt:
++                AppLog.Error("app", "The database is corrupt", opened.Error);
++                var rebuilt = TryRebuild(paths, opened.Error!);
++                if (rebuilt is not null)
++                {
++                    return rebuilt;
++                }
++
++                break;
++
++            default:
++                AppLog.Error("app", "The database could not be opened", opened.Error);
++                break;
++        }
++
++        MessageBox.Show(
++            $"CA Tracker's database could not be opened ({opened.Error?.Message}). The app will run, but changes made now won't be kept after it closes.",
++            "CA Tracker",
++            MessageBoxButton.OK,
++            MessageBoxImage.Warning);
++        var memory = new InMemoryPersistence();
++        LegacyImport.RunIfNeeded(paths, memory, moveAside: false);
++        return new TrackerStore(memory);
++    }
++
++    private static TrackerStore Load(AppPaths paths, SqlitePersistence database)
++    {
+         try
+         {
+-            database = new SqlitePersistence(paths.DatabaseFile);
+             var imported = LegacyImport.RunIfNeeded(paths, database);
+             if (imported.Error is not null)
+             {
+@@ -125,43 +171,20 @@ public partial class App : Application
+ 
+             return new TrackerStore(database);
+         }
+-        catch (Exception error)
++        catch
+         {
+-            database?.Dispose();
+-            AppLog.Error("app", "The database could not be opened", error);
+-            var rebuilt = TryRebuild(paths, error);
+-            if (rebuilt is not null)
+-            {
+-                return rebuilt;
+-            }
+-
+-            MessageBox.Show(
+-                $"CA Tracker's database could not be opened ({error.Message}). The app will run, but changes made now won't be kept after it closes.",
+-                "CA Tracker",
+-                MessageBoxButton.OK,
+-                MessageBoxImage.Warning);
+-            var memory = new InMemoryPersistence();
+-            LegacyImport.RunIfNeeded(paths, memory, moveAside: false);
+-            return new TrackerStore(memory);
++            database.Dispose();
++            throw;
+         }
+     }
+ 
+-    /// <summary>Moves an unreadable database aside and starts a new one from the newest JSON backup.</summary>
++    /// <summary>Keeps a copy of a corrupt database and starts a new one from the newest JSON backup.</summary>
+     private static TrackerStore? TryRebuild(AppPaths paths, Exception cause)
+     {
+         SqlitePersistence? database = null;
+         try
+         {
+-            var stamp = DateTime.Now.ToString("yyyyMMdd-HHmmss");
+-            foreach (var suffix in new[] { "", "-wal", "-shm" })
+-            {
+-                var file = paths.DatabaseFile + suffix;
+-                if (File.Exists(file))
+-                {
+-                    File.Move(file, $"{paths.DatabaseFile}.{stamp}.bad{suffix}");
+-                }
+-            }
+-
++            var copy = DatabaseOpener.SetAside(paths.DatabaseFile, DateTime.Now);
+             database = new SqlitePersistence(paths.DatabaseFile);
+             var result = LegacyImport.RunIfNeeded(paths, database);
+             if (!result.Imported && Directory.Exists(paths.LegacyBackupDirectory))
+@@ -177,9 +200,9 @@ public partial class App : Application
+             }
+ 
+             var store = new TrackerStore(database);
+-            AppLog.Warn("app", $"The database couldn't be read ({cause.Message}); it was set aside as tracker.db.{stamp}.bad and rebuilt.");
++            AppLog.Warn("app", $"The database is corrupt ({cause.Message}); a copy was kept as {copy} and a new one was started.");
+             MessageBox.Show(
+-                $"CA Tracker's database couldn't be read ({cause.Message}), so it was set aside and a new one was started " +
++                $"CA Tracker's database is corrupt ({cause.Message}). A copy was kept as\n{copy}\nand a new one was started " +
+                 "from your last saved projects. Items come back with the next sync.",
+                 "CA Tracker",
+                 MessageBoxButton.OK,
+@@ -194,6 +217,9 @@ public partial class App : Application
+         }
+     }
+ 
++    /// <summary>Thrown so startup stops (the person was already told) without the generic "could not start" message.</summary>
++    private sealed class DatabaseInUseException(Exception? inner) : Exception("The database is in use by another program.", inner);
++
+     protected override void OnExit(ExitEventArgs e)
+     {
+         helixSync?.Dispose();
+diff --git a/windows-helper/src/SmcCaTracker.Data/DatabaseOpener.cs b/windows-helper/src/SmcCaTracker.Data/DatabaseOpener.cs
+new file mode 100644
+index 0000000..09c5a36
+--- /dev/null
++++ b/windows-helper/src/SmcCaTracker.Data/DatabaseOpener.cs
+@@ -0,0 +1,143 @@
++using Microsoft.Data.Sqlite;
++
++namespace SmcCaTracker.Data;
++
++/// <summary>Why the database could, or could not, be opened.</summary>
++public enum DatabaseOpenOutcome
++{
++    /// <summary>The database is open and passed a quick integrity check.</summary>
++    Opened,
++
++    /// <summary>The file is not a usable SQLite database (corrupt or not a database): the only case where it may be rebuilt.</summary>
++    Corrupt,
++
++    /// <summary>Another program holds the file; nothing is wrong with the data.</summary>
++    InUse,
++
++    /// <summary>Something else (permissions, a missing folder, …) stopped it opening.</summary>
++    Failed
++}
++
++public sealed record DatabaseOpenResult(SqlitePersistence? Database, DatabaseOpenOutcome Outcome, Exception? Error);
++
++/// <summary>
++/// Opens tracker.db carefully: a file that is merely locked by another program is retried and then
++/// reported, and only a file SQLite itself says is corrupt is treated as one to set aside. Everything
++/// else is a plain failure — never a reason to throw the data away.
++/// </summary>
++public static class DatabaseOpener
++{
++    private const int SqliteBusy = 5;
++    private const int SqliteLocked = 6;
++    private const int SqliteCorrupt = 11;
++    private const int SqliteCantOpen = 14;
++    private const int SqliteNotADb = 26;
++
++    // Windows: ERROR_SHARING_VIOLATION / ERROR_LOCK_VIOLATION wrapped as an IOException.
++    private const int SharingViolation = unchecked((int)0x80070020);
++    private const int LockViolation = unchecked((int)0x80070021);
++
++    public static DatabaseOpenResult Open(string path, int attempts = 5, TimeSpan? delay = null)
++    {
++        var wait = delay ?? TimeSpan.FromMilliseconds(500);
++        Exception? last = null;
++        for (var attempt = 1; attempt <= Math.Max(1, attempts); attempt++)
++        {
++            SqlitePersistence? database = null;
++            try
++            {
++                database = new SqlitePersistence(path);
++                var check = QuickCheck(database);
++                if (check is not null)
++                {
++                    database.Dispose();
++                    return new DatabaseOpenResult(null, DatabaseOpenOutcome.Corrupt,
++                        new SqliteException($"PRAGMA quick_check: {check}", SqliteCorrupt));
++                }
++
++                return new DatabaseOpenResult(database, DatabaseOpenOutcome.Opened, null);
++            }
++            catch (Exception error)
++            {
++                database?.Dispose();
++                last = error;
++                if (IsCorruption(error))
++                {
++                    return new DatabaseOpenResult(null, DatabaseOpenOutcome.Corrupt, error);
++                }
++
++                if (!IsInUse(error))
++                {
++                    return new DatabaseOpenResult(null, DatabaseOpenOutcome.Failed, error);
++                }
++
++                if (attempt < attempts)
++                {
++                    Thread.Sleep(wait);
++                }
++            }
++        }
++
++        return new DatabaseOpenResult(null, DatabaseOpenOutcome.InUse, last);
++    }
++
++    /// <summary>True only when SQLite says the file isn't a usable database.</summary>
++    public static bool IsCorruption(Exception error) =>
++        error is SqliteException { SqliteErrorCode: SqliteCorrupt or SqliteNotADb };
++
++    /// <summary>
++    /// True when another program holds the file (a lock or a sharing violation), which clears when it lets
++    /// go. SQLITE_CANTOPEN counts too: SQLite reports a sharing violation on Windows that way, and the folder
++    /// was created before opening, so "can't open" an existing file means held or denied, never corrupt.
++    /// </summary>
++    public static bool IsInUse(Exception error) => error switch
++    {
++        SqliteException { SqliteErrorCode: SqliteBusy or SqliteLocked or SqliteCantOpen } => true,
++        IOException io => IsSharingViolation(io),
++        _ => false
++    };
++
++    private static bool IsSharingViolation(Exception? error) =>
++        error is IOException { HResult: SharingViolation or LockViolation };
++
++    /// <summary>Null when the database passes; otherwise what SQLite reported.</summary>
++    private static string? QuickCheck(SqlitePersistence database)
++    {
++        using var command = database.Command("PRAGMA quick_check;", null);
++        using var reader = command.ExecuteReader();
++        var problems = new List<string>();
++        while (reader.Read())
++        {
++            var line = reader.GetString(0);
++            if (!string.Equals(line, "ok", StringComparison.OrdinalIgnoreCase))
++            {
++                problems.Add(line);
++            }
++        }
++
++        return problems.Count == 0 ? null : string.Join("; ", problems);
++    }
++
++    /// <summary>
++    /// Keeps a copy of a corrupt database (and its -wal/-shm) as <c>tracker.db.&lt;stamp&gt;.bad</c>, then clears
++    /// the way for a fresh one. Returns the path of the copy.
++    /// </summary>
++    public static string SetAside(string path, DateTime now)
++    {
++        var stamp = now.ToString("yyyyMMdd-HHmmss");
++        var copy = $"{path}.{stamp}.bad";
++        foreach (var suffix in new[] { "", "-wal", "-shm" })
++        {
++            var file = path + suffix;
++            if (!File.Exists(file))
++            {
++                continue;
++            }
++
++            File.Copy(file, copy + suffix, overwrite: true);
++            File.Delete(file);
++        }
++
++        return copy;
++    }
++}
+diff --git a/windows-helper/tests/SmcCaTracker.Core.Tests/DatabaseOpenerTests.cs b/windows-helper/tests/SmcCaTracker.Core.Tests/DatabaseOpenerTests.cs
+new file mode 100644
+index 0000000..e9b50ee
+--- /dev/null
++++ b/windows-helper/tests/SmcCaTracker.Core.Tests/DatabaseOpenerTests.cs
+@@ -0,0 +1,79 @@
++using Microsoft.Data.Sqlite;
++using SmcCaTracker.Data;
++
++namespace SmcCaTracker.Core.Tests;
++
++public class DatabaseOpenerTests
++{
++    [Fact]
++    public void AHealthyDatabaseOpens()
++    {
++        using var temp = new TempFolder();
++        var file = Path.Combine(temp.Root, "tracker.db");
++        var opened = DatabaseOpener.Open(file, attempts: 1);
++        Assert.Equal(DatabaseOpenOutcome.Opened, opened.Outcome);
++        Assert.NotNull(opened.Database);
++        opened.Database!.Dispose();
++
++        var again = DatabaseOpener.Open(file, attempts: 1);
++        Assert.Equal(DatabaseOpenOutcome.Opened, again.Outcome);
++        again.Database!.Dispose();
++    }
++
++    [Fact]
++    public void AFileOfRandomBytesIsCorruptNotInUse()
++    {
++        using var temp = new TempFolder();
++        var file = Path.Combine(temp.Root, "tracker.db");
++        var junk = new byte[8192];
++        Random.Shared.NextBytes(junk);
++        File.WriteAllBytes(file, junk);
++
++        var opened = DatabaseOpener.Open(file, attempts: 1);
++        Assert.Equal(DatabaseOpenOutcome.Corrupt, opened.Outcome);
++        Assert.Null(opened.Database);
++        Assert.True(DatabaseOpener.IsCorruption(opened.Error!));
++        Assert.True(File.Exists(file), "deciding it's corrupt must not touch the file");
++
++        var copy = DatabaseOpener.SetAside(file, new DateTime(2026, 10, 1, 8, 30, 0));
++        Assert.Equal(file + ".20261001-083000.bad", copy);
++        Assert.Equal(junk, File.ReadAllBytes(copy));
++        Assert.False(File.Exists(file));
++    }
++
++    [Fact]
++    public void ADatabaseHeldOpenByAnotherProgramIsReportedInUseAndLeftAlone()
++    {
++        using var temp = new TempFolder();
++        var file = Path.Combine(temp.Root, "tracker.db");
++        DatabaseOpener.Open(file, attempts: 1).Database!.Dispose();
++        var before = File.ReadAllBytes(file);
++
++        using (var holder = new FileStream(file, FileMode.Open, FileAccess.ReadWrite, FileShare.None))
++        {
++            var opened = DatabaseOpener.Open(file, attempts: 2, delay: TimeSpan.FromMilliseconds(10));
++            Assert.Equal(DatabaseOpenOutcome.InUse, opened.Outcome);
++            Assert.Null(opened.Database);
++            Assert.False(DatabaseOpener.IsCorruption(opened.Error!));
++        }
++
++        Assert.True(File.Exists(file));
++        Assert.Empty(Directory.GetFiles(temp.Root, "*.bad*"));
++        Assert.Equal(before, File.ReadAllBytes(file));
++
++        var afterwards = DatabaseOpener.Open(file, attempts: 1);
++        Assert.Equal(DatabaseOpenOutcome.Opened, afterwards.Outcome);
++        afterwards.Database!.Dispose();
++    }
++
++    [Fact]
++    public void ABusyOrLockedSqliteErrorCountsAsInUseNotCorruption()
++    {
++        Assert.True(DatabaseOpener.IsInUse(new SqliteException("database is locked", 5)));
++        Assert.True(DatabaseOpener.IsInUse(new SqliteException("database table is locked", 6)));
++        Assert.False(DatabaseOpener.IsCorruption(new SqliteException("database is locked", 5)));
++        Assert.True(DatabaseOpener.IsCorruption(new SqliteException("database disk image is malformed", 11)));
++        Assert.True(DatabaseOpener.IsCorruption(new SqliteException("file is not a database", 26)));
++        Assert.False(DatabaseOpener.IsInUse(new UnauthorizedAccessException()));
++    }
++}
+-- 
+2.43.0
+

@@ -1,0 +1,322 @@
+From c11a9a0ed380ed90410bf45cc65bd767376e9a36 Mon Sep 17 00:00:00 2001
+From: "Claude Fable 5.1" <noreply@anthropic.com>
+Date: Thu, 1 Oct 2026 16:27:29 -0700
+Subject: [PATCH 4/5] Fix #4, #22, #23: server keeps the newest read and
+ survives unread bodies
+
+- _store checks "older than the current version" before "same payload",
+  and a repeat read of the same version moves ca_current.changed_at and
+  ca_items.read_at/read_by forward (no ca_changes row). Before, x@08:00
+  Open -> y@18:00 identical -> z@12:00 Stale stored z's stale read.
+- Item changes must carry a parseable changedAt (skipped with a reason
+  instead of stamped "now"); seq must be a real whole number
+  (0 < seq < 2^63, bool rejected); a non-numeric Content-Length is 400.
+- _reply closes the connection (Connection: close) when it answers
+  before the request body was read (401/403/400), so a keep-alive
+  client's next request isn't parsed out of the leftover body (#22).
+- Handler.timeout = 30 so a stalled client frees its thread (#23).
+- PROTOCOL.md updated; CI runs the Python tests.
+
+Tests (test_server.py): stale read after an identical later read is
+unchanged and read_at is 18:00; missing/invalid changedAt skipped;
+bad seqs skipped; 403 POST then GET on one keep-alive socket, 401 the
+same, and Content-Length "lots" -> 400.
+
+Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_012FcZmvTPSZepfx3fMqvoPu
+---
+ .github/workflows/ci.yml     | 10 ++++++
+ central/PROTOCOL.md          | 22 +++++++------
+ central/ca_tracker_server.py | 46 ++++++++++++++++++++++----
+ central/test_server.py       | 63 ++++++++++++++++++++++++++++++++++++
+ 4 files changed, 126 insertions(+), 15 deletions(-)
+
+diff --git a/.github/workflows/ci.yml b/.github/workflows/ci.yml
+index f09cc54..37572ef 100644
+--- a/.github/workflows/ci.yml
++++ b/.github/workflows/ci.yml
+@@ -17,6 +17,16 @@ jobs:
+       - name: Test the Helix and Procore scan scripts
+         run: npm test
+ 
++  company-server:
++    runs-on: ubuntu-latest
++    steps:
++      - uses: actions/checkout@v6
++      - uses: actions/setup-python@v5
++        with:
++          python-version: "3.12"
++      - name: Test the company server
++        run: python -m unittest discover central -p "test_*.py"
++
+   app:
+     runs-on: windows-latest
+     steps:
+diff --git a/central/PROTOCOL.md b/central/PROTOCOL.md
+index 221fcd3..47e2172 100644
+--- a/central/PROTOCOL.md
++++ b/central/PROTOCOL.md
+@@ -52,10 +52,11 @@ Checks the token. `200 { "name": "CA Tracker server", "protocol": 1, "user": "Pa
+ ```
+ 
+ - `client`: the app install's id (one per Windows user and PC; letters, digits, `-`, `_`; up to 64).
+-- `seq`: the app's own change number. It only ever goes up for a client.
++- `seq`: the app's own change number (a whole number from 1 up to 2^63−1). It only ever goes up for a client.
+ - `entity` / `key` / `payload`: see [Projects and items](#projects-and-items).
+ - `operation`: `insert` or `update` (both mean "this is the latest version") or `delete`.
+-- `changedAt`: when the app made the change or read the item from Helix/Procore.
++- `changedAt`: when the app made the change or read the item from Helix/Procore. Required for items
++  (a change without it is skipped), since it decides which read is the latest.
+ - At most 5,000 changes per request (the app sends 500).
+ 
+ Answer `200`:
+@@ -68,13 +69,16 @@ What a server must do:
+ 
+ - **Accept retries.** Remember the highest `seq` accepted from each client and ignore changes at or below
+   it: the app sends a batch again when it didn't get the answer.
++- **Not store older reads.** An item change whose `changedAt` is before that of the item's latest
++  version is answered as accepted but not stored: a PC sending everything it has (the first time it
++  shares, or after a server restore) re-sends reads that may be older than someone else's. This check
++  comes before the repeat check below.
+ - **Not store repeats.** A change identical to the latest version of that project/item (same payload, or
+   a delete of something already deleted) is answered as accepted but not stored again. Several people
+   reading the same Helix project send the same items; only real changes reach everyone else.
+-  (The reference server compares SHA-256 hashes of the payload with sorted keys.)
+-- **Not store older reads.** An item change whose `changedAt` is before that of the item's latest
+-  version is answered as accepted but not stored: a PC sending everything it has (the first time it
+-  shares, or after a server restore) re-sends reads that may be older than someone else's.
++  (The reference server compares SHA-256 hashes of the payload with sorted keys.) A repeat that was read
++  later still moves the version's `changedAt` (and the item's `read_at`) forward, so an older read
++  arriving afterwards is recognised as older.
+ - **Skip what it can't use, but accept it.** A change with an unknown entity, a bad key or no payload is
+   listed in `skipped` and counted as received, so the app doesn't send it forever.
+ - Answer `200` only once the batch is saved: the app marks the batch sent when it gets the answer.
+@@ -174,9 +178,9 @@ implement the endpoints above in that system:
+ 
+ 1. `ca_tokens`: issue tokens (store `sha256(token)`, show the token once).
+ 2. `POST changes`: in one transaction, per change in `seq` order: skip at or below
+-   `ca_clients.last_client_seq`; skip repeats of `ca_current` and item reads older than its
+-   `changed_at`; insert into `ca_changes`; upsert `ca_current`; update the readable tables; then save
+-   the new `last_client_seq`.
++   `ca_clients.last_client_seq`; skip item reads older than `ca_current.changed_at`; skip repeats of
++   `ca_current` (moving its `changed_at` and the item's `read_at` forward); insert into `ca_changes`;
++   upsert `ca_current`; update the readable tables; then save the new `last_client_seq`.
+ 3. `GET changes`: `SELECT … FROM ca_changes WHERE seq > ? ORDER BY seq LIMIT ?`.
+ 
+ The readable tables are what reports should use: `ca_items` (every RFI and Submittal last read by
+diff --git a/central/ca_tracker_server.py b/central/ca_tracker_server.py
+index 7d5c52b..11ab9d8 100644
+--- a/central/ca_tracker_server.py
++++ b/central/ca_tracker_server.py
+@@ -352,10 +352,9 @@ class Service:
+             stored = 0
+             unchanged = 0
+             skipped = []
+-            ordered = sorted((change for change in changes if isinstance(change, dict) and isinstance(change.get("seq"), int)),
+-                             key=lambda change: change["seq"])
++            ordered = sorted((change for change in changes if _has_seq(change)), key=lambda change: change["seq"])
+             skipped.extend({"seq": None, "reason": "not a change with a whole-number seq"}
+-                           for change in changes if not (isinstance(change, dict) and isinstance(change.get("seq"), int)))
++                           for change in changes if not _has_seq(change))
+             for change in ordered:
+                 seq = change["seq"]
+                 if seq <= last_client_seq:
+@@ -397,6 +396,8 @@ class Service:
+                 return "an item's key is provider|projectId|itemType|itemId"
+         if operation != "delete" and not isinstance(change.get("payload"), dict):
+             return "insert and update need the project or item as payload"
++        if entity == "item" and parse_time(change.get("changedAt")) is None:
++            return "an item change needs changedAt (when it was read)"
+         return None
+ 
+     def _store(self, tx, client, user, change, now):
+@@ -410,10 +411,18 @@ class Service:
+         current = tx.one("SELECT payload_hash, deleted, changed_at FROM ca_current WHERE entity = ? AND entity_key = ?", entity, key)
+         if deleted and (current is None or truthy(current[1])):
+             return False
+-        if not deleted and current is not None and not truthy(current[1]) and current[0] == payload_hash:
+-            return False
+         if entity == "item" and current is not None and (parse_time(current[2]) or changed_at) > changed_at:
+             return False  # read before the version already here (e.g. a PC sending everything it has again)
++        if not deleted and current is not None and not truthy(current[1]) and current[0] == payload_hash:
++            # The same version read again, later: not a new change, but the time it was last seen moves
++            # forward so an older read arriving afterwards can't overwrite it.
++            tx.run("UPDATE ca_current SET changed_at = ?, updated_at = ?, updated_by = ? WHERE entity = ? AND entity_key = ?",
++                   changed_at, now, user, entity, key)
++            if entity == "item":
++                provider, project_id, item_type, item_id = key.split("|", 3)
++                tx.run("UPDATE ca_items SET read_at = ?, read_by = ? WHERE provider = ? AND provider_project_id = ? "
++                       "AND item_type = ? AND item_id = ?", changed_at, user, provider.lower(), project_id, item_type.lower(), item_id)
++            return False
+ 
+         tx.run("INSERT INTO ca_changes (client_id, client_seq, user_name, entity, entity_key, operation, changed_at, received_at, "
+                "payload, payload_hash) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+@@ -533,6 +542,12 @@ class Service:
+         return self.db.run(work)
+ 
+ 
++def _has_seq(change):
++    """A change whose seq is a whole number a client could really have produced (bool and absurd sizes excluded)."""
++    seq = change.get("seq") if isinstance(change, dict) else None
++    return isinstance(seq, int) and not isinstance(seq, bool) and 0 < seq < 2 ** 63
++
++
+ def split_discipline_key(key):
+     """"rfi|p000210 - doors" -> (rfi, folder, p000210 - doors); "item|rfi|abc" -> (rfi, item, abc). Same as the app."""
+     if not isinstance(key, str):
+@@ -550,6 +565,7 @@ def split_discipline_key(key):
+ class Handler(BaseHTTPRequestHandler):
+     server_version = "CATrackerServer/1"
+     protocol_version = "HTTP/1.1"
++    timeout = 30  # a client that stops sending mid-request doesn't hold a thread forever
+     service = None  # set by make_server
+ 
+     def do_GET(self):  # noqa: N802
+@@ -562,6 +578,7 @@ class Handler(BaseHTTPRequestHandler):
+         log.info("%s %s", self.address_string(), format % args)
+ 
+     def _route(self, method):
++        self._body_read = False
+         try:
+             url = urlparse(self.path)
+             path = url.path.rstrip("/")
+@@ -597,23 +614,40 @@ class Handler(BaseHTTPRequestHandler):
+             log.exception("Request failed: %s %s", method, self.path)
+             return self._reply(500, {"error": "The server had a problem; see its log."})
+ 
++    def _body_length(self):
++        try:
++            return int(self.headers.get("Content-Length") or 0)
++        except ValueError:
++            raise BadRequest("Content-Length must be a whole number.")
++
+     def _json(self):
+-        length = int(self.headers.get("Content-Length") or 0)
++        length = self._body_length()
+         if length <= 0:
+             raise BadRequest("The request has no body.")
+         if length > MAX_BODY:
+             raise BadRequest("The request is too large; send fewer changes at a time.")
++        self._body_read = True
+         try:
+             return json.loads(self.rfile.read(length).decode("utf-8"))
+         except (UnicodeDecodeError, json.JSONDecodeError) as error:
+             raise BadRequest(f"The body isn't JSON: {error}")
+ 
+     def _reply(self, status, body):
++        # Answering before the body was read (401, 403, 400, ...) leaves it on the socket; a keep-alive client's
++        # next request would then be read from the middle of it. Close the connection instead.
++        try:
++            unread = not getattr(self, "_body_read", True) and self._body_length() > 0
++        except BadRequest:
++            unread = True
++        if unread:
++            self.close_connection = True
+         data = json.dumps(body, ensure_ascii=False).encode("utf-8")
+         self.send_response(status)
+         self.send_header("Content-Type", "application/json; charset=utf-8")
+         self.send_header("Content-Length", str(len(data)))
+         self.send_header("Cache-Control", "no-store")
++        if unread:
++            self.send_header("Connection", "close")
+         self.end_headers()
+         self.wfile.write(data)
+ 
+diff --git a/central/test_server.py b/central/test_server.py
+index f3f876b..a2b60f6 100644
+--- a/central/test_server.py
++++ b/central/test_server.py
+@@ -12,6 +12,7 @@ the server's own SQL runs unchanged, with values written into it as SQL literals
+ import csv
+ import datetime as dt
+ import io
++import http.client
+ import json
+ import os
+ import shlex
+@@ -22,6 +23,7 @@ import tempfile
+ import threading
+ import unittest
+ import urllib.error
++import urllib.parse
+ import urllib.request
+ 
+ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+@@ -216,6 +218,38 @@ class ServerTests:
+         self.assertEqual(0, self.send("pc-a", change(2, "item", "helix|h1|rfi|a", None, changed_at="2026-09-30T12:30:00Z"))["stored"])
+         self.assertEqual(1, self.send("pc-a", change(3, "item", "helix|h1|rfi|a", None, changed_at="2026-09-30T14:00:00Z"))["stored"])
+ 
++    def test_the_same_version_read_again_later_keeps_an_older_read_out(self):
++        # x reads it at 08:00 (Open); y reads the same at 18:00; z's read from 12:00 (Stale) arrives last.
++        self.send("pc-x", change(1, "item", "helix|h1|rfi|a", item(status="Open"), changed_at="2026-09-30T08:00:00Z"))
++        later = self.send("pc-y", change(1, "item", "helix|h1|rfi|a", item(status="Open"), changed_at="2026-09-30T18:00:00Z"),
++                          user="Person Y")
++        self.assertEqual((0, 1), (later["stored"], later["unchanged"]))
++        stale = self.send("pc-z", change(1, "item", "helix|h1|rfi|a", item(status="Stale"), changed_at="2026-09-30T12:00:00Z"))
++        self.assertEqual((0, 1), (stale["stored"], stale["unchanged"]))
++        status, read_at, read_by = self.rows("SELECT status, read_at, read_by FROM ca_items")[0]
++        self.assertEqual(("Open", "2026-09-30T18:00:00Z", "Person Y"), (status, server.iso(read_at), read_by))
++        self.assertEqual("2026-09-30T18:00:00Z", server.iso(self.rows("SELECT changed_at FROM ca_current")[0][0]))
++        # Only one change was recorded for the two identical reads.
++        self.assertEqual(1, len(self.service.read_changes(0, 500)["changes"]))
++
++    def test_an_item_change_without_changed_at_is_skipped(self):
++        missing = change(1, "item", "helix|h1|rfi|a", item())
++        del missing["changedAt"]
++        result = self.send("pc-a", missing, change(2, "item", "helix|h1|rfi|b", item("b", "RFI-002"), changed_at="not a time"),
++                           change(3, "item", "helix|h1|rfi|c", item("c", "RFI-003")))
++        self.assertEqual(1, result["stored"])
++        self.assertEqual([1, 2], sorted(entry["seq"] for entry in result["skipped"]))
++        self.assertIn("changedAt", result["skipped"][0]["reason"])
++        self.assertEqual([("c",)], [tuple(row) for row in self.rows("SELECT item_id FROM ca_items")])
++
++    def test_a_seq_must_be_a_real_whole_number(self):
++        result = self.send("pc-a", change(True, "item", "helix|h1|rfi|a", item()), change(2 ** 63, "item", "helix|h1|rfi|b", item("b")),
++                           change(0, "item", "helix|h1|rfi|c", item("c")), change(-4, "item", "helix|h1|rfi|d", item("d")),
++                           change(5, "item", "helix|h1|rfi|e", item("e")))
++        self.assertEqual(1, result["stored"])
++        self.assertEqual([None, None, None, None], [entry["seq"] for entry in result["skipped"]])
++        self.assertEqual([("e",)], [tuple(row) for row in self.rows("SELECT item_id FROM ca_items")])
++
+     def test_item_removed_from_helix(self):
+         self.send("pc-a", change(1, "item", "helix|h1|rfi|a", item()))
+         self.send("pc-a", change(2, "item", "helix|h1|rfi|a", None))
+@@ -346,6 +380,35 @@ class ServerTests:
+         self.assertEqual(item(), page["changes"][1]["payload"])
+         self.assertEqual(409, self.call(f"{base}/changes?after=99", reader)[0])
+ 
++    def test_an_answer_sent_before_the_body_was_read_does_not_break_the_next_request(self):
++        base = self.start_http()
++        host, port = urllib.parse.urlparse(base).hostname, urllib.parse.urlparse(base).port
++        _, reader = self.service.add_token("Viewer", can_write=False)
++        body = json.dumps({"client": "pc-v", "changes": [change(1, "item", "helix|h1|rfi|a", item())] * 50}).encode("utf-8")
++        connection = http.client.HTTPConnection(host, port, timeout=10)
++        self.addCleanup(connection.close)
++        # Refused before the body is read (403) ...
++        connection.request("POST", f"{server.API}/changes", body=body,
++                           headers={"Authorization": f"Bearer {reader}", "Content-Type": "application/json"})
++        response = connection.getresponse()
++        self.assertEqual(403, response.status)
++        self.assertIn("error", json.loads(response.read()))
++        # ... and the same keep-alive connection still gets a proper answer to the next request.
++        connection.request("GET", f"{server.API}/hello", headers={"Authorization": f"Bearer {reader}"})
++        response = connection.getresponse()
++        self.assertEqual(200, response.status)
++        self.assertEqual("Viewer", json.loads(response.read())["user"])
++        # The same after a 401, and a Content-Length that isn't a number is a 400, not a crash.
++        connection.request("POST", f"{server.API}/changes", body=body, headers={"Authorization": "Bearer cat_wrong"})
++        response = connection.getresponse()
++        self.assertEqual(401, response.status)
++        response.read()
++        connection.request("POST", f"{server.API}/changes", body=b"{}",
++                           headers={"Authorization": f"Bearer {self.token}", "Content-Length": "lots"})
++        response = connection.getresponse()
++        self.assertEqual(400, response.status)
++        self.assertIn("Content-Length", json.loads(response.read())["error"])
++
+ 
+ class SqliteServerTests(ServerTests, unittest.TestCase):
+     def make_database(self):
+-- 
+2.43.0
+

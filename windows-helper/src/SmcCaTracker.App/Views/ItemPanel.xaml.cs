@@ -4,8 +4,10 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Threading;
 using Microsoft.Web.WebView2.Core;
+using Microsoft.Web.WebView2.Wpf;
 using SmcCaTracker.App.Services;
 using SmcCaTracker.Core.Data;
+using SmcCaTracker.Core.Diagnostics;
 using SmcCaTracker.Core.Models;
 using SmcCaTracker.Core.Refresh;
 using SmcCaTracker.Core.Storage;
@@ -24,6 +26,12 @@ namespace SmcCaTracker.App.Views;
 public partial class ItemPanel : UserControl
 {
     private readonly DispatcherTimer watchTimer = new() { Interval = TimeSpan.FromSeconds(5) };
+
+    // The Helix page. Replaced with a fresh one when it stops responding or crashes, so opening an
+    // item never needs CA Tracker to be restarted.
+    private WebView2 Browser = new();
+    private bool pageDead;
+    private int openAttempt;
     private AppPaths? paths;
     private TrackerStore? store;
     private string itemId = "";
@@ -42,6 +50,7 @@ public partial class ItemPanel : UserControl
     public ItemPanel()
     {
         InitializeComponent();
+        BrowserHost.Child = Browser;
         watchTimer.Tick += async (_, _) => await CheckCourtAsync();
     }
 
@@ -59,7 +68,11 @@ public partial class ItemPanel : UserControl
             SetStatus("Checking the last item's project for changes made here…");
         }
 
-        await FinishAsync(TimeSpan.FromSeconds(20));
+        if (!pageDead)
+        {
+            await FinishAsync(TimeSpan.FromSeconds(20));
+        }
+
         paths = appPaths;
         store = trackerStore;
         itemId = id;
@@ -72,7 +85,13 @@ public partial class ItemPanel : UserControl
         HeadingText.Text = heading;
         RetryButton.Visibility = Visibility.Collapsed;
         SetStatus("Opening Helix…");
-        if (!started)
+        AppLog.Info("panel", $"Opening {type} {id} in project {helixProjectId}.");
+        var attempt = ++openAttempt;
+        if (pageDead)
+        {
+            await ResetBrowserAsync("the page had stopped responding");
+        }
+        else if (!started)
         {
             await StartAsync();
         }
@@ -80,6 +99,78 @@ public partial class ItemPanel : UserControl
         {
             Browser.CoreWebView2?.Navigate(ListUrl);
         }
+
+        _ = WatchOpenAsync(attempt);
+    }
+
+    /// <summary>
+    /// If the item hasn't opened (or said why not) within a minute, the page is replaced with a fresh
+    /// one and the item opened again, once; after that the panel offers "Open the item again".
+    /// </summary>
+    private async Task WatchOpenAsync(int attempt, bool retried = false)
+    {
+        await Task.Delay(TimeSpan.FromSeconds(60));
+        if (attempt != openAttempt || opened || RetryButton.Visibility == Visibility.Visible || IsSignInShown)
+        {
+            return;
+        }
+
+        if (!retried)
+        {
+            AppLog.Warn("panel", $"{itemType} {itemId} didn't open within a minute; starting a fresh Helix page.");
+            await ResetBrowserAsync("the item didn't open within a minute");
+            _ = WatchOpenAsync(attempt, retried: true);
+            return;
+        }
+
+        AppLog.Warn("panel", $"{itemType} {itemId} still didn't open with a fresh page.");
+        opening = false;
+        SetStatus("Helix didn't open the item. Select \"Open the item again\" to try once more, or open it from the list below.");
+        RetryButton.Visibility = Visibility.Visible;
+    }
+
+    private bool IsSignInShown => StatusText.Text.StartsWith("Sign in to Helix", StringComparison.Ordinal);
+
+    /// <summary>Runs a script in the Helix page, giving up if the page has stopped responding.</summary>
+    private async Task RunScriptAsync(string script)
+    {
+        var core = Browser.CoreWebView2 ?? throw new InvalidOperationException("The Helix page isn't open.");
+        var run = core.ExecuteScriptAsync(script);
+        if (await Task.WhenAny(run, Task.Delay(TimeSpan.FromSeconds(20))) != run)
+        {
+            pageDead = true;
+            AppLog.Warn("panel", "The Helix page stopped responding.");
+            throw new TimeoutException("the Helix page stopped responding");
+        }
+
+        await run;
+    }
+
+    /// <summary>Throws away the Helix page and starts a fresh one (same sign-in), then opens the item's list.</summary>
+    private async Task ResetBrowserAsync(string why)
+    {
+        AppLog.Info("panel", $"Starting a fresh Helix page ({why}).");
+        watchTimer.Stop();
+        opened = false;
+        opening = false;
+        updateStartedAt = null;
+        checkStartedAt = null;
+        updateDone?.TrySetResult();
+        var old = Browser;
+        Browser = new WebView2();
+        BrowserHost.Child = Browser;
+        try
+        {
+            old.Dispose();
+        }
+        catch (Exception error) when (error is InvalidOperationException or System.Runtime.InteropServices.COMException)
+        {
+        }
+
+        started = false;
+        pageDead = false;
+        SetStatus("Opening Helix again…");
+        await StartAsync();
     }
 
     private string ListUrl =>
@@ -112,6 +203,18 @@ public partial class ItemPanel : UserControl
         core.NavigationStarting += (_, _) => opening = false;
         core.NavigationCompleted += OnNavigationCompleted;
         core.WebMessageReceived += OnWebMessageReceived;
+        core.ProcessFailed += (_, e) =>
+        {
+            // The page crashed or hung: the next Open (or "Open the item again") starts a fresh one.
+            pageDead = true;
+            opening = false;
+            AppLog.Warn("panel", $"The Helix page failed ({e.ProcessFailedKind}).");
+            Dispatcher.InvokeAsync(() =>
+            {
+                SetStatus("The Helix page stopped working. Select \"Open the item again\" to reload it.");
+                RetryButton.Visibility = Visibility.Visible;
+            });
+        };
         core.Navigate(ListUrl);
     }
 
@@ -146,12 +249,13 @@ public partial class ItemPanel : UserControl
         SetStatus("Opening the item…");
         try
         {
-            await Browser.CoreWebView2.ExecuteScriptAsync(ProviderScripts.HelixBridge);
-            await Browser.CoreWebView2.ExecuteScriptAsync(ProviderScripts.HelixOpenItem(itemId, itemType, projectId));
+            await RunScriptAsync(ProviderScripts.HelixBridge);
+            await RunScriptAsync(ProviderScripts.HelixOpenItem(itemId, itemType, projectId));
         }
         catch (Exception error)
         {
             opening = false;
+            AppLog.Warn("panel", $"{itemType} {itemId} couldn't be opened: {error.Message}");
             SetStatus($"The item could not be opened: {error.Message}");
             RetryButton.Visibility = Visibility.Visible;
         }
@@ -169,10 +273,19 @@ public partial class ItemPanel : UserControl
             using var document = JsonDocument.Parse(e.WebMessageAsJson);
             var root = document.RootElement;
             var type = root.TryGetProperty("type", out var typeElement) ? typeElement.GetString() : null;
+            if (type is "opened" or "error"
+                && root.TryGetProperty("itemId", out var forItem) && forItem.GetString() is { } answeredFor
+                && !string.Equals(answeredFor, itemId, StringComparison.Ordinal))
+            {
+                // A late answer about an item opened before this one.
+                return;
+            }
+
             if (type == "opened")
             {
                 opened = true;
                 opening = false;
+                AppLog.Info("panel", $"Opened {itemType} {itemId}.");
                 SetStatus("Opened in Helix. Work on it here; when you send it on, CA Tracker updates by itself.");
                 watchTimer.Start();
                 _ = CheckCourtAsync();
@@ -194,6 +307,7 @@ public partial class ItemPanel : UserControl
             {
                 opening = false;
                 var message = root.TryGetProperty("message", out var text) ? text.GetString() : null;
+                AppLog.Warn("panel", $"Helix couldn't open {itemType} {itemId}: {message}");
                 SetStatus($"Helix couldn't open the item: {message} The list is shown instead.");
                 RetryButton.Visibility = Visibility.Visible;
             }
@@ -205,6 +319,16 @@ public partial class ItemPanel : UserControl
 
     private async void Retry_Click(object sender, RoutedEventArgs e)
     {
+        RetryButton.Visibility = Visibility.Collapsed;
+        var attempt = ++openAttempt;
+        if (pageDead || Browser.CoreWebView2 is null)
+        {
+            await ResetBrowserAsync("Open the item again");
+            _ = WatchOpenAsync(attempt);
+            return;
+        }
+
+        _ = WatchOpenAsync(attempt);
         opened = false;
         var current = Browser.CoreWebView2?.Source;
         if (current is not null && Uri.TryCreate(current, UriKind.Absolute, out var uri)
@@ -233,7 +357,7 @@ public partial class ItemPanel : UserControl
         checkStartedAt = now;
         try
         {
-            await Browser.CoreWebView2.ExecuteScriptAsync(ProviderScripts.HelixItemCourt(itemId, itemType, projectId));
+            await RunScriptAsync(ProviderScripts.HelixItemCourt(itemId, itemType, projectId));
         }
         catch (Exception)
         {
@@ -249,7 +373,7 @@ public partial class ItemPanel : UserControl
             // Helix reloaded the page: load the library again for the next check.
             try
             {
-                await Browser.CoreWebView2.ExecuteScriptAsync(ProviderScripts.HelixBridge);
+                await RunScriptAsync(ProviderScripts.HelixBridge);
             }
             catch (Exception)
             {
@@ -294,10 +418,10 @@ public partial class ItemPanel : UserControl
         {
             foreach (var library in ProviderScripts.LibrariesFor(Providers.Helix))
             {
-                await Browser.CoreWebView2.ExecuteScriptAsync(library);
+                await RunScriptAsync(library);
             }
 
-            await Browser.CoreWebView2.ExecuteScriptAsync(ProviderScripts.HelixQuickScan);
+            await RunScriptAsync(ProviderScripts.HelixQuickScan);
         }
         catch (Exception error)
         {
@@ -382,7 +506,7 @@ public partial class ItemPanel : UserControl
     public async Task FinishAsync(TimeSpan? wait = null)
     {
         watchTimer.Stop();
-        if (!opened || Browser.CoreWebView2 is null || store is null)
+        if (!opened || pageDead || Browser.CoreWebView2 is null || store is null)
         {
             return;
         }

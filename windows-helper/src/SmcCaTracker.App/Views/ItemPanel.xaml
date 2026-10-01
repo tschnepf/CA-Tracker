@@ -22,7 +22,8 @@
                 </DockPanel>
             </Border>
 
-            <wv2:WebView2 x:Name="Browser" Grid.Row="1" />
+            <!-- The Helix page (created in code, so a stuck page can be replaced with a fresh one). -->
+            <Border x:Name="BrowserHost" Grid.Row="1" />
         </Grid>
     </Border>
 </UserControl>
