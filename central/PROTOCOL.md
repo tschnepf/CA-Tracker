@@ -52,10 +52,11 @@ Checks the token. `200 { "name": "CA Tracker server", "protocol": 1, "user": "Pa
 ```
 
 - `client`: the app install's id (one per Windows user and PC; letters, digits, `-`, `_`; up to 64).
-- `seq`: the app's own change number. It only ever goes up for a client.
+- `seq`: the app's own change number (a whole number from 1 up to 2^63−1). It only ever goes up for a client.
 - `entity` / `key` / `payload`: see [Projects and items](#projects-and-items).
 - `operation`: `insert` or `update` (both mean "this is the latest version") or `delete`.
-- `changedAt`: when the app made the change or read the item from Helix/Procore.
+- `changedAt`: when the app made the change or read the item from Helix/Procore. Required for items
+  (a change without it is skipped), since it decides which read is the latest.
 - At most 5,000 changes per request (the app sends 500).
 
 Answer `200`:
@@ -68,13 +69,16 @@ What a server must do:
 
 - **Accept retries.** Remember the highest `seq` accepted from each client and ignore changes at or below
   it: the app sends a batch again when it didn't get the answer.
+- **Not store older reads.** An item change whose `changedAt` is before that of the item's latest
+  version is answered as accepted but not stored: a PC sending everything it has (the first time it
+  shares, or after a server restore) re-sends reads that may be older than someone else's. This check
+  comes before the repeat check below.
 - **Not store repeats.** A change identical to the latest version of that project/item (same payload, or
   a delete of something already deleted) is answered as accepted but not stored again. Several people
   reading the same Helix project send the same items; only real changes reach everyone else.
-  (The reference server compares SHA-256 hashes of the payload with sorted keys.)
-- **Not store older reads.** An item change whose `changedAt` is before that of the item's latest
-  version is answered as accepted but not stored: a PC sending everything it has (the first time it
-  shares, or after a server restore) re-sends reads that may be older than someone else's.
+  (The reference server compares SHA-256 hashes of the payload with sorted keys.) A repeat that was read
+  later still moves the version's `changedAt` (and the item's `read_at`) forward, so an older read
+  arriving afterwards is recognised as older.
 - **Skip what it can't use, but accept it.** A change with an unknown entity, a bad key or no payload is
   listed in `skipped` and counted as received, so the app doesn't send it forever.
 - Answer `200` only once the batch is saved: the app marks the batch sent when it gets the answer.
@@ -174,9 +178,9 @@ implement the endpoints above in that system:
 
 1. `ca_tokens`: issue tokens (store `sha256(token)`, show the token once).
 2. `POST changes`: in one transaction, per change in `seq` order: skip at or below
-   `ca_clients.last_client_seq`; skip repeats of `ca_current` and item reads older than its
-   `changed_at`; insert into `ca_changes`; upsert `ca_current`; update the readable tables; then save
-   the new `last_client_seq`.
+   `ca_clients.last_client_seq`; skip item reads older than `ca_current.changed_at`; skip repeats of
+   `ca_current` (moving its `changed_at` and the item's `read_at` forward); insert into `ca_changes`;
+   upsert `ca_current`; update the readable tables; then save the new `last_client_seq`.
 3. `GET changes`: `SELECT … FROM ca_changes WHERE seq > ? ORDER BY seq LIMIT ?`.
 
 The readable tables are what reports should use: `ca_items` (every RFI and Submittal last read by
