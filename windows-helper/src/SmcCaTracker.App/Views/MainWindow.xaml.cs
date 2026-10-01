@@ -20,6 +20,10 @@ public partial class MainWindow : Window
     private readonly MainViewModel viewModel;
     private readonly OperationExecutor executor;
     private readonly Dictionary<string, SignInWindow> signInWindows = new(StringComparer.OrdinalIgnoreCase);
+
+    // Windows with their own page in the built-in browser (they share its profile with the item panel).
+    private int browserWindowsOpen;
+    private int downloadWindowsOpen;
     private SyncWindow? syncWindow;
 
     public MainWindow(MainViewModel viewModel, AppPaths paths)
@@ -41,7 +45,23 @@ public partial class MainWindow : Window
         DataContext = viewModel;
         ThemeManager.Attach(this);
         viewModel.BrowserRefreshRequested += request =>
-            new BrowserWindow(request, viewModel.Paths, viewModel.Settings.Browser, viewModel.Store) { Owner = this }.Show();
+        {
+            var window = new BrowserWindow(request, viewModel.Paths, viewModel.Settings.Browser, viewModel.Store) { Owner = this };
+            browserWindowsOpen++;
+            window.Closed += (_, _) => browserWindowsOpen--;
+            window.Show();
+        };
+        // Signing out of the built-in browser deletes its profile: nothing may be using it.
+        viewModel.BrowserProfileInUse = () =>
+            browserWindowsOpen > 0 ? "the CA Tracker browser window"
+            : downloadWindowsOpen > 0 ? "the download window"
+            : signInWindows.Count > 0 ? "the Connect window"
+            : null;
+        viewModel.BrowserProfileReleasing += () =>
+        {
+            ItemPanel.Shutdown();
+            ShowItemPanel(false);
+        };
         // A sync found Procore's sign-in expired: open Connect to Procore so it's clear what to do.
         viewModel.SignInRequested += provider => OpenSignIn(provider, signInExpired: true);
         Closed += (_, _) =>
@@ -731,7 +751,12 @@ public partial class MainWindow : Window
                 var window = new DownloadWindow(requests[index], viewModel.Paths, index, requests.Count) { Owner = this };
                 var closed = new TaskCompletionSource();
                 window.Downloaded += async (_, _) => await viewModel.RecheckFoldersAsync();
-                window.Closed += (_, _) => closed.TrySetResult();
+                downloadWindowsOpen++;
+                window.Closed += (_, _) =>
+                {
+                    downloadWindowsOpen--;
+                    closed.TrySetResult();
+                };
                 window.Show();
                 await closed.Task;
                 if (!window.ContinueBatch)
@@ -762,6 +787,8 @@ public partial class MainWindow : Window
 
         var window = new DownloadWindow(request, viewModel.Paths) { Owner = this };
         window.Downloaded += async (_, _) => await viewModel.RecheckFoldersAsync();
+        downloadWindowsOpen++;
+        window.Closed += (_, _) => downloadWindowsOpen--;
         window.Show();
     }
 

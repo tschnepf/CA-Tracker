@@ -529,11 +529,36 @@ public partial class ItemPanel : UserControl
         }
     }
 
-    /// <summary>The app is closing: release the browser without the final check.</summary>
+    /// <summary>
+    /// Releases the browser without the final check (the app is closing, or the browser profile is about
+    /// to be deleted). The panel can open an item again afterwards: it starts a fresh page then.
+    /// </summary>
     public void Shutdown()
     {
         watchTimer.Stop();
-        Browser.Dispose();
+        openAttempt++;
+        opened = false;
+        opening = false;
+        started = false;
+        pageDead = false;
+        courtBaseline = null;
+        checkStartedAt = null;
+        updateStartedAt = null;
+        updateDone?.TrySetResult();
+        var old = Browser;
+        Browser = new WebView2();
+        BrowserHost.Child = Browser;
+        try
+        {
+            old.Dispose();
+        }
+        catch (Exception error) when (error is InvalidOperationException or System.Runtime.InteropServices.COMException)
+        {
+        }
+
+        HeadingText.Text = "";
+        RetryButton.Visibility = Visibility.Collapsed;
+        SetStatus("");
     }
 
     private async void Close_Click(object sender, RoutedEventArgs e)

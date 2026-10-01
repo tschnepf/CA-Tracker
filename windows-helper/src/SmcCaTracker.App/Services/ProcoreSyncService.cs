@@ -98,6 +98,9 @@ public sealed class ProcoreSyncService : IDisposable
     private bool cancelRequested;
     private bool disposed;
 
+    /// <summary>Until when the hidden page must not be opened again (set when signing out).</summary>
+    private DateTimeOffset pausedUntil = DateTimeOffset.MinValue;
+
     // When each project was last read in full this session. The first read of a project in a session
     // is full; later ones ask only for items changed since, and every few hours it is read in full
     // again so items deleted in Procore drop out (as Helix does).
@@ -552,6 +555,11 @@ public sealed class ProcoreSyncService : IDisposable
     {
         if (core is null)
         {
+            if (DateTimeOffset.Now < pausedUntil)
+            {
+                return new PageProblem("Procore reads are paused for a moment while the browser signs out.", false);
+            }
+
             try
             {
                 AppLog.Info("procore", "Starting the background Procore page.");
@@ -731,8 +739,17 @@ public sealed class ProcoreSyncService : IDisposable
     /// <summary>Lets the page way be tried again (e.g. after connecting to Procore again).</summary>
     public void ResetPageReading() => PageReadingUnavailable = false;
 
-    public void CloseBrowser()
+    /// <summary>
+    /// Closes the hidden page (e.g. before signing out, so the browser's files can be removed). The next
+    /// sync opens it again, after <paramref name="pause"/> if given.
+    /// </summary>
+    public void CloseBrowser(TimeSpan? pause = null)
     {
+        if (pause is { } wait)
+        {
+            pausedUntil = DateTimeOffset.Now + wait;
+        }
+
         foreach (var completion in pending.Values.ToList())
         {
             completion.TrySetCanceled();

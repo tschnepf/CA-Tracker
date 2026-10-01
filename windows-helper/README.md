@@ -103,7 +103,8 @@ the Helix and Procore passwords you sign in with, encrypted for your Windows use
 same protection Edge uses), and fills them in when a site asks you to sign in again — Procore ends
 its sign-in when CA Tracker closes, so after a restart you only click **Sign in**.
 **Settings → General settings → Sign out of the built-in browser** forgets both sign-ins and the
-saved passwords.
+saved passwords. It closes the item panel and the hidden sync pages first, and asks you to close any
+CA Tracker browser, download or Connect window that is still open.
 
 ## Project list
 

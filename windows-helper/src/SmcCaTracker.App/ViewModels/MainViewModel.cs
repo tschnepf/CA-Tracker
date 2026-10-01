@@ -220,8 +220,59 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     public void CloseBackgroundBrowser()
     {
         helixSync.CloseBrowser(pause: TimeSpan.FromSeconds(30));
-        procoreSync.CloseBrowser();
+        procoreSync.CloseBrowser(pause: TimeSpan.FromSeconds(30));
         procoreSync.ResetPageReading();
+    }
+
+    /// <summary>
+    /// Set by the main window: what is still using the browser profile (an open browser, download or
+    /// sign-in window), or null when nothing is. Signing out is refused while something is.
+    /// </summary>
+    public Func<string?>? BrowserProfileInUse { get; set; }
+
+    /// <summary>Raised before the browser profile is deleted: the item panel's page must be released.</summary>
+    public event Action? BrowserProfileReleasing;
+
+    /// <summary>
+    /// Signs out of the built-in browser: stops everything that uses its profile, then deletes the
+    /// profile folder (sign-ins and saved passwords). Returns the problem, or null when signed out.
+    /// </summary>
+    public async Task<string?> SignOutOfBrowserAsync()
+    {
+        if (BrowserProfileInUse?.Invoke() is { } inUse)
+        {
+            return $"Close {inUse} first, then sign out.";
+        }
+
+        // 1. No account to sync: background reads stop asking for the browser.
+        Store.ClearAccounts();
+        // 2. The item panel lets go of its page; 3. the hidden sync pages close and stay closed for a moment.
+        BrowserProfileReleasing?.Invoke();
+        CloseBackgroundBrowser();
+
+        // 4. The profile folder goes once the browser processes have let go of it.
+        var folder = Paths.BrowserDataDirectory;
+        for (var attempt = 0; Directory.Exists(folder); attempt++)
+        {
+            try
+            {
+                Directory.Delete(folder, recursive: true);
+            }
+            catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+            {
+                if (attempt >= 30)
+                {
+                    AppLog.Error("app", "Signing out of the built-in browser failed", error);
+                    return $"The browser's files are still in use ({error.Message}). Close CA Tracker and start it again, then sign out.";
+                }
+
+                await Task.Delay(300);
+            }
+        }
+
+        AppLog.Info("app", "Signed out of the built-in browser.");
+        RefreshAccounts();
+        return null;
     }
 
     /// <summary>Raised when a refresh should run in the app's built-in browser window.</summary>

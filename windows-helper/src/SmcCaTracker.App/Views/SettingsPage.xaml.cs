@@ -177,15 +177,21 @@ public partial class SettingsPage : UserControl
 
     private async void ClearBrowser_Click(object sender, RoutedEventArgs e)
     {
-        if (paths is null)
+        if (paths is null || DataContext is not MainViewModel model)
         {
             return;
         }
 
         var owner = Window.GetWindow(this);
+        if (model.BrowserProfileInUse?.Invoke() is { } inUse)
+        {
+            ErrorText.Text = $"Close {inUse} first, then sign out.";
+            return;
+        }
+
         var answer = MessageBox.Show(
             owner,
-            "Sign out of Helix and Procore in the CA Tracker browser? You'll be asked to sign in on the next refresh.\n\nClose any open CA Tracker browser windows first.",
+            "Sign out of Helix and Procore in the CA Tracker browser? You'll be asked to sign in on the next refresh.\n\nThe item panel closes.",
             "Sign out",
             MessageBoxButton.YesNo,
             MessageBoxImage.Question,
@@ -195,34 +201,15 @@ public partial class SettingsPage : UserControl
             return;
         }
 
-        try
+        var problem = await model.SignOutOfBrowserAsync();
+        if (problem is not null)
         {
-            var model = DataContext as MainViewModel;
-            // The background Helix page uses the same sign-in; close it so its files can be removed.
-            model?.CloseBackgroundBrowser();
-            for (var attempt = 0; System.IO.Directory.Exists(paths.BrowserDataDirectory); attempt++)
-            {
-                try
-                {
-                    System.IO.Directory.Delete(paths.BrowserDataDirectory, recursive: true);
-                }
-                catch (Exception error) when ((error is System.IO.IOException or UnauthorizedAccessException) && attempt < 30)
-                {
-                    // The browser is still letting go of its files.
-                    await Task.Delay(300);
-                }
-            }
-
-            model?.Store.ClearAccounts();
-            ErrorText.Text = "";
-            model?.RefreshAccounts();
-
-            MessageBox.Show(owner, "Signed out of the built-in browser.", "CA Tracker", MessageBoxButton.OK, MessageBoxImage.Information);
+            ErrorText.Text = $"Could not sign out: {problem}";
+            return;
         }
-        catch (Exception error)
-        {
-            ErrorText.Text = $"Could not sign out: {error.Message} Close any CA Tracker browser windows and try again.";
-        }
+
+        ErrorText.Text = "";
+        MessageBox.Show(owner, "Signed out of the built-in browser.", "CA Tracker", MessageBoxButton.OK, MessageBoxImage.Information);
     }
 
     private async void Save_Click(object sender, RoutedEventArgs e)
