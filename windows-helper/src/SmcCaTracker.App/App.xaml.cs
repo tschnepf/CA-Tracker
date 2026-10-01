@@ -93,6 +93,10 @@ public partial class App : Application
                 window.Show();
             }
         }
+        catch (DatabaseInUseException)
+        {
+            Shutdown(1);
+        }
         catch (Exception error)
         {
             AppLog.Error("app", "CA Tracker could not start", error);
@@ -103,15 +107,57 @@ public partial class App : Application
 
     /// <summary>
     /// Opens the database (importing the JSON files of an earlier version the first time) and loads it.
-    /// A database that can't be read is set aside and rebuilt from the last JSON backup; as a last
-    /// resort the app runs in memory and says so.
+    /// A database another program holds is retried, then the app says so and closes. Only a database
+    /// SQLite reports as corrupt is set aside (a copy is kept) and rebuilt from the last JSON backup; any
+    /// other problem leaves the file alone and the app runs in memory and says so.
     /// </summary>
     private static TrackerStore OpenStore(AppPaths paths)
     {
-        SqlitePersistence? database = null;
+        var opened = DatabaseOpener.Open(paths.DatabaseFile);
+        switch (opened.Outcome)
+        {
+            case DatabaseOpenOutcome.Opened:
+                return Load(paths, opened.Database!);
+
+            case DatabaseOpenOutcome.InUse:
+                AppLog.Error("app", "The database is in use by another program", opened.Error);
+                MessageBox.Show(
+                    "CA Tracker's database is in use by another program (a backup or sync tool, or a database viewer) or can't be accessed. " +
+                    "Close that program and start CA Tracker again.",
+                    "CA Tracker",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Error);
+                throw new DatabaseInUseException(opened.Error);
+
+            case DatabaseOpenOutcome.Corrupt:
+                AppLog.Error("app", "The database is corrupt", opened.Error);
+                var rebuilt = TryRebuild(paths, opened.Error!);
+                if (rebuilt is not null)
+                {
+                    return rebuilt;
+                }
+
+                break;
+
+            default:
+                AppLog.Error("app", "The database could not be opened", opened.Error);
+                break;
+        }
+
+        MessageBox.Show(
+            $"CA Tracker's database could not be opened ({opened.Error?.Message}). The app will run, but changes made now won't be kept after it closes.",
+            "CA Tracker",
+            MessageBoxButton.OK,
+            MessageBoxImage.Warning);
+        var memory = new InMemoryPersistence();
+        LegacyImport.RunIfNeeded(paths, memory, moveAside: false);
+        return new TrackerStore(memory);
+    }
+
+    private static TrackerStore Load(AppPaths paths, SqlitePersistence database)
+    {
         try
         {
-            database = new SqlitePersistence(paths.DatabaseFile);
             var imported = LegacyImport.RunIfNeeded(paths, database);
             if (imported.Error is not null)
             {
@@ -125,43 +171,20 @@ public partial class App : Application
 
             return new TrackerStore(database);
         }
-        catch (Exception error)
+        catch
         {
-            database?.Dispose();
-            AppLog.Error("app", "The database could not be opened", error);
-            var rebuilt = TryRebuild(paths, error);
-            if (rebuilt is not null)
-            {
-                return rebuilt;
-            }
-
-            MessageBox.Show(
-                $"CA Tracker's database could not be opened ({error.Message}). The app will run, but changes made now won't be kept after it closes.",
-                "CA Tracker",
-                MessageBoxButton.OK,
-                MessageBoxImage.Warning);
-            var memory = new InMemoryPersistence();
-            LegacyImport.RunIfNeeded(paths, memory, moveAside: false);
-            return new TrackerStore(memory);
+            database.Dispose();
+            throw;
         }
     }
 
-    /// <summary>Moves an unreadable database aside and starts a new one from the newest JSON backup.</summary>
+    /// <summary>Keeps a copy of a corrupt database and starts a new one from the newest JSON backup.</summary>
     private static TrackerStore? TryRebuild(AppPaths paths, Exception cause)
     {
         SqlitePersistence? database = null;
         try
         {
-            var stamp = DateTime.Now.ToString("yyyyMMdd-HHmmss");
-            foreach (var suffix in new[] { "", "-wal", "-shm" })
-            {
-                var file = paths.DatabaseFile + suffix;
-                if (File.Exists(file))
-                {
-                    File.Move(file, $"{paths.DatabaseFile}.{stamp}.bad{suffix}");
-                }
-            }
-
+            var copy = DatabaseOpener.SetAside(paths.DatabaseFile, DateTime.Now);
             database = new SqlitePersistence(paths.DatabaseFile);
             var result = LegacyImport.RunIfNeeded(paths, database);
             if (!result.Imported && Directory.Exists(paths.LegacyBackupDirectory))
@@ -177,9 +200,9 @@ public partial class App : Application
             }
 
             var store = new TrackerStore(database);
-            AppLog.Warn("app", $"The database couldn't be read ({cause.Message}); it was set aside as tracker.db.{stamp}.bad and rebuilt.");
+            AppLog.Warn("app", $"The database is corrupt ({cause.Message}); a copy was kept as {copy} and a new one was started.");
             MessageBox.Show(
-                $"CA Tracker's database couldn't be read ({cause.Message}), so it was set aside and a new one was started " +
+                $"CA Tracker's database is corrupt ({cause.Message}). A copy was kept as\n{copy}\nand a new one was started " +
                 "from your last saved projects. Items come back with the next sync.",
                 "CA Tracker",
                 MessageBoxButton.OK,
@@ -193,6 +216,9 @@ public partial class App : Application
             return null;
         }
     }
+
+    /// <summary>Thrown so startup stops (the person was already told) without the generic "could not start" message.</summary>
+    private sealed class DatabaseInUseException(Exception? inner) : Exception("The database is in use by another program.", inner);
 
     protected override void OnExit(ExitEventArgs e)
     {
