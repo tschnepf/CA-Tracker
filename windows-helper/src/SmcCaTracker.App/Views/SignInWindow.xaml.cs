@@ -115,6 +115,7 @@ public partial class SignInWindow : Window
         {
             if (ProviderSites.IsProcore(provider))
             {
+                await Browser.CoreWebView2.ExecuteScriptAsync(ProviderScripts.ProcoreCore);
                 await Browser.CoreWebView2.ExecuteScriptAsync(ProviderScripts.ProcoreSignInCheck);
             }
             else

@@ -209,3 +209,32 @@ test("a title with a colon isn't taken for a number, and submittal log links giv
     ["78", "", "Concrete: mix design"]
   ]);
 });
+
+// A page with the given inputs (by selector match) and buttons/links (by text).
+function page(options) {
+  const inputs = options.inputs || [];
+  const buttons = (options.buttons || []).map((text) => ({ innerText: text }));
+  return {
+    document: {
+      querySelector: (selector) => inputs.some((input) => selector.includes(input)) ? {} : null,
+      querySelectorAll: () => buttons
+    }
+  };
+}
+
+const answer = (status, body) => async () => ({ status, ok: status >= 200 && status < 300, json: async () => body });
+
+test("Procore saying who is signed in decides the sign-in check", async () => {
+  const signedIn = await ProcoreCore.signInState(page({}), answer(200, { id: 7, login: "pat@example.com", name: "Pat Engineer" }));
+  assert.deepEqual(signedIn, { state: "signedIn", user: { fullName: "Pat Engineer", company: null } });
+  assert.equal((await ProcoreCore.signInState(page({}), answer(401, {}))).state, "signedOut");
+});
+
+test("while Procore doesn't say, a sign-in form means signed out and anything else means not yet", async () => {
+  const failing = async () => { throw new Error("network"); };
+  assert.equal((await ProcoreCore.signInState(page({ inputs: ['type="password"'] }), failing)).state, "signedOut");
+  assert.equal((await ProcoreCore.signInState(page({ inputs: ['type="email"'] }), answer(500, {}))).state, "signedOut");
+  assert.equal((await ProcoreCore.signInState(page({ buttons: ["Log in"] }), answer(503, {}))).state, "signedOut");
+  assert.equal((await ProcoreCore.signInState(page({ buttons: ["Projects", "Login history"] }), failing)).state, "pending");
+  assert.equal((await ProcoreCore.signInState(page({ buttons: ["Sign in"] }), answer(200, { name: "Pat" }))).state, "signedIn");
+});

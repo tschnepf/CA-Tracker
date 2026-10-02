@@ -289,14 +289,32 @@ public static class ProviderScripts
         })();
         """;
 
-    /// <summary>Run after each Procore page loads in the Connect to Procore window.</summary>
+    /// <summary>
+    /// Run after each Procore page loads in the Connect to Procore window. For up to 20 s (like the Helix
+    /// check): "signedIn" with your name once Procore says who is signed in (the same read its own pages
+    /// make), "signedOut" when it says nobody is or a sign-in form shows (email or password box, a
+    /// "Log in"/"Sign in" button), "unknown" if it still can't tell.
+    /// </summary>
     public static string ProcoreSignInCheck => """
         (async () => {
           const post = (message) => window.chrome.webview.postMessage(message);
-          await new Promise((resolve) => setTimeout(resolve, 1500));
-          post({ type: document.querySelector('input[type="password"]') ? "signedOut" : "signedIn" });
+          const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+          if (typeof CaTrackerProcoreCore === "undefined") { post({ type: "unknown", shape: { path: location.pathname, library: "missing" } }); return; }
+          const deadline = Date.now() + 20000;
+          while (Date.now() < deadline) {
+            const result = await CaTrackerProcoreCore.signInState(window, window.fetch.bind(window));
+            if (result.state !== "pending") {
+              post(Object.assign({ type: result.state }, result.user ? { user: result.user } : {}));
+              return;
+            }
+            await sleep(1000);
+          }
+          post({ type: "unknown", shape: { path: location.pathname, title: document.title.slice(0, 80) } });
         })();
         """;
+
+    /// <summary>The Procore page library needed by <see cref="ProcoreSignInCheck"/>.</summary>
+    public static string ProcoreCore => Load("procore-core.js");
 
     /// <summary>
     /// Lists a Helix item's Details report and current attachments (names, upload dates and

@@ -454,6 +454,34 @@
     });
   }
 
+  // A sign-in form on the page: an email or password box, or a button that says only "Log in" or
+  // "Sign in" (maybe "… to Procore" / "… with Google"; not "Login history").
+  function showsSignInForm(doc) {
+    if (!doc || typeof doc.querySelector !== "function") return false;
+    if (doc.querySelector('input[type="password"], input[type="email"], input[name*="email" i], input[autocomplete="username"]')) {
+      return true;
+    }
+    const buttons = typeof doc.querySelectorAll === "function" ? Array.from(doc.querySelectorAll("button, a, input[type=submit]")) : [];
+    return buttons.some((element) => /^\s*(log|sign)\s*in(\s+(to|with)\b.*)?\s*$/i
+      .test(String(element.innerText || element.value || element.textContent || "")));
+  }
+
+  // One look at whether this Procore page is signed in: Procore says who is (the same read its own
+  // pages make), or a sign-in form shows. "pending" while neither is clear yet.
+  async function signInState(windowObject, fetchImpl) {
+    try {
+      const response = await fetchImpl("/rest/v1.0/me", { credentials: "include", headers: { Accept: "application/json" } });
+      if (response.status === 401) return { state: "signedOut" };
+      if (response.ok) {
+        const me = await response.json();
+        return { state: "signedIn", user: { fullName: (me && (me.name || me.login)) || null, company: null } };
+      }
+    } catch (_error) {
+      // Not answering yet: look at the page instead.
+    }
+    return { state: showsSignInForm(windowObject && windowObject.document) ? "signedOut" : "pending" };
+  }
+
   return Object.freeze({
     mergeDiscoveryCatalog,
     normalizeDiscoveryCatalog,
@@ -461,6 +489,8 @@
     queueIndex,
     safeProjectHomeUrl,
     safeSourceUrl,
+    showsSignInForm,
+    signInState,
     visibleQueueFromRows
   });
 });
