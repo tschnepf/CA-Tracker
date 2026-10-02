@@ -87,6 +87,8 @@ public sealed class ProcoreDiscovery
 /// </summary>
 public sealed class ProcoreSyncService : IDisposable
 {
+    private const string PageStopped = "The hidden Procore page stopped working.";
+
     private readonly AppPaths paths;
     private readonly TrackerStore store;
     private readonly SemaphoreSlim gate = new(1, 1);
@@ -96,6 +98,7 @@ public sealed class ProcoreSyncService : IDisposable
     private CoreWebView2? core;
     private TaskCompletionSource<bool>? navigated;
     private bool cancelRequested;
+    private bool pageDead;
     private bool disposed;
 
     /// <summary>Until when the hidden page must not be opened again (set when signing out).</summary>
@@ -407,6 +410,7 @@ public sealed class ProcoreSyncService : IDisposable
         var synced = new List<string>();
         var failed = new List<string>();
         var changed = 0;
+        var unansweredInARow = 0;
         for (var index = 0; index < targets.Count; index++)
         {
             if (stop?.Invoke() == true || cancelRequested)
@@ -444,12 +448,33 @@ public sealed class ProcoreSyncService : IDisposable
                 JsonElement? answer;
                 using (AppLog.Time("procore.page", $"{target.DisplayName} ({(full ? "full" : "changes")})", 20_000))
                 {
-                    answer = await RequestWithLibraryAsync(id => ProviderScripts.ProcoreReadProject(id, target.ProjectId, target.AccountId, since), TimeSpan.FromMinutes(10));
+                    answer = await RequestWithLibraryAsync(id => ProviderScripts.ProcoreReadProject(id, target.ProjectId, target.AccountId, since), TimeSpan.FromMinutes(3));
                 }
 
                 if (cancelRequested)
                 {
                     throw new OperationCanceledException();
+                }
+
+                if (TypeOf(answer) == "page-crashed")
+                {
+                    throw new PageCrashedException(PageStopped);
+                }
+
+                unansweredInARow = answer is null ? unansweredInARow + 1 : 0;
+                if (unansweredInARow >= 2)
+                {
+                    // Two projects in a row without an answer: the page is stuck, so the rest would only wait too.
+                    run.Error = "Procore did not answer in time.";
+                    failed.Add(target.ProjectId);
+                    CloseBrowser();
+                    return new ProviderSyncResult
+                    {
+                        SyncedProjectIds = synced,
+                        FailedProjectIds = failed,
+                        Changed = changed,
+                        Problem = "Procore stopped answering, so the sync was stopped. Try again in a few minutes."
+                    };
                 }
 
                 if (TypeOf(answer) == "procore-result")
@@ -534,6 +559,13 @@ public sealed class ProcoreSyncService : IDisposable
                 // No access to this one project (403/404), or it timed out: flag it and carry on with the rest.
                 failed.Add(target.ProjectId);
             }
+            catch (PageCrashedException error)
+            {
+                // The page is gone: end the run (the caller closes the page; the next sync opens a fresh one).
+                run.Error = error.Message;
+                failed.Add(target.ProjectId);
+                throw;
+            }
             catch (Exception error) when (error is not OperationCanceledException)
             {
                 // Something about this one project's items couldn't be used: flag it and carry on.
@@ -571,6 +603,12 @@ public sealed class ProcoreSyncService : IDisposable
 
     private async Task<PageProblem?> EnsurePageAsync(string siteHost)
     {
+        if (pageDead)
+        {
+            // The page stopped while nothing was reading: start a fresh one.
+            CloseBrowser();
+        }
+
         if (core is null)
         {
             // Signing out deletes the browser's files: wait until that is over rather than failing the read.
@@ -601,6 +639,7 @@ public sealed class ProcoreSyncService : IDisposable
                 core.Settings.AreDevToolsEnabled = false;
                 core.Settings.AreDefaultScriptDialogsEnabled = false;
                 core.WebMessageReceived += OnWebMessageReceived;
+                core.ProcessFailed += OnProcessFailed;
                 core.NavigationStarting += (_, _) =>
                 {
                     if (navigated is null || navigated.Task.IsCompleted)
@@ -646,6 +685,12 @@ public sealed class ProcoreSyncService : IDisposable
         {
             AppLog.Warn("procore", $"The background Procore page didn't finish opening in 60 s (at {core?.Source}).");
             return new PageProblem("Procore did not open in time. Check your internet connection.", false);
+        }
+
+        if (pageDead)
+        {
+            CloseBrowser();
+            return new PageProblem($"{PageStopped} Try again; it starts afresh.", false);
         }
 
         // Signed-out browsers end up on Procore's login site.
@@ -706,6 +751,11 @@ public sealed class ProcoreSyncService : IDisposable
             return null;
         }
 
+        if (pageDead)
+        {
+            return Crashed();
+        }
+
         var id = Guid.NewGuid().ToString("N");
         var completion = new TaskCompletionSource<JsonElement>(TaskCreationOptions.RunContinuationsAsynchronously);
         pending[id] = completion;
@@ -746,6 +796,33 @@ public sealed class ProcoreSyncService : IDisposable
         }
     }
 
+    private void OnProcessFailed(object? sender, CoreWebView2ProcessFailedEventArgs e)
+    {
+        // Only a browser or page process that exited leaves the page unusable; others recover by themselves.
+        if (e.ProcessFailedKind is not (CoreWebView2ProcessFailedKind.BrowserProcessExited or CoreWebView2ProcessFailedKind.RenderProcessExited))
+        {
+            AppLog.Info("procore", $"The hidden Procore page reported {e.ProcessFailedKind}.");
+            return;
+        }
+
+        AppLog.Warn("procore", $"The hidden Procore page stopped ({e.ProcessFailedKind}).");
+        pageDead = true;
+        // Whatever is waiting on the page gets "page-crashed" at once rather than waiting out its time.
+        var crashed = Crashed();
+        foreach (var completion in pending.Values.ToList())
+        {
+            completion.TrySetResult(crashed);
+        }
+
+        navigated?.TrySetResult(false);
+    }
+
+    private static JsonElement Crashed()
+    {
+        using var document = JsonDocument.Parse(JsonSerializer.Serialize(new { type = "page-crashed", message = PageStopped }));
+        return document.RootElement.Clone();
+    }
+
     /// <summary>Lets the page way be tried again (e.g. after connecting to Procore again).</summary>
     public void ResetPageReading() => PageReadingUnavailable = false;
 
@@ -779,6 +856,7 @@ public sealed class ProcoreSyncService : IDisposable
         core = null;
         host = null;
         navigated = null;
+        pageDead = false;
     }
 
     public void Dispose()

@@ -25,3 +25,12 @@ public static class PageWaits
         return await task;
     }
 }
+
+/// <summary>A hidden page's browser stopped, or stopped responding; the next sync starts it afresh.</summary>
+public sealed class PageCrashedException : Exception
+{
+    public PageCrashedException(string message)
+        : base(message)
+    {
+    }
+}

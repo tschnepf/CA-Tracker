@@ -55,6 +55,7 @@ public sealed class ProviderSyncResult
 public sealed class HelixSyncService : IDisposable
 {
     private const string SignInMessage = "Helix needs you to sign in: Settings → Connections → Sign in to Helix.";
+    private const string PageStopped = "The hidden Helix page stopped working.";
 
     private readonly AppPaths paths;
     private readonly TrackerStore store;
@@ -344,7 +345,7 @@ public sealed class HelixSyncService : IDisposable
             var type = TypeOf(answer);
             if (type == "page-crashed")
             {
-                throw new PageCrashedException();
+                throw new PageCrashedException(PageStopped);
             }
 
             if (type is "sync-missing" or "page-changed")
@@ -555,7 +556,7 @@ public sealed class HelixSyncService : IDisposable
                 var type = TypeOf(answer);
                 if (type == "page-crashed")
                 {
-                    throw new PageCrashedException();
+                    throw new PageCrashedException(PageStopped);
                 }
 
                 if (type is "sync-missing" or "page-changed")
@@ -764,14 +765,5 @@ public sealed class HelixSyncService : IDisposable
 
         disposed = true;
         CloseBrowser();
-    }
-
-    /// <summary>The hidden page's browser process stopped; the sync starts it afresh.</summary>
-    private sealed class PageCrashedException : Exception
-    {
-        public PageCrashedException()
-            : base("The hidden Helix page stopped working.")
-        {
-        }
     }
 }
