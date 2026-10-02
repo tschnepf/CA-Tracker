@@ -470,6 +470,29 @@ public class LegacyImportTests
         Assert.False(Directory.Exists(paths.SnapshotsDirectory));
         Assert.True(Directory.Exists(paths.LegacyBackupDirectory));
     }
+
+    [Fact]
+    public void AnUnreadableSettingsFileStopsTheImportAndIsLeftInPlace()
+    {
+        using var temp = new TempFolder();
+        var paths = new AppPaths(temp.Root);
+        File.WriteAllText(paths.SettingsFile, "{ \"projects\": [ { \"name\": \"Half written");
+
+        Assert.False(new SettingsStore(paths).TryLoad(out var defaults));
+        Assert.Empty(defaults.Projects);
+
+        using (var database = new SqlitePersistence(paths.DatabaseFile))
+        {
+            var result = LegacyImport.RunIfNeeded(paths, database);
+            Assert.False(result.Imported);
+            Assert.Contains("settings.json", result.Error);
+            // Not marked as done, so it runs again once the file is fixed.
+            Assert.Null(database.GetMeta(LegacyImport.MetaKey));
+        }
+
+        Assert.StartsWith("{ \"projects\"", File.ReadAllText(paths.SettingsFile));
+        Assert.False(Directory.Exists(paths.LegacyBackupDirectory));
+    }
 }
 
 public class StoreBehaviourTests

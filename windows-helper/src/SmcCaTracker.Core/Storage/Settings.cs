@@ -275,8 +275,27 @@ public sealed class SettingsStore
         this.paths = paths;
     }
 
+    /// <summary>Reads settings.json; the defaults when it is missing or can't be read (see <see cref="TryLoad"/>).</summary>
     public TrackerSettings Load()
     {
+        TryLoad(out var settings);
+        return settings;
+    }
+
+    /// <summary>
+    /// Reads settings.json. False when the file is there but isn't valid JSON: <paramref name="settings"/>
+    /// are then the defaults, the file is left as it is and a copy is kept as settings.json.*.bad, so a
+    /// caller that would save over it (the one-time import) can stop instead of saving no projects.
+    /// </summary>
+    public bool TryLoad(out TrackerSettings settings)
+    {
+        settings = LoadCore(out var readable);
+        return readable;
+    }
+
+    private TrackerSettings LoadCore(out bool readable)
+    {
+        readable = true;
         try
         {
             var json = LocalFiles.ReadAllTextWithRetry(paths.SettingsFile);
@@ -306,6 +325,7 @@ public sealed class SettingsStore
         catch (JsonException)
         {
             // Keep the unreadable file for inspection and start from defaults.
+            readable = false;
             try
             {
                 File.Copy(paths.SettingsFile, $"{paths.SettingsFile}.{DateTime.Now:yyyyMMddHHmmss}.bad", overwrite: true);
