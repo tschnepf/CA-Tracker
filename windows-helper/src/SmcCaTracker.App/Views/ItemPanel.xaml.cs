@@ -265,6 +265,8 @@ public partial class ItemPanel : UserControl
             AppLog.Warn("panel", $"The Helix page failed ({e.ProcessFailedKind}).");
             Dispatcher.InvokeAsync(() =>
             {
+                // Nothing to check on a dead page (the court seen before is kept for when it opens again).
+                watchTimer.Stop();
                 SetStatus("The Helix page stopped working. Select \"Open the item again\" to reload it.");
                 RetryButton.Visibility = Visibility.Visible;
             });
@@ -424,7 +426,7 @@ public partial class ItemPanel : UserControl
     private async Task CheckCourtAsync()
     {
         var now = DateTime.UtcNow;
-        if (!opened || Browser.CoreWebView2 is null
+        if (!opened || pageDead || Browser.CoreWebView2 is null
             || checkStartedAt is { } started && now - started < TimeSpan.FromSeconds(20)
             || updateStartedAt is { } updating && now - updating < TimeSpan.FromSeconds(90))
         {
@@ -649,8 +651,14 @@ public partial class ItemPanel : UserControl
 
     private async void Close_Click(object sender, RoutedEventArgs e)
     {
+        // The "didn't open within a minute" check for this item no longer applies: without this it
+        // reopened the item in the hidden panel a minute after it was opened.
+        openAttempt++;
         SetStatus("Checking the project once more for changes made here…");
         await FinishAsync();
+        // An item still opening may answer later: with no item set, that answer is ignored.
+        opening = false;
+        itemId = "";
         HeadingText.Text = "";
         SetStatus("");
         CloseRequested?.Invoke(this, EventArgs.Empty);
