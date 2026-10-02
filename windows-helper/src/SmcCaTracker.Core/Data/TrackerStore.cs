@@ -459,6 +459,25 @@ public sealed class TrackerStore : IDisposable
         Raise(new StoreChange { Kind = StoreChangeKind.Accounts });
     }
 
+    /// <summary>Forgets one site's sign-in (Sign out of Helix / Procore); the other site's stays.</summary>
+    public void ClearAccount(string provider)
+    {
+        List<ProviderAccount> updated;
+        lock (gate)
+        {
+            updated = accounts.Where(account => !string.Equals(account.Provider, provider, StringComparison.OrdinalIgnoreCase)).ToList();
+            if (updated.Count == accounts.Count)
+            {
+                return;
+            }
+
+            accounts = updated;
+            Enqueue(target => target.SaveAccounts(updated));
+        }
+
+        Raise(new StoreChange { Kind = StoreChangeKind.Accounts });
+    }
+
     public void ClearAccounts()
     {
         lock (gate)

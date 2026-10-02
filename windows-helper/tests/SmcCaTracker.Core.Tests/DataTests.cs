@@ -426,4 +426,25 @@ public class StoreBehaviourTests
         Assert.False(store.Account(Providers.Helix)!.NeedsSignIn);
         Assert.Equal("Someone", store.Account(Providers.Helix)!.UserName);
     }
+
+    [Fact]
+    public void SigningOutOfOneSiteKeepsTheOther()
+    {
+        var persistence = new InMemoryPersistence();
+        using var store = new TrackerStore(persistence);
+        store.RecordAccount(Providers.Helix, "Someone", "SMC", DateTimeOffset.Now);
+        store.RecordAccount(Providers.Procore, "Someone", "SMC", DateTimeOffset.Now);
+        var changes = new List<StoreChangeKind>();
+        store.Changed += (_, change) => changes.Add(change.Kind);
+
+        store.ClearAccount("HELIX");
+        Assert.Null(store.Account(Providers.Helix));
+        Assert.NotNull(store.Account(Providers.Procore));
+        Assert.Equal(new[] { StoreChangeKind.Accounts }, changes);
+
+        // Signing out of a site with no sign-in changes nothing.
+        store.ClearAccount(Providers.Helix);
+        Assert.Single(changes);
+        Assert.True(store.Flush(TimeSpan.FromSeconds(5)));
+    }
 }

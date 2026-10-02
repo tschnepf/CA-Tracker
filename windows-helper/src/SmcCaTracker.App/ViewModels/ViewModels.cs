@@ -663,6 +663,7 @@ public sealed class ConnectionViewModel : ObservableObject
             if (Set(ref isSignedIn, value))
             {
                 OnPropertyChanged(nameof(ConnectButtonText));
+                OnPropertyChanged(nameof(ConnectButtonToolTip));
                 OnPropertyChanged(nameof(CanSync));
                 RaiseState();
             }
@@ -790,7 +791,12 @@ public sealed class ConnectionViewModel : ObservableObject
         }
     }
 
-    public string ConnectButtonText => IsSignedIn ? "Sign in again" : $"Sign in to {Label}";
+    /// <summary>The card's main button: Sign in, or Sign out while signed in.</summary>
+    public string ConnectButtonText => IsSignedIn ? $"Sign out of {Label}…" : $"Sign in to {Label}";
+
+    public string ConnectButtonToolTip => IsSignedIn
+        ? $"Signs CA Tracker's browser out of {Label}; your saved username and password are kept"
+        : $"Opens {Label} in CA Tracker's browser to sign in once";
     public string SignInText => $"Sign in to {Label}";
 
     /// <summary>For the main window's banner: not signed in, but its sign-in expired or it still has projects to sync.</summary>

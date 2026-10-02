@@ -160,6 +160,9 @@ public partial class SignInWindow : Window
                     _ = FindProcoreProjectsAsync();
                     break;
                 case "unknown" when !SignedIn:
+                    // Signed in or not, the page didn't say who: log its shape (names only) to see why.
+                    AppLog.Warn(provider, $"Couldn't tell who is signed in to {Label}. Page shape: " +
+                        (root.TryGetProperty("shape", out var shape) ? shape.GetRawText() : "(none)"));
                     SetStatus($"If {Label} shows a sign-in page, sign in below. Otherwise you're connected and can close this window.");
                     break;
             }
@@ -197,6 +200,14 @@ public partial class SignInWindow : Window
         }
 
         var first = !SignedIn;
+        if (first && !ProviderSites.IsProcore(provider))
+        {
+            var listError = root.TryGetProperty("listError", out var errorElement) && errorElement.ValueKind == JsonValueKind.String
+                ? errorElement.GetString()
+                : null;
+            AppLog.Info(provider, $"Signed in to {Label}; {projectCount} assigned projects listed" + (listError is null ? "." : $" (listing failed: {listError})."));
+        }
+
         SignedIn = true;
         var who = string.IsNullOrWhiteSpace(name) ? "" : $" as {name}";
         var projects = ProviderSites.IsProcore(provider)

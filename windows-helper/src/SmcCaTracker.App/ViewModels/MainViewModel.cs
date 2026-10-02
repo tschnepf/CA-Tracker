@@ -282,6 +282,48 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         return null;
     }
 
+    /// <summary>
+    /// Signs the built-in browser out of one site (its card's Sign out button): its cookies and page
+    /// storage are cleared; the other site's sign-in and every saved username and password stay.
+    /// Returns the problem, or null when signed out.
+    /// </summary>
+    public async Task<string?> SignOutOfSiteAsync(string provider)
+    {
+        if (BrowserProfileInUse?.Invoke() is { } inUse)
+        {
+            return $"Close {inUse} first, then sign out.";
+        }
+
+        var label = Providers.Label(provider);
+        var helix = !ProviderSites.IsProcore(provider);
+        // No account to sync, then the pages using this site let go of it.
+        Store.ClearAccount(provider);
+        if (helix)
+        {
+            BrowserProfileReleasing?.Invoke();
+            helixSync.CloseBrowser(pause: TimeSpan.FromSeconds(30));
+        }
+        else
+        {
+            procoreSync.CloseBrowser(pause: TimeSpan.FromSeconds(30));
+            procoreSync.ResetPageReading();
+        }
+
+        var problem = await BrowserSignOut.ClearSiteAsync(Paths, provider);
+        if (helix)
+        {
+            helixSync.CloseBrowser(pause: TimeSpan.Zero);
+        }
+        else
+        {
+            procoreSync.CloseBrowser(pause: TimeSpan.Zero);
+        }
+
+        AppLog.Info(provider, problem is null ? $"Signed out of {label} (saved passwords kept)." : $"Signing out of {label} failed: {problem}");
+        RefreshAccounts();
+        return problem;
+    }
+
     /// <summary>Raised when a refresh should run in the app's built-in browser window.</summary>
     public event Action<RefreshRequest>? BrowserRefreshRequested;
 

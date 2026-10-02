@@ -600,6 +600,44 @@ test("listAssignedProjects reads the signed-in user's projects from any Helix pa
   await assert.rejects(() => Bridge.listAssignedProjects({ location: page.location }), /still loading/);
 });
 
+test("on Helix's home page (no directory entry) the signed-in contact says who you are", () => {
+  // Helix 5.1.90's home page: UserInfo.directoryInfo is null; loginObject.contact has the person.
+  const home = {
+    location: { href: "https://project.helixteam.com/", pathname: "/" },
+    UserInfo: { nonProjectSpecific: true, directoryInfo: null },
+    loginObject: {
+      contact: {
+        _id: "contact-current",
+        fullName: "Current User",
+        nameFirst: "Current",
+        nameLast: "User",
+        refCompany: { _id: "company-1", name: "Example Co" }
+      }
+    }
+  };
+  assert.deepEqual(Bridge.currentUser(home), {
+    id: "contact-current",
+    contactId: "contact-current",
+    fullName: "Current User",
+    companyId: "company-1",
+    company: "Example Co"
+  });
+
+  // No full name: first and last name.
+  delete home.loginObject.contact.fullName;
+  assert.equal(Bridge.currentUser(home).fullName, "Current User");
+
+  // A project page's directory entry still wins.
+  const projectPage = Object.assign({}, home, {
+    UserInfo: { directoryInfo: { _id: "dir-1", fullName: "Directory Name", refContact: { _id: "contact-current" } } }
+  });
+  assert.equal(Bridge.currentUser(projectPage).id, "dir-1");
+  assert.equal(Bridge.currentUser(projectPage).fullName, "Directory Name");
+
+  // Signed out: no contact either.
+  assert.equal(Bridge.currentUser({ location: home.location, UserInfo: { directoryInfo: null } }), null);
+});
+
 test("court start is when the item's court last changed to what it is now", () => {
   const { courtStartFromHistory } = Bridge._test;
   const step = (id, reviewed) => ({ refDirectoryAssigned: { _id: id, fullName: id }, dateReviewed: reviewed || null });

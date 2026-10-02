@@ -236,8 +236,9 @@ public static class ProviderScripts
           const post = (message) => window.chrome.webview.postMessage(message);
           const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
           const signInForm = () => Boolean(document.querySelector('input[type="password"]'));
-          const report = (user, projects) => post({
+          const report = (user, projects, listError) => post({
             type: "signedIn",
+            listError: listError || null,
             user: { fullName: user.fullName, company: user.company },
             catalog: {
               provider: "helix",
@@ -256,13 +257,34 @@ public static class ProviderScripts
                 report(user, (await HelixBridgeCore.listAssignedProjects(window)).projects);
                 return;
               } catch (error) {
-                if (!/not ready|still loading/i.test(String(error && error.message || ""))) { report(user, []); return; }
+                const message = String(error && error.message || error);
+                if (!/not ready|still loading/i.test(message)) { report(user, [], message); return; }
               }
             }
             await sleep(1000);
           }
           if (user) report(user, []);
-          else post({ type: signInForm() ? "signedOut" : "unknown" });
+          else if (signInForm()) post({ type: "signedOut" });
+          else {
+            // Couldn't find the signed-in user: report where Helix keeps things, as names and types only
+            // (no values), so the log shows what changed.
+            const shape = (value, depth) => {
+              if (value === null || value === undefined) return String(value);
+              if (typeof value !== "object") return typeof value;
+              if (depth <= 0) return Array.isArray(value) ? "array" : "object";
+              const out = {};
+              for (const key of Object.keys(value).slice(0, 40)) {
+                try { out[key] = shape(value[key], depth - 1); } catch (error) { out[key] = "?"; }
+              }
+              return out;
+            };
+            let globals = [];
+            try { globals = Object.keys(window).filter((key) => /user|login|contact|directory|identity|session|account/i.test(key)).slice(0, 40); } catch (error) { }
+            post({
+              type: "unknown",
+              shape: { path: location.pathname, UserInfo: shape(window.UserInfo, 2), loginObject: shape(window.loginObject, 2), globals }
+            });
+          }
         })();
         """;
 

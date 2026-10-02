@@ -453,12 +453,38 @@ public partial class SettingsPage : UserControl
         }
     }
 
-    private void Connect_Click(object sender, RoutedEventArgs e)
+    /// <summary>A site's main button: Sign in, or Sign out of that site while signed in.</summary>
+    private async void Connect_Click(object sender, RoutedEventArgs e)
     {
-        if (sender is FrameworkElement { DataContext: ConnectionViewModel connection })
+        if (sender is not FrameworkElement { DataContext: ConnectionViewModel connection })
+        {
+            return;
+        }
+
+        if (!connection.IsSignedIn || DataContext is not MainViewModel model)
         {
             ConnectRequested?.Invoke(connection.Provider);
+            return;
         }
+
+        var helix = !ProviderSites.IsProcore(connection.Provider);
+        var answer = MessageBox.Show(
+            Window.GetWindow(this),
+            $"Sign out of {connection.Label}? Syncing {connection.Label} stops until you sign in again; your saved username and password are kept and fill in when you do." +
+            (helix ? "\n\nThe item panel closes." : ""),
+            $"Sign out of {connection.Label}",
+            MessageBoxButton.YesNo,
+            MessageBoxImage.Question,
+            MessageBoxResult.No);
+        if (answer != MessageBoxResult.Yes)
+        {
+            return;
+        }
+
+        var problem = await model.SignOutOfSiteAsync(connection.Provider);
+        connection.SyncMessage = problem is null
+            ? $"Signed out of {connection.Label}. Your saved username and password are kept."
+            : $"Could not sign out: {problem}";
     }
 
     private void Sync_Click(object sender, RoutedEventArgs e)

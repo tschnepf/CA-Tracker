@@ -1,3 +1,4 @@
+using System.Text.Json;
 using System.Windows;
 using System.Windows.Interop;
 using Microsoft.Web.WebView2.Core;
@@ -28,13 +29,48 @@ public static class BrowserSignOut
     private const CoreWebView2BrowsingDataKinds Everything = CoreWebView2BrowsingDataKinds.AllProfile;
 
     /// <summary>Null when signed out; otherwise what went wrong.</summary>
-    public static async Task<string?> ClearSignInsAsync(AppPaths paths, bool forgetPasswords)
+    public static Task<string?> ClearSignInsAsync(AppPaths paths, bool forgetPasswords) =>
+        WithProfileAsync(paths, core => core.Profile.ClearBrowsingDataAsync(forgetPasswords ? Everything : SignInsOnly));
+
+    /// <summary>
+    /// Signs out of one site only: its cookies and its pages' storage (where Helix keeps its sign-in)
+    /// are cleared. The other site's sign-in and every saved username and password stay. Null when
+    /// signed out; otherwise what went wrong.
+    /// </summary>
+    public static Task<string?> ClearSiteAsync(AppPaths paths, string provider)
+    {
+        var site = ProviderSites.IsProcore(provider) ? "procore.com" : "helixteam.com";
+        var hosts = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { site, $"www.{site}" };
+        hosts.UnionWith(ProviderSites.IsProcore(provider)
+            ? new[] { "app.procore.com", "us02.procore.com", "login.procore.com" }
+            : new[] { "project.helixteam.com", "api.helixteam.com" });
+        return WithProfileAsync(paths, async core =>
+        {
+            foreach (var cookie in await core.CookieManager.GetCookiesAsync(null))
+            {
+                var host = cookie.Domain.TrimStart('.');
+                if (string.Equals(host, site, StringComparison.OrdinalIgnoreCase) || host.EndsWith($".{site}", StringComparison.OrdinalIgnoreCase))
+                {
+                    hosts.Add(host);
+                    core.CookieManager.DeleteCookie(cookie);
+                }
+            }
+
+            foreach (var host in hosts)
+            {
+                await core.CallDevToolsProtocolMethodAsync("Storage.clearDataForOrigin",
+                    JsonSerializer.Serialize(new { origin = $"https://{host}", storageTypes = "all" }));
+            }
+        });
+    }
+
+    /// <summary>Runs <paramref name="work"/> on a hidden page of the built-in browser's profile.</summary>
+    private static async Task<string?> WithProfileAsync(AppPaths paths, Func<CoreWebView2, Task> work)
     {
         Window? host = null;
         CoreWebView2Controller? controller = null;
         try
         {
-            // A hidden page on the same profile, only to reach the profile's data.
             var environment = await CoreWebView2Environment.CreateAsync(null, paths.BrowserDataDirectory);
             host = new Window
             {
@@ -47,7 +83,7 @@ public static class BrowserSignOut
             };
             controller = await environment.CreateCoreWebView2ControllerAsync(new WindowInteropHelper(host).EnsureHandle());
             controller.IsVisible = false;
-            await controller.CoreWebView2.Profile.ClearBrowsingDataAsync(forgetPasswords ? Everything : SignInsOnly);
+            await work(controller.CoreWebView2);
             return null;
         }
         catch (WebView2RuntimeNotFoundException)
