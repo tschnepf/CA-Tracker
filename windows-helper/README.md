@@ -388,18 +388,21 @@ it is closed. The company defaults to the one on your Helix login and can be cha
 - stop counting closed items
 - list statuses that always, or never, count as returned
 
-Procore's visible grid does not say who holds an item, so Procore items count as returned only
-when they are closed (or match a status list). Folders missing from a partial Procore view are
-shown as "Not in last Procore view", never as missing.
+Procore's background read gives each item's Ball In Court people with their company, so Procore items
+follow the same rule. When Procore is read through its list page instead, the Ball In Court column
+has only names, so those items count as returned only when they are closed (or match a status list).
+Folders missing from a partial Procore view are shown as "Not in last Procore view", never as missing.
 
 ## Results
 
+The **Folder status** column:
+
 | Result | Meaning |
 |---|---|
-| Ready to move to returned | Returned per the rule, but the folder is still active |
-| Back in court — folder is in returned | In `~Returned`, but the item is back with your company |
+| Ready to return | Returned per the rule, but the folder is still active |
+| Back in court — folder is in Returned | In `~Returned`, but the item is back with your company |
 | More than one folder / Folder matches several items | Needs a person to sort out; excluded from suggestions |
-| Not found in provider | A complete Helix scan has no item with this number |
+| Not in Helix/Procore | A complete Helix or Procore read has no item with this number |
 | No folder | The item exists but has no folder yet |
 | Open / Returned | Everything lines up |
 

@@ -278,6 +278,46 @@ public class ComparisonAndOperationTests
         return (temp, settings, mapping);
     }
 
+    [Fact]
+    public void ProcoreBallInCourtWithCompaniesDecidesLikeHelix()
+    {
+        using var temp = new TempFolder();
+        var ca = temp.Make("Job", "CA");
+        temp.Make("Job", "CA", "RFIs", "~Returned", "12 - Slab edge");
+        var settings = new TrackerSettings();
+        var project = new TrackerProject
+        {
+            Name = "Job",
+            CaFolder = ca,
+            Connection = new ProviderConnection { Provider = Providers.Procore, ProjectId = "34", AccountId = "12" }
+        };
+        settings.Projects.Add(project);
+
+        // Back with SMC (Procore names the person and their company): the folder in ~Returned is back in court.
+        var snapshot = Build.Snapshot(Build.Item("901", "12", holders: Build.Holder("smc", "current")));
+        snapshot.Provider = Providers.Procore;
+        var row = Assert.Single(ProjectComparer.Compare(snapshot, project, settings).For(ItemTypes.Rfi).Rows);
+        Assert.Equal(RowStatus.Reopened, row.Status);
+        Assert.Equal(CourtState.InCourt, row.Court);
+
+        // Only names (Procore's list page): whose company can't be told, so it stays unknown as before.
+        var namesOnly = Build.Snapshot(Build.Item("901", "12", holders: new SnapshotHolder { Name = "Sam", State = "current" }));
+        namesOnly.Provider = Providers.Procore;
+        Assert.Equal(CourtState.Unknown, Assert.Single(ProjectComparer.Compare(namesOnly, project, settings).For(ItemTypes.Rfi).Rows).Court);
+
+        // A list-page read that updated one item of a background read: that item isn't taken as out of court.
+        temp.Make("Job", "CA", "RFIs", "13 - Door hardware");
+        var mixed = Build.Snapshot(
+            Build.Item("901", "12", holders: Build.Holder("smc", "current")),
+            Build.Item("902", "13", holders: new SnapshotHolder { Name = "Sam", State = "current" }));
+        mixed.Provider = Providers.Procore;
+        var rows = ProjectComparer.Compare(mixed, project, settings).For(ItemTypes.Rfi).Rows;
+        var listed = Assert.Single(rows, candidate => candidate.Item?.Number == "13");
+        Assert.Equal(CourtState.Unknown, listed.Court);
+        Assert.Equal(RowStatus.Open, listed.Status);
+        Assert.Equal(CourtState.InCourt, Assert.Single(rows, candidate => candidate.Item?.Number == "12").Court);
+    }
+
     private static ProviderSnapshot Snapshot() => Build.Snapshot(
         Build.Item("1", "RFI-001", holders: new[] { Build.Holder("smc", "current") }),
         Build.Item("2", "RFI-002", holders: new[] { Build.Holder("arch", "current") }),

@@ -119,7 +119,7 @@ public static class ProjectComparer
     {
         var layout = project.EffectiveFolders(settings.Folders);
         var company = CompanyIdentity.For(project, snapshot);
-        var holdersReported = snapshot is not null && string.Equals(snapshot.Provider, Providers.Helix, StringComparison.OrdinalIgnoreCase);
+        var holdersReported = HoldersReported(snapshot);
         var types = new Dictionary<string, TypeComparison>(StringComparer.OrdinalIgnoreCase);
         foreach (var itemType in ItemTypes.All)
         {
@@ -204,7 +204,7 @@ public static class ProjectComparer
             }
 
             var item = match.Item;
-            var court = CourtEvaluator.Evaluate(item, company, holdersReported);
+            var court = CourtEvaluator.Evaluate(item, company, holdersReported && HoldersKnown(snapshot, item));
             var returned = CourtEvaluator.IsReturned(item, court, rule);
             RowStatus rowStatus;
             if (foldersByItem[item.ItemId].Count > 1)
@@ -237,7 +237,7 @@ public static class ProjectComparer
 
         foreach (var item in items.Where(item => !foldersByItem.ContainsKey(item.ItemId)))
         {
-            var court = CourtEvaluator.Evaluate(item, company, holdersReported);
+            var court = CourtEvaluator.Evaluate(item, company, holdersReported && HoldersKnown(snapshot, item));
             rows.Add(new ComparisonRow
             {
                 ItemType = itemType,
@@ -282,6 +282,27 @@ public static class ProjectComparer
             Rows = rows
         };
     }
+
+    /// <summary>
+    /// Whether the snapshot says who holds its items in a way the company can be told from: always for
+    /// Helix; for Procore when its Ball In Court people come with their company (the REST read), not
+    /// when they are only names (Procore's list page), where whose court stays unknown.
+    /// </summary>
+    public static bool HoldersReported(ProviderSnapshot? snapshot) =>
+        snapshot is not null && (IsHelix(snapshot) || snapshot.Items.Any(item => item.Holders.Any(HasCompany)));
+
+    /// <summary>
+    /// A list-page read can update single items of a Procore snapshot that otherwise came from the
+    /// background read; an item whose people are only names still can't say whose court it is in.
+    /// </summary>
+    private static bool HoldersKnown(ProviderSnapshot? snapshot, SnapshotItem item) =>
+        IsHelix(snapshot) || item.Holders.Count == 0 || item.Holders.Any(HasCompany);
+
+    private static bool IsHelix(ProviderSnapshot? snapshot) =>
+        string.Equals(snapshot?.Provider, Providers.Helix, StringComparison.OrdinalIgnoreCase);
+
+    private static bool HasCompany(SnapshotHolder holder) =>
+        !string.IsNullOrWhiteSpace(holder.CompanyId) || !string.IsNullOrWhiteSpace(holder.Company);
 
     /// <summary>
     /// Procore keeps each revision of a submittal as its own item with the same number. The folder is
