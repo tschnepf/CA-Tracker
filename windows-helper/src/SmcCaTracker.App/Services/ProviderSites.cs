@@ -24,4 +24,14 @@ public static class ProviderSites
 
     public static bool LooksLikeSignIn(Uri uri) =>
         Regex.IsMatch(uri.AbsolutePath, "log-?in|sign-?in|auth|sso|account", RegexOptions.IgnoreCase);
+
+    /// <summary>
+    /// Whether loading <paramref name="destination"/> in the item panel closes the Helix item open there:
+    /// Helix sent you to sign in (or off Helix), or reloaded the item's list, which closes its viewer.
+    /// Moving to another Helix page yourself doesn't count.
+    /// </summary>
+    public static bool ClosesHelixItem(Uri destination, Uri listUrl) =>
+        !IsProviderHost(Providers.Helix, destination)
+        || LooksLikeSignIn(destination)
+        || string.Equals(destination.AbsolutePath.TrimEnd('/'), listUrl.AbsolutePath.TrimEnd('/'), StringComparison.OrdinalIgnoreCase);
 }

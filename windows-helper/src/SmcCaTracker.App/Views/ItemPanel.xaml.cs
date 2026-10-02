@@ -22,6 +22,8 @@ namespace SmcCaTracker.App.Views;
 /// it is in (sent on, answered, closed), CA Tracker re-reads the project's items and saves them, so the
 /// list updates without a refresh. Closing the item (or opening another) does the same once more, to
 /// catch changes made to other items here. The browser stays open between items, so the next opens fast.
+/// If Helix sends you to sign in (or reloads the list) while an item is open, the item opens again once
+/// the list is back, and a change made meanwhile is still noticed.
 /// </summary>
 public partial class ItemPanel : UserControl
 {
@@ -38,6 +40,7 @@ public partial class ItemPanel : UserControl
     private string itemType = ItemTypes.Rfi;
     private string projectId = "";
     private bool started;
+    private Task? startTask;
     private bool opening;
     private bool opened;
 
@@ -46,6 +49,9 @@ public partial class ItemPanel : UserControl
     private DateTime? checkStartedAt;
     private DateTime? updateStartedAt;
     private TaskCompletionSource? updateDone;
+
+    // An update was cut off by the page loading something else; it runs again once the item is open.
+    private bool updatePending;
 
     public ItemPanel()
     {
@@ -63,6 +69,8 @@ public partial class ItemPanel : UserControl
     /// <summary>Shows an item: finishes with the one before (checking it once more), then opens this one.</summary>
     public async Task OpenAsync(AppPaths appPaths, TrackerStore trackerStore, string id, string type, string helixProjectId, string heading)
     {
+        var attempt = ++openAttempt;
+        RetryButton.Visibility = Visibility.Collapsed;
         if (opened)
         {
             SetStatus("Checking the last item's project for changes made here…");
@@ -71,6 +79,12 @@ public partial class ItemPanel : UserControl
         if (!pageDead)
         {
             await FinishAsync(TimeSpan.FromSeconds(20));
+        }
+
+        if (attempt != openAttempt)
+        {
+            // Another item was chosen (or the panel shut down) while the last one was checked.
+            return;
         }
 
         paths = appPaths;
@@ -82,18 +96,20 @@ public partial class ItemPanel : UserControl
         opening = false;
         courtBaseline = null;
         checkStartedAt = null;
+        // An update of the last item still running would keep this one from being checked.
+        updateStartedAt = null;
+        updateDone?.TrySetResult();
+        updatePending = false;
         HeadingText.Text = heading;
-        RetryButton.Visibility = Visibility.Collapsed;
         SetStatus("Opening Helix…");
         AppLog.Info("panel", $"Opening {type} {id} in project {helixProjectId}.");
-        var attempt = ++openAttempt;
         if (pageDead)
         {
             await ResetBrowserAsync("the page had stopped responding");
         }
         else if (!started)
         {
-            await StartAsync();
+            await EnsureStartedAsync();
         }
         else
         {
@@ -168,39 +184,66 @@ public partial class ItemPanel : UserControl
         }
 
         started = false;
+        startTask = null;
         pageDead = false;
         SetStatus("Opening Helix again…");
-        await StartAsync();
+        await EnsureStartedAsync();
     }
 
     private string ListUrl =>
         $"https://{ProviderLinks.HelixHost}/Projects/{Uri.EscapeDataString(projectId)}/{(itemType == ItemTypes.Submittal ? "Submittals" : "RFI")}";
 
+    /// <summary>
+    /// Starts the page once: opening another item while it starts waits for the same start, so its
+    /// handlers aren't added twice. Starts again if the last start failed.
+    /// </summary>
+    private Task EnsureStartedAsync()
+    {
+        if (startTask is null || startTask.IsCompleted && !started)
+        {
+            startTask = StartAsync();
+        }
+
+        return startTask;
+    }
+
     private async Task StartAsync()
     {
+        var browser = Browser;
         try
         {
             Directory.CreateDirectory(paths!.BrowserDataDirectory);
             var environment = await CoreWebView2Environment.CreateAsync(null, paths.BrowserDataDirectory);
-            await Browser.EnsureCoreWebView2Async(environment);
+            await browser.EnsureCoreWebView2Async(environment);
         }
         catch (Exception error)
         {
+            if (browser != Browser)
+            {
+                return;
+            }
+
             SetStatus(error is WebView2RuntimeNotFoundException
                 ? "The Microsoft Edge WebView2 Runtime is not installed. Install it from Microsoft (search \"WebView2 Runtime\") and try again."
                 : $"The built-in browser could not start: {error.Message}");
             return;
         }
 
+        if (browser != Browser)
+        {
+            // The page was replaced (or the panel shut down) while it started.
+            return;
+        }
+
         started = true;
-        var core = Browser.CoreWebView2;
+        var core = browser.CoreWebView2;
         core.Settings.IsStatusBarEnabled = false;
         // Saves your Helix/Procore password in this browser's profile, encrypted for your Windows user
         // (Windows DPAPI), and fills it in on their sign-in pages. Signing out (Settings →
         // Connections) keeps it.
         core.Settings.IsPasswordAutosaveEnabled = true;
         core.Settings.IsGeneralAutofillEnabled = true;
-        core.NavigationStarting += (_, _) => opening = false;
+        core.NavigationStarting += OnNavigationStarting;
         core.NavigationCompleted += OnNavigationCompleted;
         core.WebMessageReceived += OnWebMessageReceived;
         core.ProcessFailed += (_, e) =>
@@ -216,6 +259,29 @@ public partial class ItemPanel : UserControl
             });
         };
         core.Navigate(ListUrl);
+    }
+
+    private void OnNavigationStarting(object? sender, CoreWebView2NavigationStartingEventArgs e)
+    {
+        opening = false;
+        if (updateStartedAt is not null)
+        {
+            // The update runs in the page that is going away, so it won't answer.
+            updateStartedAt = null;
+            updateDone?.TrySetResult();
+            updatePending = true;
+        }
+
+        if (opened && Uri.TryCreate(e.Uri, UriKind.Absolute, out var destination)
+            && ProviderSites.ClosesHelixItem(destination, new Uri(ListUrl)))
+        {
+            // Opened again when the list is back (after signing in). The court seen before is kept, so a
+            // change made meanwhile is still noticed.
+            AppLog.Info("panel", $"{itemType} {itemId} closed as Helix loaded {destination.GetLeftPart(UriPartial.Path)}; it opens again when the list is back.");
+            opened = false;
+            watchTimer.Stop();
+            checkStartedAt = null;
+        }
     }
 
     private async void OnNavigationCompleted(object? sender, CoreWebView2NavigationCompletedEventArgs e)
@@ -351,6 +417,13 @@ public partial class ItemPanel : UserControl
             || checkStartedAt is { } started && now - started < TimeSpan.FromSeconds(20)
             || updateStartedAt is { } updating && now - updating < TimeSpan.FromSeconds(90))
         {
+            return;
+        }
+
+        if (updatePending)
+        {
+            updatePending = false;
+            await StartUpdateAsync(quiet: false);
             return;
         }
 
@@ -540,10 +613,12 @@ public partial class ItemPanel : UserControl
         opened = false;
         opening = false;
         started = false;
+        startTask = null;
         pageDead = false;
         courtBaseline = null;
         checkStartedAt = null;
         updateStartedAt = null;
+        updatePending = false;
         updateDone?.TrySetResult();
         var old = Browser;
         Browser = new WebView2();
