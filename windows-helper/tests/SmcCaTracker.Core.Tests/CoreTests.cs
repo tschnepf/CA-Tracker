@@ -123,6 +123,35 @@ public class MatcherTests
     }
 
     [Fact]
+    public void ARevisedItemMatchesTheFolderNamedByItsNumber()
+    {
+        var revised = Build.Item("b", "P1");
+        revised.Revision = "2";
+        var match = Assert.Single(FolderMatcher.Match(new[] { Folder("P1 - Title") }, new[] { revised }));
+        Assert.Equal("b", match.Item!.ItemId);
+        Assert.Equal(MatchKind.Exact, match.Kind);
+    }
+
+    [Fact]
+    public void TheNewestRevisionDecidesAboutTheFolder()
+    {
+        // Procore keeps each revision as its own submittal with the same number. Rev 0 is closed (it would
+        // say "ready to return"); rev 2 is back with SMC, so the folder is open — and rev 0 isn't listed.
+        var old = Build.Item("a", "P1", ItemTypes.Submittal, closed: true);
+        old.Revision = "0";
+        var current = Build.Item("b", "P1", ItemTypes.Submittal, holders: Build.Holder("smc", "current"));
+        current.Revision = "2";
+        var scan = new TypeFolderScan { ItemType = ItemTypes.Submittal, TypeFolderExists = true, Folders = new[] { Folder("P1 - Title") } };
+
+        var result = ProjectComparer.CompareType(ItemTypes.Submittal, scan, Build.Snapshot(old, current),
+            new CompanyIdentity("smc", "SMC"), holdersReported: true, new ReturnedRule());
+
+        var row = Assert.Single(result.Rows);
+        Assert.Equal("b", row.Item!.ItemId);
+        Assert.Equal(RowStatus.Open, row.Status);
+    }
+
+    [Fact]
     public void ReportsAmbiguousAndUnmatchedFolders()
     {
         var items = new[] { Build.Item("a", "12"), Build.Item("b", "012") };

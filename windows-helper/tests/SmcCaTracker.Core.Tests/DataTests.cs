@@ -108,7 +108,9 @@ public class DatabaseTests
         using (var database = new SqlitePersistence(file))
         {
             database.SaveSettings(SampleSettings());
-            database.SaveSnapshot(SampleSnapshot(Item("a", "RFI-001"), Item("b", "RFI-002", "Other Person")));
+            var revised = Item("b", "RFI-002", "Other Person");
+            revised.Revision = "2";
+            database.SaveSnapshot(SampleSnapshot(Item("a", "RFI-001"), revised));
             database.SaveFolderScan("project-1", scan);
             database.SaveCatalog(new[] { new CatalogProject { Provider = Providers.Helix, ProjectId = "helix-2", Name = "Other job", SeenAt = DateTimeOffset.Now } });
             database.SaveAccounts(new[] { new ProviderAccount { Provider = Providers.Helix, UserName = "Current User", SignedInAt = DateTimeOffset.Now } });
@@ -141,6 +143,8 @@ public class DatabaseTests
             Assert.Equal(new DateTimeOffset(2026, 10, 3, 0, 0, 0, TimeSpan.Zero), a.DueAt);
             Assert.Equal("Current User", Assert.Single(a.Holders).Name);
             Assert.Equal(new DateTimeOffset(2026, 9, 20, 0, 0, 0, TimeSpan.Zero), a.Holders[0].Since);
+            Assert.Null(a.Revision);
+            Assert.Equal("2", snapshot.Items.Single(item => item.ItemId == "b").Revision);
 
             var saved = Assert.Single(state.FolderScans);
             Assert.Equal("project-1", saved.ProjectId);
@@ -158,6 +162,37 @@ public class DatabaseTests
 
         Assert.Equal(1, ChangeCount(file, "project", "insert"));
         Assert.Equal(2, ChangeCount(file, "item", "insert"));
+    }
+
+    [Fact]
+    public void ADatabaseFromBeforeRevisionsGetsTheColumn()
+    {
+        using var temp = new TempFolder();
+        var file = Path.Combine(temp.Root, "tracker.db");
+        using (new SqlitePersistence(file))
+        {
+        }
+
+        // Make it look like a version 1 database: no revision column.
+        using (var connection = new SqliteConnection($"Data Source={file};Pooling=False"))
+        {
+            connection.Open();
+            using var command = connection.CreateCommand();
+            command.CommandText = "ALTER TABLE items DROP COLUMN revision; UPDATE schema_info SET meta_value = '1' WHERE meta_key = 'schema_version';";
+            command.ExecuteNonQuery();
+        }
+
+        var revised = Item("a", "S-1");
+        revised.Revision = "3";
+        using (var database = new SqlitePersistence(file))
+        {
+            database.SaveSnapshot(SampleSnapshot(revised));
+        }
+
+        using (var database = new SqlitePersistence(file))
+        {
+            Assert.Equal("3", Assert.Single(Assert.Single(database.Load().Snapshots).Items).Revision);
+        }
     }
 
     [Fact]

@@ -164,10 +164,9 @@ public static class ProjectComparer
         var coverage = snapshot?.CoverageFor(itemType);
         var complete = hasData && (coverage?.Complete ?? snapshot!.Complete);
         var items = hasData
-            ? snapshot!.Items
+            ? NewestRevisions(snapshot!.Items
                 .Where(item => string.Equals(item.ItemType, itemType, StringComparison.OrdinalIgnoreCase))
-                .Where(item => includeItem is null || includeItem(item))
-                .ToList()
+                .Where(item => includeItem is null || includeItem(item)))
             : new List<SnapshotItem>();
 
         var matches = FolderMatcher.Match(scan.Folders, items);
@@ -282,5 +281,28 @@ public static class ProjectComparer
             ScannedAt = coverage?.ScannedAt ?? snapshot?.ScannedAt,
             Rows = rows
         };
+    }
+
+    /// <summary>
+    /// Procore keeps each revision of a submittal as its own item with the same number. The folder is
+    /// judged by the newest revision, and older ones aren't listed separately. Items with the same
+    /// number but no revisions (real duplicates) are all kept, so the folder still shows as ambiguous.
+    /// </summary>
+    private static List<SnapshotItem> NewestRevisions(IEnumerable<SnapshotItem> items)
+    {
+        var kept = new List<SnapshotItem>();
+        foreach (var group in items.GroupBy(item => ItemNumber.ExactKey(item.Number), StringComparer.Ordinal))
+        {
+            if (group.Key.Length == 0 || group.Count() == 1 || group.All(item => item.Revision is null))
+            {
+                kept.AddRange(group);
+                continue;
+            }
+
+            kept.Add(group.Aggregate((newest, item) =>
+                ItemNumber.CompareNatural(item.Revision ?? "", newest.Revision ?? "") > 0 ? item : newest));
+        }
+
+        return kept;
     }
 }

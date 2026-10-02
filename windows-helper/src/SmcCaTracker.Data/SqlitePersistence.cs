@@ -400,7 +400,7 @@ public sealed class SqlitePersistence : ITrackerPersistence
         var items = new Dictionary<string, SnapshotItem>(StringComparer.Ordinal);
         using (var command = Command(
                    "SELECT provider, project_id, item_type, item_id, number, title, status, status_rank, closed, responsible, contract, " +
-                   "attachment_count, created_at, modified_at, due_at, source_url FROM items;",
+                   "attachment_count, created_at, modified_at, due_at, source_url, revision FROM items;",
                    null))
         using (var reader = command.ExecuteReader())
         {
@@ -427,7 +427,8 @@ public sealed class SqlitePersistence : ITrackerPersistence
                     CreatedAt = ParseDate(Text(reader, 12)),
                     ModifiedAt = ParseDate(Text(reader, 13)),
                     DueAt = ParseDate(Text(reader, 14)),
-                    SourceUrl = Text(reader, 15)
+                    SourceUrl = Text(reader, 15),
+                    Revision = Text(reader, 16)
                 };
                 snapshot.Items.Add(item);
                 items[$"{snapshot.Provider}|{snapshot.ProjectId}|{item.ItemType}|{item.ItemId}"] = item;
@@ -768,17 +769,18 @@ public sealed class SqlitePersistence : ITrackerPersistence
 
         using var upsertItem = Command(
             "INSERT INTO items (provider, project_id, item_type, item_id, number, title, status, status_rank, closed, responsible, contract, " +
-            "attachment_count, created_at, modified_at, due_at, source_url, content_hash, first_seen_at, updated_at) VALUES ($provider, $project, " +
-            "$type, $id, $number, $title, $status, $rank, $closed, $responsible, $contract, $attachments, $created, $modified, $due, $url, $hash, " +
+            "attachment_count, created_at, modified_at, due_at, source_url, revision, content_hash, first_seen_at, updated_at) VALUES ($provider, $project, " +
+            "$type, $id, $number, $title, $status, $rank, $closed, $responsible, $contract, $attachments, $created, $modified, $due, $url, $revision, $hash, " +
             "$now, $now) ON CONFLICT (provider, project_id, item_type, item_id) DO UPDATE SET number = excluded.number, title = excluded.title, " +
             "status = excluded.status, status_rank = excluded.status_rank, closed = excluded.closed, responsible = excluded.responsible, " +
             "contract = excluded.contract, attachment_count = excluded.attachment_count, created_at = excluded.created_at, " +
-            "modified_at = excluded.modified_at, due_at = excluded.due_at, source_url = excluded.source_url, content_hash = excluded.content_hash, " +
+            "modified_at = excluded.modified_at, due_at = excluded.due_at, source_url = excluded.source_url, revision = excluded.revision, " +
+            "content_hash = excluded.content_hash, " +
             "updated_at = excluded.updated_at;",
             transaction,
             ("$provider", null), ("$project", null), ("$type", null), ("$id", null), ("$number", null), ("$title", null), ("$status", null),
             ("$rank", null), ("$closed", null), ("$responsible", null), ("$contract", null), ("$attachments", null), ("$created", null),
-            ("$modified", null), ("$due", null), ("$url", null), ("$hash", null), ("$now", null));
+            ("$modified", null), ("$due", null), ("$url", null), ("$revision", null), ("$hash", null), ("$now", null));
         using var deleteHolders = Command(
             "DELETE FROM item_holders WHERE provider = $provider AND project_id = $project AND item_type = $type AND item_id = $id;",
             transaction, ("$provider", null), ("$project", null), ("$type", null), ("$id", null));
@@ -809,7 +811,7 @@ public sealed class SqlitePersistence : ITrackerPersistence
                 ("$number", item.Number ?? ""), ("$title", item.Title ?? ""), ("$status", item.Status ?? ""), ("$rank", item.StatusRank),
                 ("$closed", Flag(item.Closed)), ("$responsible", item.Responsible ?? ""), ("$contract", item.Contract ?? ""),
                 ("$attachments", item.AttachmentCount), ("$created", Iso(item.CreatedAt)), ("$modified", Iso(item.ModifiedAt)),
-                ("$due", Iso(item.DueAt)), ("$url", item.SourceUrl), ("$hash", hash), ("$now", now));
+                ("$due", Iso(item.DueAt)), ("$url", item.SourceUrl), ("$revision", item.Revision), ("$hash", hash), ("$now", now));
             upsertItem.ExecuteNonQuery();
 
             Set(deleteHolders, ("$provider", snapshot.Provider), ("$project", snapshot.ProjectId), ("$type", item.ItemType), ("$id", item.ItemId));

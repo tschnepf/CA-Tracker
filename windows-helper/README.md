@@ -334,6 +334,9 @@ If that doesn't match exactly, a looser match ignores `RFI`/`SUB` prefixes, punc
 zeros, but only when exactly one item fits. Only folder names and dates are read, so Egnyte
 online-only files are not downloaded.
 
+Procore keeps each revision of a submittal as its own item with the same number. The folder is judged
+by the newest revision (shown as `03 30 00-1 Rev 2`), and older revisions aren't listed separately.
+
 ## Base Build and Tenant Fit Out
 
 A job split into Base Build (BB) and Tenant Fit Out (TFO) is set up as two projects, for example

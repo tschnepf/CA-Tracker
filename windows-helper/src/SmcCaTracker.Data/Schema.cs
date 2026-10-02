@@ -7,7 +7,7 @@ namespace SmcCaTracker.Data;
 /// </summary>
 internal static class Schema
 {
-    public const int CurrentVersion = 1;
+    public const int CurrentVersion = 2;
 
     private static readonly string[][] Versions =
     {
@@ -214,6 +214,12 @@ internal static class Schema
             );
             """,
             "CREATE INDEX IF NOT EXISTS change_log_unsynced ON change_log (synced_at, seq);"
+        },
+
+        // Version 2: Procore submittal revisions, kept apart from the number.
+        new[]
+        {
+            "ALTER TABLE items ADD COLUMN revision TEXT NULL;"
         }
     };
 

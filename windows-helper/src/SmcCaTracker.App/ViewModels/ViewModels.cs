@@ -500,7 +500,10 @@ public sealed class RowViewModel : ObservableObject
     public bool CanSelect => Row.Folder is not null || Row.Item is not null;
     public RowStatus Status => Row.Status;
     public string StatusText => ComparisonRow.StatusLabel(Row.Status);
-    public string Number => Row.Item?.Number ?? "—";
+    /// <summary>The item's number, with its revision past the first ("03 30 00-1 Rev 2").</summary>
+    public string Number => Row.Item is not { } item ? "—"
+        : string.IsNullOrWhiteSpace(item.Revision) || item.Revision == "0" ? item.Number
+        : $"{item.Number} Rev {item.Revision}";
     public string Title => Row.Item?.Title ?? "";
     public string ProviderStatus => Row.Item?.Status ?? "";
     public string CourtText { get; }

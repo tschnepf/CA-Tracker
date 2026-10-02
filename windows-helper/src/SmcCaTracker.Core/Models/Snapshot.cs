@@ -45,6 +45,13 @@ public sealed class SnapshotItem
     public string ItemType { get; set; } = "";
     public string ItemId { get; set; } = "";
     public string Number { get; set; } = "";
+
+    /// <summary>
+    /// Procore submittal revision ("0", "2"), kept apart from the number so the number still matches
+    /// the CA folder. Each revision is its own item with the same number; the newest decides.
+    /// </summary>
+    public string? Revision { get; set; }
+
     public string Title { get; set; } = "";
     public string Status { get; set; } = "";
     public int? StatusRank { get; set; }
