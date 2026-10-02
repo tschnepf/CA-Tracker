@@ -35,8 +35,8 @@ No Chrome extension or browser add-in is involved.
 
 ## The database
 
-`tracker.db` is a SQLite database with plain, portable tables (text ids, ISO dates, no SQLite-only
-types), the same shape as the company server's PostgreSQL tables:
+`tracker.db` is a SQLite database with plain, portable tables, following the same conventions as the
+company server's PostgreSQL tables (text ids, ISO dates, no SQLite-only types):
 
 | Table | What |
 |---|---|
@@ -247,7 +247,8 @@ saved file is added to `journal.jsonl`. Procore downloads aren't supported yet.
   passwords**; and the optional **Company server**: its address (unless the company settings set it) and your
   access token. Once connected, CA Tracker shares every couple of minutes while it is open: what you
   read from Helix and Procore and your projects' discipline choices go to everyone tracking the same
-  projects, and theirs come to you. Your CA folder locations and project names stay on your PC.
+  projects, and theirs come to you. Your projects' names and CA folder locations are sent too (the
+  company database lists them), but someone else's never replace yours.
 
 **← Back to projects** (or **← Projects**) returns to the project list.
 
@@ -345,7 +346,7 @@ A job split into Base Build (BB) and Tenant Fit Out (TFO) is set up as two proje
 Build / Tenant Fit Out**, choose the part, then pick how the two are separated:
 
 - **Separate Helix/Procore projects or separate CA folders:** connect or choose each project's own.
-  Nothing needs ticking.
+  No box needs to be checked.
 - **BB and TFO subfolders** (e.g. `CA\BB\RFIs`): use **Browse** under Folder names.
 - **One Helix/Procore project for both:** check *only include items whose title, number or contract
   says this part*.

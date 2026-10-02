@@ -212,7 +212,7 @@ public partial class SignInWindow : Window
         SignedIn = true;
         var who = string.IsNullOrWhiteSpace(name) ? "" : $" as {name}";
         var projects = ProviderSites.IsProcore(provider)
-            ? "CA Tracker is now finding your projects in every Procore company and syncing them (progress shows in Sync…)."
+            ? "CA Tracker is now finding your projects in every Procore company and syncing them (progress shows above the project list)."
             : projectCount > 0
                 ? $"Your {projectCount} Helix projects can now be linked to CA folders (Link… in the main window)."
                 : "Sync will use this sign-in.";
