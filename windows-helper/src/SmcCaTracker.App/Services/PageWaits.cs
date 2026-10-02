@@ -1,0 +1,27 @@
+namespace SmcCaTracker.App.Services;
+
+/// <summary>
+/// Time limits for the hidden Helix and Procore pages, so a browser that gets stuck ends the sync with
+/// a reason instead of hanging it.
+/// </summary>
+public static class PageWaits
+{
+    /// <summary>How long the browser may take to start, and to open its page.</summary>
+    public static readonly TimeSpan Start = TimeSpan.FromSeconds(45);
+
+    /// <summary>
+    /// Waits for <paramref name="task"/>. Past <paramref name="timeout"/> a <see cref="TimeoutException"/>
+    /// names the <paramref name="step"/> that got stuck; stopping (<paramref name="stop"/>) ends the wait at once.
+    /// </summary>
+    public static async Task<T> WithTimeout<T>(Task<T> task, TimeSpan timeout, string step, CancellationToken stop = default)
+    {
+        var finished = await Task.WhenAny(task, Task.Delay(timeout, stop));
+        stop.ThrowIfCancellationRequested();
+        if (finished != task)
+        {
+            throw new TimeoutException($"The built-in browser got stuck {step}.");
+        }
+
+        return await task;
+    }
+}

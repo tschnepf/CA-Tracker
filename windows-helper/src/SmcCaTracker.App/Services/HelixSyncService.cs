@@ -394,7 +394,7 @@ public sealed class HelixSyncService : IDisposable
         try
         {
             Directory.CreateDirectory(paths.BrowserDataDirectory);
-            var environment = await CoreWebView2Environment.CreateAsync(null, paths.BrowserDataDirectory);
+            var environment = await PageWaits.WithTimeout(CoreWebView2Environment.CreateAsync(null, paths.BrowserDataDirectory), PageWaits.Start, "creating the browser");
             host = new Window
             {
                 Width = 1,
@@ -405,7 +405,7 @@ public sealed class HelixSyncService : IDisposable
                 Title = "CA Tracker background sync"
             };
             var handle = new WindowInteropHelper(host).EnsureHandle();
-            controller = await environment.CreateCoreWebView2ControllerAsync(handle);
+            controller = await PageWaits.WithTimeout(environment.CreateCoreWebView2ControllerAsync(handle), PageWaits.Start, "opening the page");
             controller.IsVisible = false;
             core = controller.CoreWebView2;
             core.Settings.AreDevToolsEnabled = false;

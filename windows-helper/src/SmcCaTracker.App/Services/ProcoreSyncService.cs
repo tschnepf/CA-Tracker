@@ -585,7 +585,7 @@ public sealed class ProcoreSyncService : IDisposable
             {
                 AppLog.Info("procore", "Starting the background Procore page.");
                 Directory.CreateDirectory(paths.BrowserDataDirectory);
-                var environment = await WithTimeout(CoreWebView2Environment.CreateAsync(null, paths.BrowserDataDirectory), "creating the browser");
+                var environment = await PageWaits.WithTimeout(CoreWebView2Environment.CreateAsync(null, paths.BrowserDataDirectory), PageWaits.Start, "creating the browser");
                 host = new Window
                 {
                     Width = 1,
@@ -595,7 +595,7 @@ public sealed class ProcoreSyncService : IDisposable
                     ShowActivated = false,
                     Title = "CA Tracker background sync (Procore)"
                 };
-                controller = await WithTimeout(environment.CreateCoreWebView2ControllerAsync(new WindowInteropHelper(host).EnsureHandle()), "opening the page");
+                controller = await PageWaits.WithTimeout(environment.CreateCoreWebView2ControllerAsync(new WindowInteropHelper(host).EnsureHandle()), PageWaits.Start, "opening the page");
                 controller.IsVisible = false;
                 core = controller.CoreWebView2;
                 core.Settings.AreDevToolsEnabled = false;
@@ -663,17 +663,6 @@ public sealed class ProcoreSyncService : IDisposable
 
         AppLog.Info("procore", $"The background Procore page is open at {core?.Source}.");
         return null;
-    }
-
-    private static async Task<T> WithTimeout<T>(Task<T> task, string step)
-    {
-        var finished = await Task.WhenAny(task, Task.Delay(TimeSpan.FromSeconds(45)));
-        if (finished != task)
-        {
-            throw new TimeoutException($"The built-in browser got stuck {step}.");
-        }
-
-        return await task;
     }
 
     /// <summary>Runs a request; if the page reloaded and lost the library, adds it again and retries once.</summary>
