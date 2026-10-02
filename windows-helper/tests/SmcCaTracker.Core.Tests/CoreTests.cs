@@ -1093,6 +1093,41 @@ public class RevisionTests
         Assert.Equal(Path.Combine(item, "Rev 2"), DownloadNaming.RevisionFolder(item, 2));
         Assert.Equal(Path.Combine(item, "R03"), DownloadNaming.RevisionFolder(item, 3));
     }
+
+    [Fact]
+    public void ARevisionGoesInASubfolderOnlyWhenTheItemAlreadyHasAFolder()
+    {
+        using var temp = new TempFolder();
+        var item = Path.Combine(temp.Root, "P000210 - Doors");
+        Assert.Equal((item, false), DownloadFolders.Destination(item, 2));
+        temp.Make("P000210 - Doors");
+        Assert.Equal((Path.Combine(item, "R2"), true), DownloadFolders.Destination(item, 2));
+        Assert.Equal((item, false), DownloadFolders.Destination(item, null));
+    }
+
+    [Fact]
+    public void ARevisionsFilesAreComparedOnlyWithItsRevisionFolder()
+    {
+        using var temp = new TempFolder();
+        var item = temp.Make("P000210 - Doors");
+        File.WriteAllText(Path.Combine(item, "Door schedule.pdf"), "rev 0");
+        File.WriteAllText(Path.Combine(temp.Make("P000210 - Doors", "R1"), "Hardware.pdf"), "rev 1");
+        var revision = temp.Make("P000210 - Doors", "R2");
+        var schedule = DownloadNaming.MatchKey("Door schedule.pdf");
+        var hardware = DownloadNaming.MatchKey("Hardware.pdf");
+
+        // The item itself: anything in its folder counts, revision subfolders included.
+        var itemKeys = DownloadFolders.ExistingFileKeys(item, item, inRevisionFolder: false);
+        Assert.Contains(schedule, itemKeys);
+        Assert.Contains(hardware, itemKeys);
+
+        // Revision 2: earlier revisions' files of the same name don't, so they are checked for download.
+        var revisionKeys = DownloadFolders.ExistingFileKeys(item, revision, inRevisionFolder: true);
+        Assert.DoesNotContain(schedule, revisionKeys);
+        Assert.DoesNotContain(hardware, revisionKeys);
+        File.WriteAllText(Path.Combine(revision, "2026-10-01 Door schedule.pdf"), "rev 2");
+        Assert.Contains(schedule, DownloadFolders.ExistingFileKeys(item, revision, inRevisionFolder: true));
+    }
 }
 
 public class ReturnedWithNoteTests

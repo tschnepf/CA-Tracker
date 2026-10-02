@@ -221,7 +221,8 @@ name or code taken off the name:
 - If the item already has a folder, that folder is used. If the item's title names a revision
   (`Rev 2`, `Rev. 2`, `Revision 2` or `R2`), the files go into an `R2` subfolder of it instead,
   reusing an existing `R2`/`R02`/`Rev 2` subfolder. The last revision in the title counts, and `R0`
-  counts too.
+  counts too. Only that subfolder is checked for files already saved, so a file named like one from
+  an earlier revision is still downloaded.
 - Otherwise a new folder is made in the project's RFI or Submittal folder.
 - **Change…** picks somewhere else (needed for projects without a CA folder).
 

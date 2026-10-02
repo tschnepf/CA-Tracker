@@ -409,41 +409,21 @@ public partial class DownloadWindow : Window
     private static string? Text(JsonElement element, string name) =>
         element.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.String ? value.GetString() : null;
 
-    /// <summary>Notes files already in the destination; on first load those start unticked.</summary>
+    /// <summary>Notes files already in the destination; on first load those start unchecked.</summary>
     private bool folderExisted;
     private int newPdfCount;
 
-    /// <summary>The item already has a folder (its matched folder, or the folder files would go into).</summary>
-    private bool FolderAlreadyExists =>
-        (request.ExistingFolder is not null && Directory.Exists(request.ExistingFolder))
-        || (destination is not null && Directory.Exists(destination));
-
     /// <summary>
-    /// Files already somewhere in the item's folder (revision subfolders included), by
-    /// <see cref="DownloadNaming.MatchKey"/>, so a file saved with a date in front or as a copy still counts.
+    /// The item already has a folder (its matched folder, or the folder files would go into). A revision's
+    /// folder is its revision subfolder: a new revision starts out like a new item.
     /// </summary>
-    private HashSet<string> ExistingFileKeys()
-    {
-        var keys = new HashSet<string>(StringComparer.Ordinal);
-        var roots = new[] { request.ExistingFolder, destination }
-            .Where(path => !string.IsNullOrWhiteSpace(path) && Directory.Exists(path))
-            .Distinct(StringComparer.OrdinalIgnoreCase);
-        foreach (var root in roots)
-        {
-            try
-            {
-                foreach (var path in Directory.EnumerateFiles(root!, "*", SearchOption.AllDirectories).Take(5000))
-                {
-                    keys.Add(DownloadNaming.MatchKey(path));
-                }
-            }
-            catch (Exception error) when (error is IOException or UnauthorizedAccessException)
-            {
-            }
-        }
+    private bool FolderAlreadyExists => inRevisionFolder
+        ? Directory.Exists(destination)
+        : (request.ExistingFolder is not null && Directory.Exists(request.ExistingFolder))
+            || (destination is not null && Directory.Exists(destination));
 
-        return keys;
-    }
+    private HashSet<string> ExistingFileKeys() =>
+        DownloadFolders.ExistingFileKeys(request.ExistingFolder, destination, inRevisionFolder);
 
     /// <summary>
     /// Marks files already in the item's folder. When the folder already exists nothing is checked by
@@ -501,14 +481,11 @@ public partial class DownloadWindow : Window
             ? $"⚠ This item already has a folder. {newPdfCount} PDF{(newPdfCount == 1 ? "" : "s")} in Helix {(newPdfCount == 1 ? "isn't" : "aren't")} in it yet and {(newPdfCount == 1 ? "is" : "are")} checked; everything else is left unchecked. Select Download to add {(newPdfCount == 1 ? "it" : "them")}."
             : "⚠ This item already has a folder and nothing new was found in Helix, so nothing is checked. Check files only if you want extra copies.";
 
-    /// <summary>
-    /// A revised item (its title says "Rev 2" or "R2") whose folder already exists gets its files in
-    /// an R2 subfolder of that folder, reusing an existing "R2"/"Rev 2" subfolder.
-    /// </summary>
+    /// <summary>The folder files go into (a revision subfolder, see <see cref="DownloadFolders.Destination"/>).</summary>
     private string WithRevision(string itemFolder)
     {
-        inRevisionFolder = revision is not null && Directory.Exists(itemFolder);
-        return inRevisionFolder ? DownloadNaming.RevisionFolder(itemFolder, revision!.Value) : itemFolder;
+        (var folder, inRevisionFolder) = DownloadFolders.Destination(itemFolder, revision);
+        return folder;
     }
 
     private void ShowDestination()
