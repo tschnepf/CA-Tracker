@@ -305,6 +305,18 @@ public class DatabaseTests
         Assert.Equal(1, ChangeCount(file, "project", "delete"));
     }
 
+    [Fact]
+    public void TheSqliteEngineHasTheKnownHolesFixed()
+    {
+        // CVE-2025-6965 (GHSA-2m69-gcr7-jv3q) is fixed in SQLite 3.50.2, shipped by SQLitePCLRaw 2.1.12.
+        using var connection = new SqliteConnection("Data Source=:memory:");
+        connection.Open();
+        using var command = connection.CreateCommand();
+        command.CommandText = "SELECT sqlite_version();";
+        var version = Version.Parse((string)command.ExecuteScalar()!);
+        Assert.True(version >= new Version(3, 50, 2), $"SQLite {version} is older than 3.50.2.");
+    }
+
     [Theory]
     [InlineData("rfi|p000210 - doors", "rfi", "folder", "p000210 - doors")]
     [InlineData("item|submittal|abc123", "submittal", "item", "abc123")]
