@@ -565,6 +565,10 @@ public sealed class HelixSyncService : IDisposable
 
     // ---- One project --------------------------------------------------------------------------
 
+    /// <summary>Helix errors that mean "not signed in all the way yet" rather than "no".</summary>
+    private static readonly System.Text.RegularExpressions.Regex StillSigningIn =
+        new(@"not ready|still loading|getIdToken", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+
     /// <summary>Reads one project and saves its items. Returns how many changed, or null if it failed.</summary>
     private async Task<int?> SyncOneAsync(ProviderSyncTarget target, bool full, int started)
     {
@@ -572,7 +576,7 @@ public sealed class HelixSyncService : IDisposable
         var fullAfterMs = store.Settings.Sync.FullReadHours * 3_600_000.0;
         try
         {
-            for (var attempt = 0; attempt < 3; attempt++)
+            for (var attempt = 0; attempt < 6; attempt++)
             {
                 JsonElement? answer;
                 using (AppLog.Time("helix.sync", target.DisplayName, 20_000))
@@ -611,8 +615,10 @@ public sealed class HelixSyncService : IDisposable
                 if (type == "sync-error")
                 {
                     run.Error = answer!.Value.TryGetProperty("message", out var message) ? message.GetString() : "Helix returned an error.";
-                    if (attempt == 0 && run.Error is not null && run.Error.Contains("not ready", StringComparison.OrdinalIgnoreCase))
+                    if (attempt < 5 && run.Error is not null && StillSigningIn.IsMatch(run.Error))
                     {
+                        // A page that has just opened shows you before Helix has its sign-in token (its own
+                        // reads fail on "getIdToken" for a second or so): wait and try again.
                         await Task.Delay(2000, stopping.Token);
                         continue;
                     }
