@@ -239,14 +239,16 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     /// </summary>
     public Func<string?>? BrowserProfileInUse { get; set; }
 
-    /// <summary>Raised before the browser profile is deleted: the item panel's page must be released.</summary>
+    /// <summary>Raised before the browser's sign-ins are cleared: the item panel's page must be released.</summary>
     public event Action? BrowserProfileReleasing;
 
     /// <summary>
-    /// Signs out of the built-in browser: stops everything that uses its profile, then deletes the
-    /// profile folder (sign-ins and saved passwords). Returns the problem, or null when signed out.
+    /// Signs out of the built-in browser: stops everything that uses its profile, then clears its
+    /// sign-ins (cookies, site storage, cache). Saved usernames and passwords are kept, so signing in
+    /// again fills them in, unless <paramref name="forgetPasswords"/>. Returns the problem, or null
+    /// when signed out.
     /// </summary>
-    public async Task<string?> SignOutOfBrowserAsync()
+    public async Task<string?> SignOutOfBrowserAsync(bool forgetPasswords = false)
     {
         if (BrowserProfileInUse?.Invoke() is { } inUse)
         {
@@ -259,30 +261,23 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         BrowserProfileReleasing?.Invoke();
         CloseBackgroundBrowser();
 
-        // 4. The profile folder goes once the browser processes have let go of it.
-        var folder = Paths.BrowserDataDirectory;
-        for (var attempt = 0; Directory.Exists(folder); attempt++)
+        // 4. The sign-ins are cleared (cookies and site storage); saved usernames and passwords stay, so
+        //    signing in again fills them in, unless they are to be forgotten too.
+        var problem = await BrowserSignOut.ClearSignInsAsync(Paths, forgetPasswords);
+        if (problem is not null)
         {
-            try
-            {
-                Directory.Delete(folder, recursive: true);
-            }
-            catch (Exception error) when (error is IOException or UnauthorizedAccessException)
-            {
-                if (attempt >= 30)
-                {
-                    AppLog.Error("app", "Signing out of the built-in browser failed", error);
-                    return $"The browser's files are still in use ({error.Message}). Close CA Tracker and start it again, then sign out.";
-                }
-
-                await Task.Delay(300);
-            }
+            helixSync.CloseBrowser(pause: TimeSpan.Zero);
+            procoreSync.CloseBrowser(pause: TimeSpan.Zero);
+            RefreshAccounts();
+            return $"{problem} Close CA Tracker and start it again, then sign out.";
         }
 
-        // The files are gone: the hidden pages may open again (they start signed out and ask to sign in).
+        // Signed out: the hidden pages may open again (they start signed out and ask to sign in).
         helixSync.CloseBrowser(pause: TimeSpan.Zero);
         procoreSync.CloseBrowser(pause: TimeSpan.Zero);
-        AppLog.Info("app", "Signed out of the built-in browser.");
+        AppLog.Info("app", forgetPasswords
+            ? "Signed out of the built-in browser and forgot its saved passwords."
+            : "Signed out of the built-in browser (saved passwords kept).");
         RefreshAccounts();
         return null;
     }

@@ -53,7 +53,7 @@ public partial class MainWindow : Window
             window.Closed += (_, _) => browserWindowsOpen--;
             window.Show();
         };
-        // Signing out of the built-in browser deletes its profile: nothing may be using it.
+        // Signing out of the built-in browser clears its sign-ins: nothing may be using it.
         viewModel.BrowserProfileInUse = () =>
             browserWindowsOpen > 0 ? "the CA Tracker browser window"
             : downloadWindowsOpen > 0 ? "the download window"

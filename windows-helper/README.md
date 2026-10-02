@@ -102,9 +102,11 @@ The built-in browser uses the Microsoft Edge WebView2 Runtime, which comes with 
 the Helix and Procore passwords you sign in with, encrypted for your Windows user (Windows DPAPI, the
 same protection Edge uses), and fills them in when a site asks you to sign in again — Procore ends
 its sign-in when CA Tracker closes, so after a restart you only click **Sign in**.
-**Settings → Connections → Sign out of Helix and Procore** forgets both sign-ins and the saved
-passwords. It closes the item panel and the hidden sync pages first, and asks you to close any CA
-Tracker browser, download or sign-in window that is still open.
+**Settings → Connections → Sign out of Helix and Procore** ends both sign-ins (cookies, site storage
+and cache are cleared) but keeps the saved usernames and passwords, so signing in again fills them
+in. It closes the item panel and the hidden sync pages first, and asks you to close any CA Tracker
+browser, download or sign-in window that is still open. **Sign out and forget saved passwords** does
+the same and also deletes the usernames and passwords saved in CA Tracker's browser.
 
 ## Project list
 
@@ -240,7 +242,8 @@ saved file is added to `journal.jsonl`. Procore downloads aren't supported yet.
 - **Connections**: Helix and Procore, each with a status badge (Syncing, Synced, N projects not read,
   Sign-in needed, Not connected), when it last synced, how many projects it has (and how many are
   archived or set to not sync), a progress bar while it syncs, and **Sign in** / **Sync now** buttons;
-  **Sign out of Helix and Procore**; and the optional **Company server**: its address (unless the company settings set it) and your
+  **Sign out of Helix and Procore** (saved passwords kept) and **Sign out and forget saved
+  passwords**; and the optional **Company server**: its address (unless the company settings set it) and your
   access token. Once connected, CA Tracker shares every couple of minutes while it is open: what you
   read from Helix and Procore and your projects' discipline choices go to everyone tracking the same
   projects, and theirs come to you. Your CA folder locations and project names stay on your PC.
@@ -275,7 +278,7 @@ project it also reads the project:
   you can't see on a project (say, Submittals) is left as it was rather than emptied. If Procore
   refuses the page way for your account, the sync falls back to reading the RFIs and Submittals lists
   in the CA Tracker browser window, as before; those reads only see the rows Procore's lists show.
-**Settings → Connections → Sign out of Helix and Procore** forgets the sign-in.
+**Settings → Connections → Sign out of Helix and Procore** ends the sign-in (saved passwords stay).
 
 The project card shows **when the Helix/Procore data was last synced** and **when the CA folder was
 last rescanned** (a failed sync says why, in full). While a sync runs it shows progress, and you can

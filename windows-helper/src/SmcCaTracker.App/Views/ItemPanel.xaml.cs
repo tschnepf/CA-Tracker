@@ -196,8 +196,8 @@ public partial class ItemPanel : UserControl
         var core = Browser.CoreWebView2;
         core.Settings.IsStatusBarEnabled = false;
         // Saves your Helix/Procore password in this browser's profile, encrypted for your Windows user
-        // (Windows DPAPI), and fills it in on their sign-in pages. Settings → Sign out of the built-in
-        // browser deletes it.
+        // (Windows DPAPI), and fills it in on their sign-in pages. Signing out (Settings →
+        // Connections) keeps it.
         core.Settings.IsPasswordAutosaveEnabled = true;
         core.Settings.IsGeneralAutofillEnabled = true;
         core.NavigationStarting += (_, _) => opening = false;

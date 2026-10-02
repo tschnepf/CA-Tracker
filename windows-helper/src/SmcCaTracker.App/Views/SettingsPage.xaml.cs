@@ -308,7 +308,12 @@ public partial class SettingsPage : UserControl
         }
     }
 
-    private async void ClearBrowser_Click(object sender, RoutedEventArgs e)
+    private async void ClearBrowser_Click(object sender, RoutedEventArgs e) => await SignOutAsync(forgetPasswords: false);
+
+    private async void ForgetBrowser_Click(object sender, RoutedEventArgs e) => await SignOutAsync(forgetPasswords: true);
+
+    /// <summary>Signs out of Helix and Procore, keeping the saved usernames and passwords unless told to forget them.</summary>
+    private async Task SignOutAsync(bool forgetPasswords)
     {
         if (paths is null || DataContext is not MainViewModel model)
         {
@@ -324,21 +329,27 @@ public partial class SettingsPage : UserControl
 
         var answer = MessageBox.Show(
             owner,
-            "Sign CA Tracker's browser out of Helix and Procore? Syncing stops until you sign in again here.\n\nThe item panel closes.",
-            "Sign out",
+            forgetPasswords
+                ? "Sign CA Tracker's browser out of Helix and Procore and forget the usernames and passwords it saved? You'll type them again the next time you sign in.\n\nThe item panel closes."
+                : "Sign CA Tracker's browser out of Helix and Procore? Syncing stops until you sign in again here; your saved usernames and passwords are kept and fill in when you do.\n\nThe item panel closes.",
+            forgetPasswords ? "Sign out and forget saved passwords" : "Sign out",
             MessageBoxButton.YesNo,
-            MessageBoxImage.Question,
+            forgetPasswords ? MessageBoxImage.Warning : MessageBoxImage.Question,
             MessageBoxResult.No);
         if (answer != MessageBoxResult.Yes)
         {
             return;
         }
 
-        var problem = await model.SignOutOfBrowserAsync();
+        var problem = await model.SignOutOfBrowserAsync(forgetPasswords);
         SignOutMessage.Text = problem is null ? "" : $"Could not sign out: {problem}";
         if (problem is null)
         {
-            MessageBox.Show(owner, "Signed out of Helix and Procore.", "CA Tracker", MessageBoxButton.OK, MessageBoxImage.Information);
+            MessageBox.Show(owner,
+                forgetPasswords
+                    ? "Signed out of Helix and Procore, and the saved passwords are forgotten."
+                    : "Signed out of Helix and Procore. Your saved usernames and passwords are kept.",
+                "CA Tracker", MessageBoxButton.OK, MessageBoxImage.Information);
         }
     }
 
