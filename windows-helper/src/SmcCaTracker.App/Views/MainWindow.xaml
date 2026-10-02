@@ -170,6 +170,7 @@
                     <Grid>
                         <ListBox x:Name="ProjectList" ItemsSource="{Binding Projects}" SelectionMode="Extended"
                                  SelectionChanged="ProjectList_SelectionChanged" AutomationProperties.Name="Projects"
+                                 PreviewMouseRightButtonDown="ProjectList_PreviewMouseRightButtonDown"
                                  VirtualizingPanel.IsVirtualizingWhenGrouping="True" VirtualizingPanel.VirtualizationMode="Recycling"
                                  ContextMenuOpening="ProjectList_ContextMenuOpening">
                             <!-- Procore projects can be left out of syncing (they stay in the list). -->

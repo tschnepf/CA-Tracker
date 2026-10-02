@@ -224,6 +224,21 @@ public partial class MainWindow : Window
     private List<ProjectViewModel> ProjectsInSelection() => ProjectList.SelectedItems.OfType<ProjectViewModel>().ToList();
 
     /// <summary>
+    /// Right-clicking a project that isn't selected selects it (alone) first, so the menu acts on the
+    /// project clicked rather than on the earlier selection. Right-clicking within a selection keeps it.
+    /// </summary>
+    private void ProjectList_PreviewMouseRightButtonDown(object sender, MouseButtonEventArgs e)
+    {
+        if (e.OriginalSource is DependencyObject source
+            && ItemsControl.ContainerFromElement(ProjectList, source) is ListBoxItem { DataContext: ProjectViewModel project }
+            && !ProjectList.SelectedItems.Contains(project))
+        {
+            ProjectList.SelectedItems.Clear();
+            ProjectList.SelectedItems.Add(project);
+        }
+    }
+
+    /// <summary>
     /// Right-click: archive or unarchive the selected projects (for you only), and for Procore projects
     /// turn syncing on or off.
     /// </summary>
