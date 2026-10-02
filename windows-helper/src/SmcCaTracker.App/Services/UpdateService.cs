@@ -82,9 +82,14 @@ public sealed class UpdateService
             }
             else
             {
-                await using var source = new FileStream(update.Installer, FileMode.Open, FileAccess.Read, FileShare.Read, 1 << 16, useAsync: true);
-                await using var target = new FileStream(local, FileMode.Create, FileAccess.Write, FileShare.None, 1 << 16, useAsync: true);
-                await source.CopyToAsync(target);
+                // Opening a file on a share waits on the server: off the screen's thread, so the window
+                // doesn't freeze while a slow or offline server answers.
+                await Task.Run(async () =>
+                {
+                    await using var source = new FileStream(update.Installer, FileMode.Open, FileAccess.Read, FileShare.Read, 1 << 16, useAsync: true);
+                    await using var target = new FileStream(local, FileMode.Create, FileAccess.Write, FileShare.None, 1 << 16, useAsync: true);
+                    await source.CopyToAsync(target);
+                });
             }
 
             if (!await UpdateFeed.MatchesAsync(local, update.Sha256))
