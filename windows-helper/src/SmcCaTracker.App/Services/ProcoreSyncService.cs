@@ -101,6 +101,9 @@ public sealed class ProcoreSyncService : IDisposable
     private bool pageDead;
     private bool disposed;
 
+    // Cancelled by Cancel(), so every wait of the run in progress ends at once. A new one per run.
+    private CancellationTokenSource stopping = new();
+
     /// <summary>Until when the hidden page must not be opened again (set when signing out).</summary>
     private DateTimeOffset pausedUntil = DateTimeOffset.MinValue;
 
@@ -137,6 +140,7 @@ public sealed class ProcoreSyncService : IDisposable
     public void Cancel()
     {
         cancelRequested = true;
+        stopping.Cancel();
         foreach (var completion in pending.Values.ToList())
         {
             completion.TrySetCanceled();
@@ -160,6 +164,7 @@ public sealed class ProcoreSyncService : IDisposable
 
         await gate.WaitAsync();
         cancelRequested = false;
+        stopping = new CancellationTokenSource();
         siteHost ??= ProviderLinks.DefaultProcoreHost;
         try
         {
@@ -314,6 +319,7 @@ public sealed class ProcoreSyncService : IDisposable
 
         await gate.WaitAsync();
         cancelRequested = false;
+        stopping = new CancellationTokenSource();
         try
         {
             foreach (var server in ProcoreServers.Where(server => !string.Equals(server, askedHost, StringComparison.OrdinalIgnoreCase)))
@@ -375,6 +381,7 @@ public sealed class ProcoreSyncService : IDisposable
 
         await gate.WaitAsync();
         cancelRequested = false;
+        stopping = new CancellationTokenSource();
         activeRun = run;
         try
         {
@@ -616,7 +623,7 @@ public sealed class ProcoreSyncService : IDisposable
             if (pause > TimeSpan.Zero)
             {
                 AppLog.Info("procore", $"Waiting {pause.TotalSeconds:0} s for the browser to finish signing out.");
-                await Task.Delay(pause);
+                await Task.Delay(pause, stopping.Token);
             }
 
             try
@@ -675,7 +682,7 @@ public sealed class ProcoreSyncService : IDisposable
         // way its home page does, so each company's server can be asked directly.
         var waiting = navigated = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
         core!.Navigate($"https://{siteHost}/rest/v1.0/me");
-        var opened = await Task.WhenAny(waiting.Task, Task.Delay(TimeSpan.FromSeconds(60)));
+        var opened = await Task.WhenAny(waiting.Task, Task.Delay(TimeSpan.FromSeconds(60), stopping.Token));
         if (cancelRequested)
         {
             throw new OperationCanceledException();
@@ -696,7 +703,7 @@ public sealed class ProcoreSyncService : IDisposable
         // Signed-out browsers end up on Procore's login site.
         for (var wait = 0; wait < 10 && !OnProcore(siteHost); wait++)
         {
-            await Task.Delay(500);
+            await Task.Delay(500, stopping.Token);
         }
 
         if (!OnProcore(siteHost))
@@ -716,11 +723,29 @@ public sealed class ProcoreSyncService : IDisposable
         var answer = await RequestAsync(script, timeout);
         if (TypeOf(answer) == "procore-missing" && core is not null)
         {
-            await core.ExecuteScriptAsync(ProviderScripts.ProcoreSyncLibrary);
+            await RunScriptAsync(ProviderScripts.ProcoreSyncLibrary);
             answer = await RequestAsync(script, timeout);
         }
 
         return answer;
+    }
+
+    /// <summary>
+    /// Runs a script in the page. A page that doesn't take it within <see cref="PageWaits.Script"/> has
+    /// stopped responding: it is marked dead and the read ends, rather than waiting on it.
+    /// </summary>
+    private async Task RunScriptAsync(string script)
+    {
+        try
+        {
+            await PageWaits.WithTimeout(core!.ExecuteScriptAsync(script), PageWaits.Script, "running a script", stopping.Token);
+        }
+        catch (TimeoutException)
+        {
+            AppLog.Warn("procore", "The hidden Procore page stopped responding.");
+            pageDead = true;
+            throw new PageCrashedException("The hidden Procore page stopped responding.");
+        }
     }
 
     private static string? TypeOf(JsonElement? answer) =>
@@ -761,8 +786,9 @@ public sealed class ProcoreSyncService : IDisposable
         pending[id] = completion;
         try
         {
-            await core.ExecuteScriptAsync(script(id));
-            var finished = await Task.WhenAny(completion.Task, Task.Delay(timeout));
+            await RunScriptAsync(script(id));
+            var finished = await Task.WhenAny(completion.Task, Task.Delay(timeout, stopping.Token));
+            stopping.Token.ThrowIfCancellationRequested();
             return finished == completion.Task ? await completion.Task : null;
         }
         finally
@@ -798,8 +824,11 @@ public sealed class ProcoreSyncService : IDisposable
 
     private void OnProcessFailed(object? sender, CoreWebView2ProcessFailedEventArgs e)
     {
-        // Only a browser or page process that exited leaves the page unusable; others recover by themselves.
-        if (e.ProcessFailedKind is not (CoreWebView2ProcessFailedKind.BrowserProcessExited or CoreWebView2ProcessFailedKind.RenderProcessExited))
+        // A browser or page process that exited, or a page that stopped responding, leaves the page
+        // unusable; others (e.g. a GPU or utility process) recover by themselves.
+        if (e.ProcessFailedKind is not (CoreWebView2ProcessFailedKind.BrowserProcessExited
+            or CoreWebView2ProcessFailedKind.RenderProcessExited
+            or CoreWebView2ProcessFailedKind.RenderProcessUnresponsive))
         {
             AppLog.Info("procore", $"The hidden Procore page reported {e.ProcessFailedKind}.");
             return;

@@ -69,6 +69,9 @@ public sealed class HelixSyncService : IDisposable
     private bool cancelRequested;
     private bool pageDead;
 
+    // Cancelled by Cancel(), so every wait of the run in progress ends at once. A new one per run.
+    private CancellationTokenSource stopping = new();
+
     // Projects whose last read on this page was saved. The page remembers what it read; if a read was
     // thrown away (stopped, timed out, not saved), the next read of that project must be a full one.
     private readonly HashSet<string> confirmed = new(StringComparer.Ordinal);
@@ -113,6 +116,7 @@ public sealed class HelixSyncService : IDisposable
 
         await gate.WaitAsync();
         cancelRequested = false;
+        stopping = new CancellationTokenSource();
         activeRun = run;
         try
         {
@@ -152,6 +156,7 @@ public sealed class HelixSyncService : IDisposable
         }
 
         await gate.WaitAsync();
+        stopping = new CancellationTokenSource();
         try
         {
             var answer = await RequestAsync(id => ProviderScripts.HelixExportSample(id, target.ProjectId), TimeSpan.FromSeconds(60));
@@ -167,6 +172,11 @@ public sealed class HelixSyncService : IDisposable
         catch (OperationCanceledException)
         {
             return (null, "Stopped.");
+        }
+        catch (PageCrashedException error)
+        {
+            CloseBrowser();
+            return (null, error.Message);
         }
         finally
         {
@@ -192,6 +202,7 @@ public sealed class HelixSyncService : IDisposable
     public void Cancel()
     {
         cancelRequested = true;
+        stopping.Cancel();
         ResolvePending(canceled: true);
         navigated?.TrySetCanceled();
     }
@@ -306,7 +317,7 @@ public sealed class HelixSyncService : IDisposable
         {
             var waiting = navigated = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
             core!.Navigate(ProviderSites.HomeUrl(Providers.Helix));
-            var opened = await Task.WhenAny(waiting.Task, Task.Delay(TimeSpan.FromSeconds(60)));
+            var opened = await Task.WhenAny(waiting.Task, Task.Delay(TimeSpan.FromSeconds(60), stopping.Token));
             ThrowIfStopped(started);
             if (opened != waiting.Task)
             {
@@ -386,7 +397,7 @@ public sealed class HelixSyncService : IDisposable
                 return Problem(SignInMessage, needsSignIn: true);
             }
 
-            await Task.Delay(1000);
+            await Task.Delay(1000, stopping.Token);
         }
     }
 
@@ -456,8 +467,11 @@ public sealed class HelixSyncService : IDisposable
 
     private void OnProcessFailed(object? sender, CoreWebView2ProcessFailedEventArgs e)
     {
-        // Only a browser or page process that exited leaves the page unusable; others recover by themselves.
-        if (e.ProcessFailedKind is not (CoreWebView2ProcessFailedKind.BrowserProcessExited or CoreWebView2ProcessFailedKind.RenderProcessExited))
+        // A browser or page process that exited, or a page that stopped responding, leaves the page
+        // unusable; others (e.g. a GPU or utility process) recover by themselves.
+        if (e.ProcessFailedKind is not (CoreWebView2ProcessFailedKind.BrowserProcessExited
+            or CoreWebView2ProcessFailedKind.RenderProcessExited
+            or CoreWebView2ProcessFailedKind.RenderProcessUnresponsive))
         {
             AppLog.Info("helix", $"The hidden Helix page reported {e.ProcessFailedKind}.");
             return;
@@ -475,7 +489,7 @@ public sealed class HelixSyncService : IDisposable
         var waiting = navigated;
         if (waiting is not null && !waiting.Task.IsCompleted)
         {
-            await Task.WhenAny(waiting.Task, Task.Delay(TimeSpan.FromSeconds(60)));
+            await Task.WhenAny(waiting.Task, Task.Delay(TimeSpan.FromSeconds(60), stopping.Token));
         }
     }
 
@@ -494,7 +508,25 @@ public sealed class HelixSyncService : IDisposable
                 return;
             }
 
-            await core.ExecuteScriptAsync(library);
+            await RunScriptAsync(library);
+        }
+    }
+
+    /// <summary>
+    /// Runs a script in the page. A page that doesn't take it within <see cref="PageWaits.Script"/> has
+    /// stopped responding: it is marked dead and the read ends, rather than waiting on it.
+    /// </summary>
+    private async Task RunScriptAsync(string script)
+    {
+        try
+        {
+            await PageWaits.WithTimeout(core!.ExecuteScriptAsync(script), PageWaits.Script, "running a script", stopping.Token);
+        }
+        catch (TimeoutException)
+        {
+            AppLog.Warn("helix", "The hidden Helix page stopped responding.");
+            pageDead = true;
+            throw new PageCrashedException("The hidden Helix page stopped responding.");
         }
     }
 
@@ -581,7 +613,7 @@ public sealed class HelixSyncService : IDisposable
                     run.Error = answer!.Value.TryGetProperty("message", out var message) ? message.GetString() : "Helix returned an error.";
                     if (attempt == 0 && run.Error is not null && run.Error.Contains("not ready", StringComparison.OrdinalIgnoreCase))
                     {
-                        await Task.Delay(2000);
+                        await Task.Delay(2000, stopping.Token);
                         continue;
                     }
 
@@ -624,6 +656,12 @@ public sealed class HelixSyncService : IDisposable
                                        || (error is InvalidOperationException && error is not OperationCanceledException))
         {
             run.Error = error.Message;
+        }
+        catch (PageCrashedException error)
+        {
+            // Ends the run (the page is closed and opened afresh next time); this project failed.
+            run.Error = error.Message;
+            throw;
         }
         finally
         {
@@ -689,8 +727,9 @@ public sealed class HelixSyncService : IDisposable
         pending[id] = completion;
         try
         {
-            await core.ExecuteScriptAsync(script(id));
-            var finished = await Task.WhenAny(completion.Task, Task.Delay(timeout));
+            await RunScriptAsync(script(id));
+            var finished = await Task.WhenAny(completion.Task, Task.Delay(timeout, stopping.Token));
+            stopping.Token.ThrowIfCancellationRequested();
             return finished == completion.Task ? await completion.Task : null;
         }
         finally

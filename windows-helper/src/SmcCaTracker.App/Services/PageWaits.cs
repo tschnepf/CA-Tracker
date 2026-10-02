@@ -10,6 +10,12 @@ public static class PageWaits
     public static readonly TimeSpan Start = TimeSpan.FromSeconds(45);
 
     /// <summary>
+    /// How long running a script may take. Running one only starts it (answers come back as messages), so
+    /// a page that takes longer has stopped responding.
+    /// </summary>
+    public static readonly TimeSpan Script = TimeSpan.FromSeconds(30);
+
+    /// <summary>
     /// Waits for <paramref name="task"/>. Past <paramref name="timeout"/> a <see cref="TimeoutException"/>
     /// names the <paramref name="step"/> that got stuck; stopping (<paramref name="stop"/>) ends the wait at once.
     /// </summary>
