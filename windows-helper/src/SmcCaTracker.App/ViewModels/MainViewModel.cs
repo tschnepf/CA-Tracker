@@ -270,6 +270,9 @@ public sealed class MainViewModel : ObservableObject, IDisposable
             }
         }
 
+        // The files are gone: the hidden pages may open again (they start signed out and ask to sign in).
+        helixSync.CloseBrowser(pause: TimeSpan.Zero);
+        procoreSync.CloseBrowser(pause: TimeSpan.Zero);
         AppLog.Info("app", "Signed out of the built-in browser.");
         RefreshAccounts();
         return null;

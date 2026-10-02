@@ -100,9 +100,12 @@ public sealed class HelixSyncService : IDisposable
             return new ProviderSyncResult();
         }
 
-        if (DateTimeOffset.Now < pausedUntil)
+        // Signing out deletes the browser's files: wait until that is over rather than failing the read.
+        var pause = pausedUntil - DateTimeOffset.Now;
+        if (pause > TimeSpan.Zero)
         {
-            return Problem("Helix reads are paused for a moment while the browser signs out.");
+            AppLog.Info("helix", $"Waiting {pause.TotalSeconds:0} s for the browser to finish signing out.");
+            await Task.Delay(pause);
         }
 
         await gate.WaitAsync();

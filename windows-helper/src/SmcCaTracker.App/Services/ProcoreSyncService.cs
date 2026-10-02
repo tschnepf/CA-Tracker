@@ -555,9 +555,12 @@ public sealed class ProcoreSyncService : IDisposable
     {
         if (core is null)
         {
-            if (DateTimeOffset.Now < pausedUntil)
+            // Signing out deletes the browser's files: wait until that is over rather than failing the read.
+            var pause = pausedUntil - DateTimeOffset.Now;
+            if (pause > TimeSpan.Zero)
             {
-                return new PageProblem("Procore reads are paused for a moment while the browser signs out.", false);
+                AppLog.Info("procore", $"Waiting {pause.TotalSeconds:0} s for the browser to finish signing out.");
+                await Task.Delay(pause);
             }
 
             try
