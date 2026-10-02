@@ -1,7 +1,9 @@
 "use strict";
 
 // Checks whose court each item is in against anonymized samples from real Helix projects
-// (tests/Scripts/fixtures/*.json, exported by CA Tracker and corrected by hand where it was wrong).
+// (exported by CA Tracker and corrected by hand where it was wrong). Samples are read from
+// tests/Scripts/fixtures/*.json and, kept out of the repo because they come from live projects, from
+// the folder named by CA_TRACKER_TEST_DATA (default C:\Local\CA-Tracker-Test-Data) when it exists.
 
 const test = require("node:test");
 const assert = require("node:assert/strict");
@@ -9,12 +11,15 @@ const fs = require("node:fs");
 const path = require("node:path");
 const Snapshot = require("../../src/SmcCaTracker.App/Scripts/snapshot.js");
 
-const folder = path.join(__dirname, "fixtures");
-const samples = fs.readdirSync(folder).filter((name) => name.endsWith(".json"));
+const folders = [path.join(__dirname, "fixtures"), process.env.CA_TRACKER_TEST_DATA || "C:\\Local\\CA-Tracker-Test-Data"]
+  .filter((folder) => fs.existsSync(folder));
+const samples = folders.flatMap((folder) => fs.readdirSync(folder)
+  .filter((name) => name.endsWith(".json"))
+  .map((name) => path.join(folder, name)));
 
-for (const name of samples) {
-  test(`whose court: ${name}`, () => {
-    const sample = JSON.parse(fs.readFileSync(path.join(folder, name), "utf8"));
+for (const file of samples) {
+  test(`whose court: ${path.basename(file)}`, () => {
+    const sample = JSON.parse(fs.readFileSync(file, "utf8"));
     const snapshot = Snapshot.buildHelixSnapshot({
       context: { projectId: "project-1", projectName: "Sample project", itemType: "overview", user: sample.user },
       items: sample.items,
