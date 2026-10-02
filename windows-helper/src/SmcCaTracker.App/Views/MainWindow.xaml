@@ -452,7 +452,18 @@
                                             <ItemsControl x:Name="PersonChoiceList" ItemsSource="{Binding PersonChoices}">
                                                 <ItemsControl.ItemTemplate>
                                                     <DataTemplate>
-                                                        <CheckBox Content="{Binding Name}" IsChecked="{Binding IsChecked, Mode=TwoWay}" Margin="2,3" />
+                                                        <CheckBox Content="{Binding Label}" IsChecked="{Binding IsChecked, Mode=TwoWay}" Margin="2,3">
+                                                            <CheckBox.Style>
+                                                                <Style TargetType="CheckBox" BasedOn="{StaticResource {x:Type CheckBox}}">
+                                                                    <Style.Triggers>
+                                                                        <DataTrigger Binding="{Binding IsAbsent}" Value="True">
+                                                                            <Setter Property="Opacity" Value="0.6" />
+                                                                            <Setter Property="ToolTip" Value="Holds nothing in the projects shown; still checked, so the list stays filtered" />
+                                                                        </DataTrigger>
+                                                                    </Style.Triggers>
+                                                                </Style>
+                                                            </CheckBox.Style>
+                                                        </CheckBox>
                                                     </DataTemplate>
                                                 </ItemsControl.ItemTemplate>
                                             </ItemsControl>

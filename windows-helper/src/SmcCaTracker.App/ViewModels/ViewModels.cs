@@ -865,6 +865,11 @@ public sealed class PersonChoiceViewModel : ObservableObject
     public string Name { get; }
     public bool IsCompany { get; }
 
+    /// <summary>Checked earlier but holding nothing in the shown projects (listed greyed, still filtering).</summary>
+    public bool IsAbsent { get; init; }
+
+    public string Label => IsAbsent ? $"{Name} (nothing here)" : Name;
+
     public bool IsChecked
     {
         get => isChecked;

@@ -502,17 +502,23 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     /// </summary>
     public ObservableCollection<PersonChoiceViewModel> PersonChoices { get; } = new();
 
-    private IEnumerable<PersonChoiceViewModel> CheckedPeople => PersonChoices.Where(choice => choice.IsChecked);
-
-    public bool HasPersonFilter => CheckedPeople.Any();
+    // The checks are remembered by name (and "anyone at your company"), not by the list's entries: the
+    // list only has people holding something in the shown projects, and a check must keep filtering
+    // when you switch to a project where that person holds nothing.
+    public bool HasPersonFilter => rememberCompany || rememberedPeople.Count > 0;
     public bool HasNoPersonChoices => PersonChoices.Count == 0;
 
-    /// <summary>What the Person button shows: Everyone, one or two names, or a count.</summary>
+    /// <summary>What the Ball in court button shows: Everyone, one or two names, or a count.</summary>
     public string PersonFilterText
     {
         get
         {
-            var names = CheckedPeople.Select(choice => choice.Name).ToList();
+            var names = rememberedPeople.OrderBy(name => name, StringComparer.CurrentCultureIgnoreCase).ToList();
+            if (rememberCompany)
+            {
+                names.Insert(0, PersonChoices.FirstOrDefault(choice => choice.IsCompany)?.Name ?? "Anyone at your company");
+            }
+
             return names.Count switch
             {
                 0 => "Everyone",
@@ -3141,16 +3147,14 @@ public sealed class MainViewModel : ObservableObject, IDisposable
 
     private bool MatchesPerson(RowViewModel row)
     {
-        var chosen = CheckedPeople.ToList();
-        if (chosen.Count == 0)
+        if (!HasPersonFilter)
         {
             return true;
         }
 
-        // Any checked person (or the company) having the item is a match.
-        return chosen.Any(choice => choice.IsCompany
-            ? row.Holders.Any(holder => row.Comparison.Company.Matches(holder.CompanyId, holder.Company))
-            : row.HolderNames.Contains(choice.Name, StringComparer.OrdinalIgnoreCase));
+        // Any checked person (or anyone at the company) having the item is a match.
+        return (rememberCompany && row.Holders.Any(holder => row.Comparison.Company.Matches(holder.CompanyId, holder.Company)))
+            || row.HolderNames.Any(rememberedPeople.Contains);
     }
 
     /// <summary>
@@ -3243,11 +3247,18 @@ public sealed class MainViewModel : ObservableObject, IDisposable
             choices.Add(new PersonChoiceViewModel($"Anyone at {current.Company.DisplayName}", isCompany: true));
         }
 
-        choices.AddRange(allRows
-            .SelectMany(row => row.HolderNames)
+        else if (rememberCompany)
+        {
+            choices.Add(new PersonChoiceViewModel("Anyone at your company", isCompany: true) { IsAbsent = true });
+        }
+
+        var holding = allRows.SelectMany(row => row.HolderNames).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        // People checked earlier who hold nothing here stay listed (greyed), so the list shows what filters.
+        choices.AddRange(holding.Concat(rememberedPeople)
             .Distinct(StringComparer.OrdinalIgnoreCase)
-            .OrderBy(name => name, StringComparer.CurrentCultureIgnoreCase)
-            .Select(name => new PersonChoiceViewModel(name, isCompany: false)));
+            .OrderBy(name => !holding.Contains(name))
+            .ThenBy(name => name, StringComparer.CurrentCultureIgnoreCase)
+            .Select(name => new PersonChoiceViewModel(name, isCompany: false) { IsAbsent = !holding.Contains(name) }));
 
         foreach (var old in PersonChoices)
         {
