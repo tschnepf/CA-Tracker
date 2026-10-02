@@ -59,9 +59,16 @@ public interface ITrackerPersistence : IDisposable
 
     /// <summary>
     /// Puts every project and item in the change log as it is now (what was waiting is marked sent, as
-    /// this replaces it): used to send everything to a central server this PC hasn't used before.
+    /// this replaces it; waiting removals stay): used to send everything to a central server this PC
+    /// hasn't used before.
     /// </summary>
     void QueueEverything();
+
+    /// <summary>
+    /// Keeps the change log from growing while nothing is sent (<paramref name="sharing"/> false): drops
+    /// what is waiting if this PC never shared, otherwise all but the newest change of each project or item.
+    /// </summary>
+    void PruneChangeLog(bool sharing);
 }
 
 /// <summary>One entry of the change log: a project or item that was added, changed or removed.</summary>
@@ -211,6 +218,10 @@ public sealed class InMemoryPersistence : ITrackerPersistence
     }
 
     public void QueueEverything()
+    {
+    }
+
+    public void PruneChangeLog(bool sharing)
     {
     }
 

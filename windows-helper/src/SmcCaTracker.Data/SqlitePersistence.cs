@@ -2,7 +2,9 @@ using System.Globalization;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using Microsoft.Data.Sqlite;
+using SmcCaTracker.Core.Central;
 using SmcCaTracker.Core.Comparison;
 using SmcCaTracker.Core.Data;
 using SmcCaTracker.Core.Matching;
@@ -185,6 +187,31 @@ public sealed class SqlitePersistence : ITrackerPersistence
     private static string Hash(string text) => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(text)));
 
     private static string Json<T>(T value) => JsonSerializer.Serialize(value, TrackerJson.Options);
+
+    /// <summary>
+    /// An item as stored, for its content hash and the change log: dates in UTC, as the database keeps
+    /// them, so an item read back from the database hashes the same as when it was saved (Helix gives
+    /// local times such as -07:00, which would otherwise log every item again on each save).
+    /// </summary>
+    private static string ItemJson(SnapshotItem item) => JsonSerializer.Serialize(item, StoredJson);
+
+    private static readonly JsonSerializerOptions StoredJson = CreateStoredJson();
+
+    private static JsonSerializerOptions CreateStoredJson()
+    {
+        var options = new JsonSerializerOptions(TrackerJson.Options);
+        options.Converters.Insert(0, new UtcDates());
+        return options;
+    }
+
+    private sealed class UtcDates : JsonConverter<DateTimeOffset>
+    {
+        public override DateTimeOffset Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options) =>
+            reader.GetDateTimeOffset();
+
+        public override void Write(Utf8JsonWriter writer, DateTimeOffset value, JsonSerializerOptions options) =>
+            writer.WriteStringValue(value.ToUniversalTime());
+    }
 
     private static T? FromJson<T>(string? json) where T : class
     {
@@ -800,7 +827,7 @@ public sealed class SqlitePersistence : ITrackerPersistence
                 continue;
             }
 
-            var payload = Json(item);
+            var payload = ItemJson(item);
             var hash = Hash(payload);
             if (stored.TryGetValue(key, out var previousHash) && previousHash == hash)
             {
@@ -1016,13 +1043,41 @@ public sealed class SqlitePersistence : ITrackerPersistence
         return keys;
     }
 
+    public void PruneChangeLog(bool sharing)
+    {
+        if (sharing)
+        {
+            return;
+        }
+
+        var everShared = !string.IsNullOrEmpty(GetMeta(CentralSync.ServerKey));
+        using var scope = new WriteScope(this);
+        var transaction = scope.Transaction;
+        if (!everShared)
+        {
+            // Never shared: the first share sends everything as it is then, so nothing waiting is needed.
+            Execute("DELETE FROM change_log WHERE synced_at IS NULL;", transaction);
+        }
+        else
+        {
+            // Shared before, not now: only the newest change of each project or item would be sent.
+            Execute(
+                "DELETE FROM change_log WHERE synced_at IS NULL AND seq NOT IN " +
+                "(SELECT MAX(seq) FROM change_log WHERE synced_at IS NULL GROUP BY entity, entity_key);",
+                transaction);
+        }
+
+        scope.Commit();
+    }
+
     public void QueueEverything()
     {
         RunBatch(() =>
         {
             var transaction = ambient!;
             var now = Iso(DateTimeOffset.Now);
-            Execute("UPDATE change_log SET synced_at = $now WHERE synced_at IS NULL;", transaction, ("$now", now));
+            // Everything that is here goes again below; removals are kept waiting, as nothing else sends them.
+            Execute("UPDATE change_log SET synced_at = $now WHERE synced_at IS NULL AND operation <> 'delete';", transaction, ("$now", now));
             foreach (var project in LoadSettings().Projects)
             {
                 LogChange(transaction, "project", project.Id, "update", Json(project), now);
@@ -1034,7 +1089,7 @@ public sealed class SqlitePersistence : ITrackerPersistence
                 {
                     // Dated when the item was read, not now: a newer read elsewhere must win over it.
                     var readAt = Iso(snapshot.CoverageFor(item.ItemType)?.ScannedAt ?? snapshot.ScannedAt);
-                    LogChange(transaction, "item", $"{snapshot.Provider}|{snapshot.ProjectId}|{item.ItemType}|{item.ItemId}", "update", Json(item), readAt);
+                    LogChange(transaction, "item", $"{snapshot.Provider}|{snapshot.ProjectId}|{item.ItemType}|{item.ItemId}", "update", ItemJson(item), readAt);
                 }
             }
         });

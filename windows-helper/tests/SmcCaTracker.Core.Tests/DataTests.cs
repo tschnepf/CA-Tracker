@@ -1,4 +1,5 @@
 using Microsoft.Data.Sqlite;
+using SmcCaTracker.Core.Central;
 using SmcCaTracker.Core.Comparison;
 using SmcCaTracker.Core.Data;
 using SmcCaTracker.Core.Matching;
@@ -215,6 +216,73 @@ public class DatabaseTests
         Assert.Equal(3, ChangeCount(file, "item", "insert"));
         Assert.Equal(1, ChangeCount(file, "item", "update"));
         Assert.Equal(1, ChangeCount(file, "item", "delete"));
+    }
+
+    [Fact]
+    public void AnItemReadBackFromTheDatabaseIsNotLoggedAgain()
+    {
+        using var temp = new TempFolder();
+        var file = Path.Combine(temp.Root, "tracker.db");
+        // Helix gives local times (-07:00); the database keeps them in UTC.
+        var item = Item("a", "RFI-001");
+        item.CreatedAt = new DateTimeOffset(2026, 9, 1, 8, 30, 0, TimeSpan.FromHours(-7));
+        item.DueAt = new DateTimeOffset(2026, 10, 3, 17, 0, 0, TimeSpan.FromHours(-7));
+        item.Holders[0].Since = new DateTimeOffset(2026, 9, 20, 9, 0, 0, TimeSpan.FromHours(-7));
+        using (var database = new SqlitePersistence(file))
+        {
+            database.SaveSnapshot(SampleSnapshot(item));
+        }
+
+        using (var database = new SqlitePersistence(file))
+        {
+            database.SaveSnapshot(Assert.Single(database.Load().Snapshots));
+        }
+
+        Assert.Equal(1, ChangeCount(file, "item", "insert"));
+        Assert.Equal(0, ChangeCount(file, "item", "update"));
+    }
+
+    [Fact]
+    public void WaitingChangesAreTrimmedWhileNothingIsShared()
+    {
+        using var temp = new TempFolder();
+        using var database = new SqlitePersistence(Path.Combine(temp.Root, "tracker.db"));
+        database.SaveSnapshot(SampleSnapshot(Item("a", "RFI-001"), Item("b", "RFI-002")));
+        database.SaveSnapshot(SampleSnapshot(Item("a", "RFI-001", "Other Person"), Item("b", "RFI-002")));
+
+        // Never shared: nothing waiting is needed (the first share sends everything as it is then).
+        database.PruneChangeLog(sharing: false);
+        Assert.Empty(database.PendingChanges(100));
+
+        // Shared before but not connected now: only the newest change of each item is kept.
+        database.SetMeta(CentralSync.ServerKey, "https://ca.example.com");
+        database.SaveSnapshot(SampleSnapshot(Item("a", "RFI-001"), Item("b", "RFI-002")));
+        database.SaveSnapshot(SampleSnapshot(Item("a", "RFI-001", "Third Person"), Item("b", "RFI-002")));
+        database.SaveSnapshot(SampleSnapshot(Item("a", "RFI-001", "Third Person")));
+        database.PruneChangeLog(sharing: false);
+        var waiting = database.PendingChanges(100);
+        Assert.Equal(2, waiting.Count);
+        Assert.Contains("Third Person", Assert.Single(waiting, change => change.Key.EndsWith("|a")).Payload);
+        Assert.Equal("delete", Assert.Single(waiting, change => change.Key.EndsWith("|b")).Operation);
+
+        // Connected: changes are sent as they are, so nothing is trimmed.
+        database.SaveSnapshot(SampleSnapshot(Item("a", "RFI-001", "Fourth Person")));
+        database.PruneChangeLog(sharing: true);
+        Assert.Equal(3, database.PendingChanges(100).Count);
+    }
+
+    [Fact]
+    public void SendingEverythingKeepsRemovalsThatWereWaiting()
+    {
+        using var temp = new TempFolder();
+        using var database = new SqlitePersistence(Path.Combine(temp.Root, "tracker.db"));
+        database.SaveSnapshot(SampleSnapshot(Item("a", "RFI-001"), Item("b", "RFI-002")));
+        database.SaveSnapshot(SampleSnapshot(Item("a", "RFI-001")));
+
+        database.QueueEverything();
+        var waiting = database.PendingChanges(100);
+        Assert.Equal("update", Assert.Single(waiting, change => change.Key.EndsWith("|a")).Operation);
+        Assert.Equal("delete", Assert.Single(waiting, change => change.Key.EndsWith("|b")).Operation);
     }
 
     [Fact]

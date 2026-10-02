@@ -46,7 +46,7 @@ types), the same shape as the company server's PostgreSQL tables:
 | `folder_scans`, `folder_entries`, `folder_containers` | The CA folder index |
 | `accounts`, `preferences` | Sign-ins shown in Connections; settings and the last view |
 | `sync_runs` | Each Helix/Procore read: full or changes only, items, changes, errors |
-| `change_log` | Every change to a project (with its discipline choices) or item, until the company server has it |
+| `change_log` | Every change to a project (with its discipline choices) or item, until the company server has it. Without an access token nothing is sent, so it is trimmed: emptied if this PC never shared, otherwise down to the newest change of each project or item |
 
 On first start, the JSON files of earlier versions (`settings.json`, `snapshots\`, `catalog.json`,
 `accounts.json`, `view.json`) are imported and moved to `imported-json\` as a backup.

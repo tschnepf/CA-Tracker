@@ -49,7 +49,8 @@ public sealed class CentralSync
     public const int Batch = 500;
     internal const string CursorKey = "central_cursor";
     internal const string ClientKey = "central_client_id";
-    internal const string ServerKey = "central_server";
+    /// <summary>The server this PC last shared with (kept when disconnecting, so reconnecting sends what waited).</summary>
+    public const string ServerKey = "central_server";
     internal const string BaselineKey = "central_send_everything";
 
     private readonly TrackerStore store;
