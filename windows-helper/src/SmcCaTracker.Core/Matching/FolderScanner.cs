@@ -300,7 +300,9 @@ public static class FolderScanner
 
     /// <summary>
     /// The returned folder directly inside <paramref name="level"/>: "~Returned" itself if it's there,
-    /// otherwise one like "~Returned (Base Build)", preferring the one for the item's part.
+    /// otherwise one like "~Returned (Base Build)" for the item's part, or one whose note names no part.
+    /// One for another part is never used, even when it is the only one: a Tenant Fit Out folder doesn't
+    /// go in "~Returned (Base Build)".
     /// </summary>
     public static string? FindReturnedChild(string level, string returnedName, ProjectPhase? phase)
     {
@@ -314,8 +316,7 @@ public static class FolderScanner
             .ToList();
         return candidates.FirstOrDefault(directory => string.Equals(directory.Name.Trim(), returnedName, StringComparison.OrdinalIgnoreCase))?.FullName
             ?? (phase is null ? null : candidates.FirstOrDefault(directory => Phases.Detect(directory.Name) == phase)?.FullName)
-            ?? candidates.FirstOrDefault(directory => Phases.Detect(directory.Name) is null)?.FullName
-            ?? (candidates.Count == 1 ? candidates[0].FullName : null);
+            ?? candidates.FirstOrDefault(directory => Phases.Detect(directory.Name) is null)?.FullName;
     }
 
     /// <summary>

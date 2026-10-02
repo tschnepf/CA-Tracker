@@ -55,7 +55,10 @@ public static class OperationPlanner
             var scan = comparison.For(row.ItemType).Scan;
             var folder = row.Folder!;
             var destinationParent = ReturnedDestination(folder, scan, comparison.Folders);
-            if (!Directory.Exists(destinationParent) && creating.Add(destinationParent))
+            var destination = Path.Combine(destinationParent, folder.Name);
+            // Checked first, so a move that can't happen doesn't leave an empty returned folder behind.
+            var problem = MoveProblem(folder, FolderLocation.Active, destination, targets);
+            if (problem is null && !Directory.Exists(destinationParent) && creating.Add(destinationParent))
             {
                 operations.Add(new PlannedOperation
                 {
@@ -64,13 +67,10 @@ public static class OperationPlanner
                     Title = comparison.Folders.ReturnedIsShared
                         ? $"Create the {returnedName} folder"
                         : $"Create {Display(scan.TypeFolderPath, destinationParent)}",
-                    BlockedReason = Directory.Exists(Path.GetDirectoryName(destinationParent))
-                        ? null
-                        : $"{Path.GetDirectoryName(destinationParent)} does not exist."
+                    BlockedReason = CreateProblem(destinationParent, scan)
                 });
             }
 
-            var destination = Path.Combine(destinationParent, folder.Name);
             operations.Add(new PlannedOperation
             {
                 Kind = OperationKind.MoveFolder,
@@ -80,7 +80,7 @@ public static class OperationPlanner
                 Warning = row.Item is null
                     ? "This folder was not matched to a provider item."
                     : row.IsReturned ? null : $"The provider still shows this as: {CourtEvaluator.Describe(row.Court, comparison.Company)}.",
-                BlockedReason = MoveProblem(folder, FolderLocation.Active, destination, targets)
+                BlockedReason = problem
             });
         }
 
@@ -210,6 +210,28 @@ public static class OperationPlanner
             Description = "These folders will be created in the project's CA folder.",
             Operations = operations
         };
+    }
+
+    /// <summary>
+    /// Why a missing returned folder can't be created. Folders missing on the way inside the item type's
+    /// folder (~Returned\Elec\BB) are created with it; the type's folder itself (for a returned folder
+    /// outside it, the folder it goes in) has to be there already, so nothing is created on a drive that
+    /// is offline or in a CA folder that has moved.
+    /// </summary>
+    private static string? CreateProblem(string folder, TypeFolderScan scan)
+    {
+        var root = !string.IsNullOrEmpty(scan.TypeFolderPath) && FolderScanner.IsInside(folder, scan.TypeFolderPath)
+            ? scan.TypeFolderPath
+            : Path.GetDirectoryName(folder);
+        var existing = Path.GetDirectoryName(folder);
+        while (existing is not null && !Directory.Exists(existing))
+        {
+            existing = Path.GetDirectoryName(existing);
+        }
+
+        return root is not null && existing is not null && FolderScanner.IsInside(existing, root)
+            ? null
+            : $"{root ?? folder} does not exist.";
     }
 
     private static string? MoveProblem(

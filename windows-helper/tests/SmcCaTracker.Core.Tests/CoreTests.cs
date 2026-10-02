@@ -1045,6 +1045,67 @@ public class NestedFolderTests
     }
 
     [Fact]
+    public void MarkingReturnedCreatesTheGroupFoldersMissingInsideReturned()
+    {
+        using var temp = new TempFolder();
+        var ca = temp.Make("CA");
+        var submittals = temp.Make("CA", "Submittals");
+        var doors = temp.Make("CA", "Submittals", "Elec", "BB", "P000210 - Doors");
+        temp.Make("CA", "Submittals", "~Returned");
+
+        // Only Submittals\~Returned exists: ~Returned\Elec\BB is created in one step, then the folder moves.
+        var comparison = ProjectComparer.Compare(null, new TrackerProject { Name = "P", CaFolder = ca }, new TrackerSettings());
+        var row = comparison.For(ItemTypes.Submittal).Rows.Single(candidate => candidate.Folder?.Name.StartsWith("P000210") == true);
+        var plan = OperationPlanner.PlanMarkReturned(new[] { row }, comparison);
+        var target = Path.Combine(submittals, "~Returned", "Elec", "BB");
+        Assert.Equal(2, plan.Operations.Count);
+        Assert.Equal(OperationKind.CreateFolder, plan.Operations[0].Kind);
+        Assert.Equal(target, plan.Operations[0].DestinationPath);
+        Assert.False(plan.Operations[0].IsBlocked);
+        Assert.Equal(Path.Combine(target, "P000210 - Doors"), plan.Operations[1].DestinationPath);
+        Assert.False(plan.Operations[1].IsBlocked);
+
+        var results = new OperationExecutor(new AppPaths(temp.Make("appdata"))).Execute(plan);
+        Assert.All(results, result => Assert.Equal(OperationOutcome.Done, result.Outcome));
+        Assert.True(Directory.Exists(Path.Combine(target, "P000210 - Doors")));
+        Assert.False(Directory.Exists(doors));
+    }
+
+    [Fact]
+    public void ABlockedMoveDoesNotCreateAnEmptyReturnedFolder()
+    {
+        using var temp = new TempFolder();
+        var ca = temp.Make("CA");
+        var doors = temp.Make("CA", "Submittals", "Elec", "BB", "P000210 - Doors");
+        temp.Make("CA", "Submittals", "~Returned");
+        var comparison = ProjectComparer.Compare(null, new TrackerProject { Name = "P", CaFolder = ca }, new TrackerSettings());
+        var row = comparison.For(ItemTypes.Submittal).Rows.Single(candidate => candidate.Folder?.Name.StartsWith("P000210") == true);
+        Directory.Delete(doors);
+
+        var operation = Assert.Single(OperationPlanner.PlanMarkReturned(new[] { row }, comparison).Operations);
+        Assert.Equal(OperationKind.MoveFolder, operation.Kind);
+        Assert.True(operation.IsBlocked);
+    }
+
+    [Fact]
+    public void ATenantFitOutFolderIsNotFiledInTheBaseBuildReturnedFolder()
+    {
+        using var temp = new TempFolder();
+        var ca = temp.Make("CA");
+        var submittals = temp.Make("CA", "Submittals");
+        temp.Make("CA", "Submittals", "TFO", "P000300 - Lights");
+        temp.Make("CA", "Submittals", "~Returned (Base Build)");
+
+        var comparison = ProjectComparer.Compare(null, new TrackerProject { Name = "P", CaFolder = ca }, new TrackerSettings());
+        var row = comparison.For(ItemTypes.Submittal).Rows.Single(candidate => candidate.Folder?.Name.StartsWith("P000300") == true);
+        var plan = OperationPlanner.PlanMarkReturned(new[] { row }, comparison);
+        Assert.Equal(OperationKind.CreateFolder, plan.Operations[0].Kind);
+        Assert.Equal(Path.Combine(submittals, "~Returned"), plan.Operations[0].DestinationPath);
+        Assert.False(plan.Operations[0].IsBlocked);
+        Assert.Equal(Path.Combine(submittals, "~Returned", "P000300 - Lights"), plan.Operations[1].DestinationPath);
+    }
+
+    [Fact]
     public void PartAndDisciplineComeFromTheFoldersAnItemSitsIn()
     {
         using var temp = new TempFolder();
