@@ -247,14 +247,19 @@
                     <DockPanel>
                         <StackPanel DockPanel.Dock="Right" VerticalAlignment="Center" Margin="16,0,0,0">
                             <Button Content="Sign out of Helix and Procore…" Click="ClearBrowser_Click"
+                                    IsEnabled="{Binding CanSignOutOfBrowser}"
                                     ToolTip="Ends both sign-ins; your saved usernames and passwords are kept" />
                             <Button Content="Sign out and forget saved passwords…" Click="ForgetBrowser_Click" Margin="0,8,0,0"
+                                    IsEnabled="{Binding CanSignOutOfBrowser}"
                                     ToolTip="Ends both sign-ins and deletes the usernames and passwords saved in CA Tracker's browser" />
                         </StackPanel>
                         <StackPanel>
                             <TextBlock Text="SIGN OUT" Style="{StaticResource SectionTitle}" />
                             <TextBlock Style="{StaticResource Muted}" TextWrapping="Wrap"
                                        Text="Signs CA Tracker's own browser out of both sites (your web browser isn't affected). Sign out keeps your saved usernames and passwords, so signing in again above fills them in; the second button forgets them too." />
+                            <TextBlock Text="You're not signed in to Helix or Procore, so there's nothing to sign out of."
+                                       Foreground="{DynamicResource TextSecondary}" Margin="0,6,0,0" TextWrapping="Wrap"
+                                       Visibility="{Binding IsSignedOutOfBrowser, Converter={StaticResource Visible}}" />
                             <TextBlock x:Name="SignOutMessage" Foreground="{DynamicResource DangerBrush}" Margin="0,6,0,0" TextWrapping="Wrap" />
                         </StackPanel>
                     </DockPanel>

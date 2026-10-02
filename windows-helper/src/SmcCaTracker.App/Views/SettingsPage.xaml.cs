@@ -315,7 +315,7 @@ public partial class SettingsPage : UserControl
     /// <summary>Signs out of Helix and Procore, keeping the saved usernames and passwords unless told to forget them.</summary>
     private async Task SignOutAsync(bool forgetPasswords)
     {
-        if (paths is null || DataContext is not MainViewModel model)
+        if (paths is null || DataContext is not MainViewModel { CanSignOutOfBrowser: true } model)
         {
             return;
         }

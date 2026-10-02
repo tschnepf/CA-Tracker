@@ -870,7 +870,13 @@ public sealed class MainViewModel : ObservableObject, IDisposable
 
         OnPropertyChanged(nameof(ShowSignInBanner));
         OnPropertyChanged(nameof(SignInBannerText));
+        OnPropertyChanged(nameof(CanSignOutOfBrowser));
+        OnPropertyChanged(nameof(IsSignedOutOfBrowser));
     }
+
+    /// <summary>Signed in to Helix or Procore (or the sign-in has expired): the sign-out buttons apply.</summary>
+    public bool CanSignOutOfBrowser => Connections.Any(connection => connection.IsSignedIn || connection.NeedsSignIn);
+    public bool IsSignedOutOfBrowser => !CanSignOutOfBrowser;
 
     private List<ProjectViewModel> ProjectsFor(string provider, bool includeUntracked = false) =>
         Projects.Where(project => (includeUntracked || !project.IsPlaceholder) && project.Project.Connection is not null
