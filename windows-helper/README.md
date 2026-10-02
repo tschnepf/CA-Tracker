@@ -199,7 +199,8 @@ While a Helix item is open in the panel, CA Tracker checks it every few seconds.
 (or answer, close or void it) and Helix saves the change, CA Tracker re-reads that project's RFIs or
 Submittals and updates the list by itself — the item leaves your court (and your person filter) without
 a sync. The panel's status line says where the item went. Esc closes the panel. Closing the item (or opening another)
-re-reads the project once more, so changes you made to other items in the panel are picked up too.
+re-reads the project once more, so changes you made to other items in the panel are picked up too; the
+panel closes at once and that re-read finishes behind it.
 Procore items update at the next background sync.
 
 ## Test cases from real projects

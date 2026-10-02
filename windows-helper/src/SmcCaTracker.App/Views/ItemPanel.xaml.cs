@@ -82,7 +82,7 @@ public partial class ItemPanel : UserControl
     {
         var attempt = ++openAttempt;
         RetryButton.Visibility = Visibility.Collapsed;
-        if (opened)
+        if (opened || updateStartedAt is not null)
         {
             SetStatus("Checking the last item's project for changes made here…");
         }
@@ -581,31 +581,40 @@ public partial class ItemPanel : UserControl
     private void FinishUpdate(string message)
     {
         updateStartedAt = null;
-        SetStatus(message);
+        if (itemId.Length > 0)
+        {
+            // Once the panel has closed its last re-read finishes behind it, with nothing to show.
+            SetStatus(message);
+        }
+
         updateDone?.TrySetResult();
     }
 
     /// <summary>
     /// Finishes with the item shown: stops watching it and re-reads its project once more, so changes made
-    /// to other items here are picked up too (up to a minute). Nothing to do when no item opened.
+    /// to other items here are picked up too, waiting up to a minute (or <paramref name="wait"/>). Also waits
+    /// for a re-read still running for an item closed before (Close doesn't wait for it).
     /// </summary>
     public async Task FinishAsync(TimeSpan? wait = null)
     {
         watchTimer.Stop();
-        if (!opened || pageDead || Browser.CoreWebView2 is null || store is null)
+        if (pageDead || Browser.CoreWebView2 is null || store is null)
         {
             return;
         }
 
-        opened = false;
         try
         {
-            if (updateStartedAt is null)
+            if (opened)
             {
-                await StartUpdateAsync(quiet: true);
+                opened = false;
+                if (updateStartedAt is null)
+                {
+                    await StartUpdateAsync(quiet: true);
+                }
             }
 
-            if (updateDone is { } done)
+            if (updateStartedAt is not null && updateDone is { } done)
             {
                 await Task.WhenAny(done.Task, Task.Delay(wait ?? TimeSpan.FromSeconds(60)));
             }
@@ -654,14 +663,16 @@ public partial class ItemPanel : UserControl
         // The "didn't open within a minute" check for this item no longer applies: without this it
         // reopened the item in the hidden panel a minute after it was opened.
         openAttempt++;
-        SetStatus("Checking the project once more for changes made here…");
-        await FinishAsync();
+        // The panel closes at once. The last re-read of the project (a few seconds on a big one) carries on
+        // behind it, and opening another item waits for it.
+        var finishing = FinishAsync();
         // An item still opening may answer later: with no item set, that answer is ignored.
         opening = false;
         itemId = "";
         HeadingText.Text = "";
         SetStatus("");
         CloseRequested?.Invoke(this, EventArgs.Empty);
+        await finishing;
     }
 
     private void SetStatus(string message) => StatusText.Text = message;
