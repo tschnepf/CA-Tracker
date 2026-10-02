@@ -40,12 +40,30 @@
                                             Visibility="{Binding IsSyncing, Converter={StaticResource Visible}}" />
                                 </StackPanel>
                                 <StackPanel Margin="0,0,12,0">
-                                    <TextBlock Text="{Binding Label}" FontSize="15" FontWeight="SemiBold" />
+                                    <StackPanel Orientation="Horizontal">
+                                        <TextBlock Text="{Binding Label}" FontSize="15" FontWeight="SemiBold" VerticalAlignment="Center" />
+                                        <Border Style="{StaticResource ConnectionBadge}" Margin="10,0,0,0">
+                                            <StackPanel Orientation="Horizontal">
+                                                <TextBlock Style="{StaticResource ConnectionGlyph}" RenderTransformOrigin="0.5,0.55">
+                                                    <TextBlock.RenderTransform>
+                                                        <RotateTransform Angle="0" />
+                                                    </TextBlock.RenderTransform>
+                                                </TextBlock>
+                                                <TextBlock Text="{Binding StateText}" FontSize="12" FontWeight="SemiBold" />
+                                            </StackPanel>
+                                        </Border>
+                                    </StackPanel>
                                     <TextBlock Text="{Binding StatusText}" Margin="0,4,0,0" />
                                     <TextBlock Text="{Binding LastSyncedText}" Foreground="{DynamicResource TextSecondary}" Margin="0,2,0,0" />
                                     <TextBlock Text="{Binding ProjectsText}" Foreground="{DynamicResource TextSecondary}" Margin="0,2,0,0" />
+                                    <ProgressBar Value="{Binding ProgressValue, Mode=OneWay}" IsIndeterminate="{Binding IsProgressUnknown, Mode=OneWay}"
+                                                 Maximum="100" Height="4" Margin="0,10,0,0" BorderThickness="0"
+                                                 Background="{DynamicResource LineBrush}" Foreground="{DynamicResource AccentBrush}"
+                                                 Visibility="{Binding IsBusy, Converter={StaticResource Visible}}" />
                                     <TextBlock Text="{Binding SyncMessage}" Foreground="{DynamicResource AccentBrush}" Margin="0,6,0,0"
                                                TextWrapping="Wrap" Visibility="{Binding HasSyncMessage, Converter={StaticResource Visible}}" />
+                                    <TextBlock Text="{Binding FailedText}" Foreground="{DynamicResource WarningBrush}" Margin="0,6,0,0"
+                                               TextWrapping="Wrap" Visibility="{Binding HasFailedText, Converter={StaticResource Visible}}" />
                                 </StackPanel>
                             </DockPanel>
                         </Border>

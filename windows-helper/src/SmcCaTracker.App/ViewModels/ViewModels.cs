@@ -579,6 +579,12 @@ public sealed class ConnectionViewModel : ObservableObject
     private bool isSignedIn;
     private bool isSyncing;
     private string syncMessage = "";
+    private bool needsSignIn;
+    private bool hasSynced;
+    private int failedCount;
+    private string failedText = "";
+    private int busyDepth;
+    private double? progress;
 
     public ConnectionViewModel(string provider)
     {
@@ -632,7 +638,129 @@ public sealed class ConnectionViewModel : ObservableObject
                 OnPropertyChanged(nameof(ConnectButtonText));
                 OnPropertyChanged(nameof(IsListed));
                 OnPropertyChanged(nameof(CanSync));
+                RaiseState();
             }
+        }
+    }
+
+    /// <summary>Signed in before, but that sign-in has expired.</summary>
+    public bool NeedsSignIn
+    {
+        get => needsSignIn;
+        set
+        {
+            if (Set(ref needsSignIn, value))
+            {
+                RaiseState();
+            }
+        }
+    }
+
+    /// <summary>At least one of its projects has been read.</summary>
+    public bool HasSynced
+    {
+        get => hasSynced;
+        set
+        {
+            if (Set(ref hasSynced, value))
+            {
+                RaiseState();
+            }
+        }
+    }
+
+    /// <summary>Projects whose latest read failed, with nothing read since.</summary>
+    public int FailedCount
+    {
+        get => failedCount;
+        set
+        {
+            if (Set(ref failedCount, value))
+            {
+                RaiseState();
+            }
+        }
+    }
+
+    /// <summary>Which projects couldn't be read, shown under the card when nothing is running.</summary>
+    public string FailedText
+    {
+        get => failedText;
+        set
+        {
+            if (Set(ref failedText, value))
+            {
+                OnPropertyChanged(nameof(HasFailedText));
+            }
+        }
+    }
+
+    public bool HasFailedText => !IsBusy && !string.IsNullOrWhiteSpace(FailedText);
+
+    /// <summary>
+    /// Its projects are being read now, by Sync, a Refresh or the background sync. Counted, so
+    /// overlapping reads don't end each other.
+    /// </summary>
+    public void BeginBusy()
+    {
+        if (++busyDepth == 1)
+        {
+            Progress = null;
+            RaiseState();
+        }
+    }
+
+    public void EndBusy()
+    {
+        if (busyDepth > 0 && --busyDepth == 0)
+        {
+            RaiseState();
+        }
+    }
+
+    public bool IsBusy => IsSyncing || busyDepth > 0;
+
+    /// <summary>0–100 across the projects being read; null until that is known (finding projects, waiting a turn).</summary>
+    public double? Progress
+    {
+        get => progress;
+        set
+        {
+            if (Set(ref progress, value))
+            {
+                OnPropertyChanged(nameof(ProgressValue));
+                OnPropertyChanged(nameof(IsProgressUnknown));
+            }
+        }
+    }
+
+    public double ProgressValue => progress ?? 0;
+    public bool IsProgressUnknown => IsBusy && progress is null;
+
+    /// <summary>For the status badge: syncing, signin, off, failed, synced or idle.</summary>
+    public string State =>
+        IsBusy ? "syncing"
+        : NeedsSignIn ? "signin"
+        : !IsSignedIn ? "off"
+        : FailedCount > 0 ? "failed"
+        : HasSynced ? "synced"
+        : "idle";
+
+    public string StateText => State switch
+    {
+        "syncing" => "Syncing",
+        "signin" => "Sign-in needed",
+        "off" => "Not connected",
+        "failed" => FailedCount == 1 ? "1 project not read" : $"{FailedCount} projects not read",
+        "synced" => "Synced",
+        _ => "Not synced yet"
+    };
+
+    private void RaiseState()
+    {
+        foreach (var name in new[] { nameof(IsBusy), nameof(State), nameof(StateText), nameof(HasFailedText), nameof(IsProgressUnknown) })
+        {
+            OnPropertyChanged(name);
         }
     }
 
@@ -648,8 +776,14 @@ public sealed class ConnectionViewModel : ObservableObject
         {
             if (Set(ref isSyncing, value))
             {
+                if (value)
+                {
+                    Progress = null;
+                }
+
                 OnPropertyChanged(nameof(CanSync));
                 OnPropertyChanged(nameof(IsNotSyncing));
+                RaiseState();
             }
         }
     }

@@ -702,6 +702,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         {
             var account = store.Account(connection.Provider);
             connection.IsSignedIn = account is { NeedsSignIn: false };
+            connection.NeedsSignIn = account is { NeedsSignIn: true };
             connection.StatusText = account is null
                 ? "Not connected"
                 : account.NeedsSignIn
@@ -728,6 +729,19 @@ public sealed class MainViewModel : ObservableObject, IDisposable
             connection.LastSyncedText = lastSynced is null
                 ? "Never synced"
                 : $"Last synced {Formatting.When(lastSynced.Value)}";
+            connection.HasSynced = lastSynced is not null;
+
+            var failed = projects
+                .Where(project => project.LastReadFailed && !IsSyncSkipped(project) && !project.IsArchived)
+                .Select(project => project.Name)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+            connection.FailedCount = failed.Count;
+            connection.FailedText = failed.Count == 0
+                ? ""
+                : $"⚠ Couldn't be read last time: {string.Join(", ", failed.Take(5))}" +
+                  (failed.Count > 5 ? $" and {failed.Count - 5} more" : "") +
+                  ". Hover one in the project list to see why.";
         }
 
         OnPropertyChanged(nameof(HasNoListedConnections));
@@ -1016,11 +1030,17 @@ public sealed class MainViewModel : ObservableObject, IDisposable
             project.MarkSynced();
         }
 
+        // Settings → Connections shows the site reading too, whichever way the sync started.
+        var provider = projects.Count > 0 ? projects[0].Project.Connection!.Provider : null;
+        var site = Connections.FirstOrDefault(connection => string.Equals(connection.Provider, provider, StringComparison.OrdinalIgnoreCase));
+        site?.BeginBusy();
+        ProviderSyncResult? result = null;
+
         var run = BeginSyncProgress(label, groups.Count);
         OnHeaderChanged();
         try
         {
-            return await sync(
+            result = await sync(
                 groups.Select(group => toTarget(group[0])).ToList(),
                 (index, _) =>
                 {
@@ -1039,8 +1059,17 @@ public sealed class MainViewModel : ObservableObject, IDisposable
                     }
 
                     UpdateSyncProgress(run, index, groups[index][0].Name);
+                    if (site is not null)
+                    {
+                        site.Progress = 100.0 * index / groups.Count;
+                        site.SyncMessage = groups.Count == 1
+                            ? $"Syncing {groups[index][0].Name}…"
+                            : $"Syncing {groups[index][0].Name} ({index + 1} of {groups.Count})…";
+                    }
+
                     starting?.Invoke(index, groups[index][0]);
                 });
+            return result;
         }
         finally
         {
@@ -1062,6 +1091,18 @@ public sealed class MainViewModel : ObservableObject, IDisposable
             }
 
             EndSyncProgress(run, projects);
+            if (site is not null)
+            {
+                site.EndBusy();
+                if (!site.IsBusy)
+                {
+                    // A Refresh from the project list: the badge shows how it went. (Sync and the
+                    // background sync write their own summary after this.)
+                    site.SyncMessage = result?.Problem ?? "";
+                }
+            }
+
+            RefreshAccounts();
             OnHeaderChanged();
         }
     }
@@ -2232,8 +2273,16 @@ public sealed class MainViewModel : ObservableObject, IDisposable
                 {
                     var connection = ConnectionFor(Providers.Procore);
                     connection.SyncMessage = "Finding your Procore companies and projects…";
-                    var discovery = await DiscoverProcoreAsync();
-                    connection.SyncMessage = discovery.Problem ?? FoundText(discovery);
+                    connection.BeginBusy();
+                    try
+                    {
+                        var discovery = await DiscoverProcoreAsync();
+                        connection.SyncMessage = discovery.Problem ?? FoundText(discovery);
+                    }
+                    finally
+                    {
+                        connection.EndBusy();
+                    }
                 }
 
                 if (store.Account(Providers.Procore) is { NeedsSignIn: false })

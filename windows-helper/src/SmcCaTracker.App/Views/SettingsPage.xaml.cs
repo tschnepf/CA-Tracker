@@ -331,6 +331,15 @@ public partial class SettingsPage : UserControl
         }
     }
 
+    private void Stop_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is FrameworkElement { DataContext: ConnectionViewModel connection })
+        {
+            connection.StopRequested = true;
+            connection.SyncMessage = "Stopping after the current project…";
+        }
+    }
+
     private static List<string> SplitList(string text) =>
         text.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
             .Distinct(StringComparer.OrdinalIgnoreCase)

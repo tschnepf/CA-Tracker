@@ -32,6 +32,64 @@
         <Setter Property="TextWrapping" Value="Wrap" />
     </Style>
 
+    <!-- A site's sync status (ConnectionViewModel.State) on the Connections page and in the Sync window. -->
+    <Style x:Key="ConnectionBadge" TargetType="Border">
+        <Setter Property="CornerRadius" Value="10" />
+        <Setter Property="Padding" Value="8,2" />
+        <Setter Property="VerticalAlignment" Value="Center" />
+        <Setter Property="Background" Value="{DynamicResource NeutralSoftBrush}" />
+        <Setter Property="TextElement.Foreground" Value="{DynamicResource TextSecondary}" />
+        <Style.Triggers>
+            <DataTrigger Binding="{Binding State}" Value="syncing">
+                <Setter Property="Background" Value="{DynamicResource AccentSoftBrush}" />
+                <Setter Property="TextElement.Foreground" Value="{DynamicResource AccentBrush}" />
+            </DataTrigger>
+            <DataTrigger Binding="{Binding State}" Value="synced">
+                <Setter Property="Background" Value="{DynamicResource SuccessSoftBrush}" />
+                <Setter Property="TextElement.Foreground" Value="{DynamicResource SuccessBrush}" />
+            </DataTrigger>
+            <DataTrigger Binding="{Binding State}" Value="failed">
+                <Setter Property="Background" Value="{DynamicResource WarningSoftBrush}" />
+                <Setter Property="TextElement.Foreground" Value="{DynamicResource WarningBrush}" />
+            </DataTrigger>
+            <DataTrigger Binding="{Binding State}" Value="signin">
+                <Setter Property="Background" Value="{DynamicResource DangerSoftBrush}" />
+                <Setter Property="TextElement.Foreground" Value="{DynamicResource DangerBrush}" />
+            </DataTrigger>
+        </Style.Triggers>
+    </Style>
+
+    <!-- The badge's mark: spinning while syncing, as in the project list. The element sets its own RotateTransform. -->
+    <Style x:Key="ConnectionGlyph" TargetType="TextBlock">
+        <Setter Property="Margin" Value="0,0,5,0" />
+        <Setter Property="Text" Value="○" />
+        <Style.Triggers>
+            <DataTrigger Binding="{Binding State}" Value="syncing">
+                <Setter Property="Text" Value="⟳" />
+                <DataTrigger.EnterActions>
+                    <BeginStoryboard x:Name="SpinConnection">
+                        <Storyboard>
+                            <DoubleAnimation Storyboard.TargetProperty="(TextBlock.RenderTransform).(RotateTransform.Angle)"
+                                             From="0" To="360" Duration="0:0:1.2" RepeatBehavior="Forever" />
+                        </Storyboard>
+                    </BeginStoryboard>
+                </DataTrigger.EnterActions>
+                <DataTrigger.ExitActions>
+                    <StopStoryboard BeginStoryboardName="SpinConnection" />
+                </DataTrigger.ExitActions>
+            </DataTrigger>
+            <DataTrigger Binding="{Binding State}" Value="synced">
+                <Setter Property="Text" Value="✓" />
+            </DataTrigger>
+            <DataTrigger Binding="{Binding State}" Value="failed">
+                <Setter Property="Text" Value="⚠" />
+            </DataTrigger>
+            <DataTrigger Binding="{Binding State}" Value="signin">
+                <Setter Property="Text" Value="⚠" />
+            </DataTrigger>
+        </Style.Triggers>
+    </Style>
+
     <Style TargetType="Button">
         <Setter Property="Foreground" Value="{DynamicResource TextPrimary}" />
         <Setter Property="Background" Value="{DynamicResource SurfaceAltBackground}" />
