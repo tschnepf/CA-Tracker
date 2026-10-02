@@ -20,4 +20,18 @@ public sealed class ProviderSitesTests
     [InlineData("https://project.helixteam.com/")]
     public void ItemPanelLeavesYourOwnHelixPagesAlone(string destination) =>
         Assert.False(ProviderSites.ClosesHelixItem(new Uri(destination), RfiList));
+
+    [Theory]
+    [InlineData("https://project.helixteam.com/Account/Login?ReturnUrl=%2F", true)]
+    [InlineData("https://project.helixteam.com/login", true)]
+    [InlineData("https://project.helixteam.com/sign-in/", true)]
+    [InlineData("https://app.procore.com/auth", true)]
+    [InlineData("https://project.helixteam.com/sso/start", true)]
+    [InlineData("https://project.helixteam.com/Login.aspx", true)]
+    [InlineData("https://project.helixteam.com/Projects/42/Associated", false)]
+    [InlineData("https://project.helixteam.com/Projects/42/Author", false)]
+    [InlineData("https://app.procore.com/12/company/Accounts", false)]
+    [InlineData("https://app.procore.com/rest/v1.0/me", false)]
+    public void SignInPagesAreWholePathSegments(string address, bool signIn) =>
+        Assert.Equal(signIn, ProviderSites.LooksLikeSignIn(new Uri(address)));
 }
