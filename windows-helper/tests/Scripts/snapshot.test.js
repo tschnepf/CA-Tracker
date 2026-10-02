@@ -206,6 +206,9 @@ test("Procore rows keep the Ball In Court people and a due date from any due col
     due_date_formatted: { text: "2026-10-05", href: "" },
     status: { text: "Open", href: "" }
   }], "2026-09-29T15:00:00Z");
+  // The link is on the subject: the number comes from its own column, not from the title.
+  assert.equal(queue.items[0].number, "7");
+  assert.equal(queue.items[0].title, "Slab edge");
   const snapshot = Snapshot.buildProcoreProjectSnapshot(queue, { projectId: "34", accountId: "12", itemTypes: ["rfi"] });
   const entry = snapshot.items[0];
   assert.deepEqual(entry.holders.map((holder) => [holder.name, holder.state]), [["Alex Architect", "current"], ["Sam Coworker", "current"]]);

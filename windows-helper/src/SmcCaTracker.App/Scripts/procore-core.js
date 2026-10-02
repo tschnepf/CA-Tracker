@@ -98,7 +98,8 @@
     return { text: "", href: "" };
   }
 
-  const ITEM_LINK = /\/(?:tools\/(rfis|submittals)\/\d+|project\/(rfi)\/show\/\d+|project\/(submittal)s?(?:_log)?(?:\/show)?\/\d+)/i;
+  // Submittal links come as /project/submittal(s)/…, /project/submittal_log(s)/… or /project/submittals_log/….
+  const ITEM_LINK = /\/(?:tools\/(rfis|submittals)\/\d+|project\/(rfi)\/show\/\d+|project\/(submittal)s?(?:_logs?)?(?:\/show)?\/\d+)/i;
 
   function itemTypeFromHref(href) {
     const match = String(href || "").match(ITEM_LINK);
@@ -116,11 +117,16 @@
     return { cell: title, name: "title" };
   }
 
-  // "#12: Slab edge" in a title column, or a number link with the title in its own column.
+  // "#12: Slab edge" in a title column, a number link with the title in its own column, or a title link
+  // (in a column named "subject", say) with the number in its own column.
   function numberAndTitle(row, link) {
+    const numberColumn = textValue(cellValue(row, "number").text).replace(/^#/, "");
     if (link.name === "title") {
       const parsed = splitNumberAndTitle(link.cell.text);
-      return parsed.number ? parsed : { number: textValue(cellValue(row, "number").text), title: parsed.title };
+      return parsed.number ? parsed : { number: numberColumn, title: parsed.title };
+    }
+    if (link.name !== "number" && numberColumn) {
+      return { number: numberColumn, title: textValue(link.cell.text) };
     }
     const title = ["title", "subject", "name", "description"]
       .map((name) => cellValue(row, name).text)
@@ -128,9 +134,11 @@
     return { number: textValue(link.cell.text).replace(/^#/, ""), title: textValue(title || link.cell.text) };
   }
 
+  // Only a number-like start counts ("#12:", "RFI-12:", "S 4:", "03 30 00-1:"), so a title such as
+  // "Door Hardware: confirm finish" stays whole.
   function splitNumberAndTitle(value) {
     const normalized = textValue(value);
-    const match = normalized.match(/^#?([^:]{1,100}):\s*(.+)$/);
+    const match = normalized.match(/^#?([A-Za-z]{0,4}[-\s]?\d[^:]{0,60}):\s*(.+)$/);
     return match
       ? { number: textValue(match[1]), title: textValue(match[2]) }
       : { number: "", title: normalized };
@@ -173,7 +181,7 @@
         /\/project\/rfi\/show\/(\d+)(?:\/|$)/i,
         /\/tools\/rfis\/(\d+)(?:\/|$)/i
       ] : [
-        /\/project\/(?:submittals?|submittal_log)(?:\/show)?\/(\d+)(?:\/|$)/i,
+        /\/project\/submittals?(?:_logs?)?(?:\/show)?\/(\d+)(?:\/|$)/i,
         /\/tools\/submittals\/(\d+)(?:\/|$)/i
       ]);
       if (!projectId || !itemId) continue;

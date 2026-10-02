@@ -190,3 +190,22 @@ test("project RFI and Submittal lists are read without an item-type column", () 
     ["submittal", "77", "S-4", "Doors", "Closed"]
   ]);
 });
+
+test("a title with a colon isn't taken for a number, and submittal log links give their id", () => {
+  const page = "https://app.procore.com/webclients/host/companies/12/projects/34/tools/submittals";
+  const queue = ProcoreCore.visibleQueueFromRows(page, [
+    {
+      number: { text: "08 71 00-3", href: "" },
+      title: { text: "Door Hardware: confirm finish", href: "https://app.procore.com/34/project/submittals_log/5501" },
+      status: { text: "Open", href: "" }
+    },
+    {
+      title: { text: "Concrete: mix design", href: "https://app.procore.com/webclients/host/companies/12/projects/34/tools/submittals/78" },
+      status: { text: "Open", href: "" }
+    }
+  ], "2026-09-28T20:00:00Z");
+  assert.deepEqual(queue.items.map((item) => [item.item_id, item.number, item.title]), [
+    ["5501", "08 71 00-3", "Door Hardware: confirm finish"],
+    ["78", "", "Concrete: mix design"]
+  ]);
+});
