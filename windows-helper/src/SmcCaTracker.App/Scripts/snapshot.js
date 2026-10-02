@@ -64,12 +64,28 @@
     return null;
   }
 
+  // The same person can turn up with a directory id, a contact id or only a name (a creator without a
+  // contact, a reviewer with one). Ids decide when both have one; the name only when neither id can.
+  function samePerson(a, b) {
+    if (a.id && b.id && String(a.id) === String(b.id)) return true;
+    if (a.contactId && b.contactId) return String(a.contactId) === String(b.contactId);
+    if (a.id && b.id) return false;
+    return text(a.fullName).toLocaleLowerCase() === text(b.fullName).toLocaleLowerCase();
+  }
+
   function collectPeople(items, user) {
-    const people = new Map();
+    const people = [];
     function remember(identity) {
-      const key = identityKey(identity);
-      if (!key || !identity.fullName) return;
-      if (!people.has(key)) people.set(key, identity);
+      if (!identityKey(identity) || !identity.fullName) return;
+      const known = people.find((person) => samePerson(person, identity));
+      if (!known) {
+        people.push(Object.assign({}, identity));
+        return;
+      }
+      // Keep what this sighting adds (a contact id the first one lacked, say).
+      for (const field of ["id", "contactId", "companyId", "company"]) {
+        if (!known[field] && identity[field]) known[field] = identity[field];
+      }
     }
     remember(user);
     for (const item of items) {
@@ -80,7 +96,15 @@
       remember(item && item.creator);
       remember(item && item.responseEditor);
     }
-    return Array.from(people.values());
+    return people;
+  }
+
+  // "Waiting on Chris Contractor" (or "Waiting on A, B and C"): the names it gives.
+  function waitingOnNames(value) {
+    const match = text(value, 400).match(/waiting\s+on\s*:?\s*(.+)$/i);
+    if (!match) return [];
+    return match[1].replace(/[.!]+\s*$/, "").split(/\s*(?:,|;|\band\b|&)\s*/i)
+      .map((name) => text(name, 160)).filter(Boolean).slice(0, 5);
   }
 
   // Everyone who currently holds (or will next hold) the item, using the same In court /
@@ -92,17 +116,27 @@
     for (const person of people) {
       const state = Core.classifyOpenQueue(item, person);
       if (!state) continue;
-      const key = identityKey(person);
-      if (seen.has(key)) continue;
-      seen.add(key);
-      const current = state.code === "current";
-      holders.push({
+      const holder = {
         name: text(person.fullName, 160),
         companyId: person.companyId ? text(person.companyId, 80) : null,
         company: person.company ? text(person.company, 160) : null,
-        state: current ? "current" : "upcoming",
-        since: current ? courtSince(item, person, state) : null
-      });
+        state: state.code === "current" ? "current" : "upcoming",
+        since: null
+      };
+      const key = `${holder.name.toLocaleLowerCase()}|${holder.companyId || ""}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      if (holder.state === "current") holder.since = courtSince(item, person, state);
+      holders.push(holder);
+    }
+    // Waiting on someone none of the known people matched: they hold it (by name only).
+    if (!holders.some((holder) => holder.state === "current")) {
+      for (const name of waitingOnNames(item && item.responsible)) {
+        const key = `${name.toLocaleLowerCase()}|`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        holders.push({ name, companyId: null, company: null, state: "current", since: null });
+      }
     }
     return holders;
   }
