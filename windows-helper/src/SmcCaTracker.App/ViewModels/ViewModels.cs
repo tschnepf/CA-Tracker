@@ -144,10 +144,17 @@ public sealed class ProjectViewModel : ObservableObject
         }
     }
 
-    /// <summary>Archived for you only: how it's remembered (by the Helix/Procore project when connected).</summary>
-    public string ArchiveKey => project.Connection is { } connection
+    /// <summary>
+    /// How archiving and favorites remember this project, for you only: a tracked project by its own id
+    /// (so a Base Build / Tenant Fit Out pair sharing one Helix project is archived separately), a
+    /// Helix/Procore project with no CA folder yet by that project.
+    /// </summary>
+    public string ArchiveKey => IsPlaceholder && ProviderArchiveKey is { } providerKey ? providerKey : $"project|{project.Id}";
+
+    /// <summary>The Helix/Procore project's key: a project's key before its CA folder was chosen (and before 3.1, every connected project's).</summary>
+    public string? ProviderArchiveKey => project.Connection is { } connection
         ? $"{connection.Provider.ToLowerInvariant()}|{connection.ProjectId}"
-        : $"project|{project.Id}";
+        : null;
 
     private bool isSyncSkipped;
 

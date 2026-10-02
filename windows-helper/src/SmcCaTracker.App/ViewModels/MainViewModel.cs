@@ -1885,6 +1885,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         }
 
         var archiveChanged = false;
+        MigrateArchiveKeys();
         foreach (var project in Projects)
         {
             project.IsSyncSkipped = IsSyncSkipped(project);
@@ -1962,6 +1963,43 @@ public sealed class MainViewModel : ObservableObject, IDisposable
             }
 
             ids.Add(viewModel.Id);
+        }
+    }
+
+    /// <summary>
+    /// A tracked project is archived and favorited by its own id, a project without a CA folder by its
+    /// Helix/Procore project (see <see cref="ProjectViewModel.ArchiveKey"/>). A mark under the
+    /// Helix/Procore key — from before 3.1, or set before the CA folder was chosen — moves to each tracked
+    /// project with that connection, so nothing changes on screen; the old key goes once no project
+    /// without a CA folder uses it.
+    /// </summary>
+    private void MigrateArchiveKeys()
+    {
+        var changed = false;
+        var stillUsed = Projects.Where(project => project.IsPlaceholder).Select(project => project.ArchiveKey)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var carried = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var project in Projects.Where(project => !project.IsPlaceholder && project.ProviderArchiveKey is not null))
+        {
+            foreach (var marks in new[] { archived, favorites })
+            {
+                if (marks.Contains(project.ProviderArchiveKey!))
+                {
+                    changed |= marks.Add(project.ArchiveKey);
+                    carried.Add(project.ProviderArchiveKey!);
+                }
+            }
+        }
+
+        foreach (var key in carried.Where(key => !stillUsed.Contains(key)))
+        {
+            changed |= archived.Remove(key);
+            changed |= favorites.Remove(key);
+        }
+
+        if (changed)
+        {
+            ScheduleViewStateSave();
         }
     }
 
