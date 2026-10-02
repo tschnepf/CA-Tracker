@@ -23,12 +23,12 @@ No Chrome extension or browser add-in is involved.
 - **CA folders are indexed.** Each project's CA folders are listed once and the list is kept. Every
   20 seconds (and whenever you come back to the app) the app checks the folders' dates — far cheaper
   than listing them — and lists a folder again only when something in it changed. Every 15 minutes
-  the shown projects are fully re-listed as a safety net, and **Refresh** always re-lists.
+  the shown projects are fully re-listed as a safety net, and **Sync from Helix / Procore** always re-lists.
 - **Helix syncs in the background.** One hidden page of the CA Tracker browser stays on Helix and
   reads each tracked project through Helix's own data service — no windows. The first read of a
   project in a session reads everything; later reads ask Helix only for items changed since, so a
   sync of many projects takes seconds. Every 12 hours a project is read in full again so items
-  deleted in Helix drop out. Tracked projects sync every 15 minutes (Settings → Refresh).
+  deleted in Helix drop out. Tracked projects sync every 15 minutes (Settings → Background sync).
 - **The list redraws once** per change, not once per row.
 - **A timing log** (Settings → Open the log folder) records how long each step took and marks any
   slow one, so a sluggish step can be found instead of guessed at.
@@ -82,8 +82,8 @@ Close the app before rebuilding, because Windows locks a running exe.
 ## First run
 
 1. Run `windows-helper\dist\SmcCaTracker.exe`.
-2. **Settings → Connections → Connect to Helix / Connect to Procore**: opens the site in CA Tracker's
-   own browser window. Sign in there once; syncs and refreshes use that sign-in. For Helix it also
+2. **Settings → Connections → Sign in to Helix / Sign in to Procore** (or the banner's buttons): opens
+   the site in CA Tracker's own browser window. Sign in there once; every sync uses that sign-in. For Helix it also
    lists the projects you're assigned to, so you can pick them in step 4. For Procore, as soon as you're
    signed in CA Tracker finds **every project you can see in every company you belong to** — including
    projects hosted by other companies (GCs, owners) — and syncs them all in the background. No links
@@ -91,82 +91,90 @@ Close the app before rebuilding, because Windows locks a running exe.
    connection shows who you're signed in as and when it last synced.
 3. **New project…**: choose the project's CA folder (e.g. `Z:\Shared\Projects\CMH04\CA`). The name
    defaults to the folder above `CA`.
-4. **Connect…**: pick the project from the list (Procore projects are already listed after step 2), or paste its link. **Open Helix/Procore to copy a
+4. **Link…** (beside "Linked to" on the project card): pick the project from the list (Procore projects are already listed after step 2), or paste its link. **Open Helix/Procore to copy a
    link** opens the site in your usual browser so you can find the project:
    - Helix: the project's Overview page, e.g. `https://project.helixteam.com/Projects/<id>/Overview`
    - Procore: the project's RFIs tool, e.g. `https://app.procore.com/webclients/host/companies/<company>/projects/<project>/tools/rfis`
-5. **Refresh.** If the sign-in has expired, the CA Tracker browser window asks you to sign in again
-   and then carries on by itself.
+5. **Sync from Helix / Procore** on the project card (F5). If a sign-in has expired, a banner under
+   the header says so, with a button to sign in again.
 
 The built-in browser uses the Microsoft Edge WebView2 Runtime, which comes with Windows 11. It saves
 the Helix and Procore passwords you sign in with, encrypted for your Windows user (Windows DPAPI, the
 same protection Edge uses), and fills them in when a site asks you to sign in again — Procore ends
 its sign-in when CA Tracker closes, so after a restart you only click **Sign in**.
-**Settings → General settings → Sign out of the built-in browser** forgets both sign-ins and the
-saved passwords. It closes the item panel and the hidden sync pages first, and asks you to close any
-CA Tracker browser, download or Connect window that is still open.
+**Settings → Connections → Sign out of Helix and Procore** forgets both sign-ins and the saved
+passwords. It closes the item panel and the hidden sync pages first, and asks you to close any CA
+Tracker browser, download or sign-in window that is still open.
 
 ## Project list
 
 The list on the left has two sections:
 
 - **With a CA folder**: projects you track. Each compares its Helix/Procore items with its CA folder.
-- **No CA folder yet**: every Helix or Procore project CA Tracker has seen (from Connect to Helix,
-  from looking through your Procore companies, and from refreshes) that isn't tracked yet. Procore
+- **No CA folder yet**: every Helix or Procore project CA Tracker has seen (from signing in to Helix,
+  from looking through your Procore companies, and from syncs) that isn't tracked yet. Procore
   ones are synced in the background like tracked ones, so their items show without a CA folder; the
   subtitle names the company hosting each one. Select one and choose **Choose CA folder…** to start
-  tracking it; it moves up into the first section, already connected.
+  tracking it; it moves up into the first section, already linked.
 
-**Right-click** Procore projects → **Don't sync this project** to leave them out of syncing (closed
-jobs, projects you don't work on). They stay in the list, dimmed, marked *not synced*; right-click →
-**Sync this project** turns it back on. A project that couldn't be read is marked *⚠ last read failed*
-(hover for why — usually no access to that project's RFIs or Submittals) and the rest still sync.
+**Find a project** (Ctrl+F) above the list narrows it by name or hosting company; Esc clears it.
+
+**Right-click** a project, or use **⋯** on the project card, for Favorites, **Archive** (hide it and
+stop syncing it, for you only) and, for Procore projects, **Stop syncing** (closed jobs, projects you
+don't work on). Those stay in the list, dimmed, marked *sync turned off*; **Turn syncing back on**
+undoes it. A project that couldn't be read is marked *⚠ last sync failed* (hover for why — usually no
+access to that project's RFIs or Submittals) and the rest still sync.
 
 If a Base Build or Tenant Fit Out project is set to *only include folders whose name says this part*,
-folders without BB/TFO in their name are left out, and a note above the list says how many.
+folders without BB/TFO in their name are left out, and a note above the list says how many, with an
+**Include them…** button.
 
 ## The number next to each project
 
-Each project in the list shows two numbers, e.g. **1 | 10**: overdue items (red when there are any)
-and all items matching the current filters. Both count only items that match the filters: the type (Both,
-RFIs, Submittals), Open/All or folder view, checked people, due filter and discipline. Filter to one
+Each project in the list shows how many items match the current filters, e.g. **10**, after a red
+**1 overdue** when some of them are overdue. Both count only items that match the filters: the type
+(Both, RFIs, Submittals), Show, checked people, due filter and discipline. Filter to one
 person and every project shows how many items that person has there. Projects you aren't viewing are
-counted in the background from their last refresh; a project with nothing matching shows no number.
+counted in the background from their last sync; a project with nothing matching shows no number.
 
 ## Several projects at once
 
 Ctrl-click or Shift-click projects in the list to show all their items together. The header then
-describes the project clicked last, and **Refresh** refreshes each selected project in turn.
-Folder actions (Mark as returned, Move back, Set discipline, Download) work on checked items from any
-of the shown projects, each against its own CA folder.
+describes the project clicked last, and **Sync N projects** syncs each selected project in turn.
+The actions below the list (Move to Returned, Move back to active, Set discipline, Download) work on
+checked items from any of the shown projects, each against its own CA folder. Their labels say how
+many items they act on; the count beside them says when some checked items are hidden by the filters.
 
 - **Both / RFIs / Submittals** choose the item types; Both shows RFIs and Submittals in one list.
 - **Group by** adds headings: *Project, then type* (default), *Project*, *RFIs / Submittals*, or
   *Nothing* for one flat list.
 - **Sorting** applies within each heading. Click any column heading to sort by it (click again to
-  reverse), or use **Sort by** for the common orders. Empty values (no due date, no days in court)
-  always go last.
+  reverse), or use **Sort by** for the common orders (it shows the heading you sorted by, e.g.
+  "Title ↑"). Empty values (no due date, no days in court) always go last.
+- **Columns**: right-click any column heading to turn columns on or off (remembered). The due date
+  starts hidden; hover **Days till due** for it.
 - **Column widths** fit the longest text in each column (every row, not just those on screen), so
-  titles and names show in full. If the window is too narrow, only Title, In court, Folder and the
+  titles and names show in full. If the window is too narrow, only Title, Ball in court, Folder and the
   other long-text columns shorten (hover for the full text); anything still too wide scrolls sideways.
-
-**Sync… → Sync** refreshes every project from that site, including ones without a CA folder yet.
+  The check box and each row's **⋯** stay in place.
 
 ## Items: filter and sort
 
 The main list shows the selected project's RFIs or Submittals from Helix or Procore; the CA folder
 is matched alongside. The tabs show how many are open.
 
-- **Open / All items** choose between items that aren't closed and every item. **Needs attention**,
-  **Ready to return**, **No folder** and **In returned** are the folder views.
-- **Person**: who has the item now (Helix "In court", Procore "Ball In Court"). Check as many people
+- **Show**: *Open items* (not closed), *All items*, or one of the folder views: *Needs attention*,
+  *Ready to return*, *No folder* and *In Returned folder*.
+- **Ball in court**: who has the item now (Helix "In court", Procore "Ball In Court"). Check as many people
   as you like; *Anyone at <your company>* covers everyone at your company, and **Everyone** clears
   the checks.
 - **Due**: *Overdue*, *Due today*, or *Due within # days* (today through # days from now). The due date
   is the earliest of the due, requested review and contractual review dates.
-- **Discipline**: from the folder name, or set by hand.
-- **Sort by**: Number, Person, Days in court (longest first) or Days till due (soonest first). Column
-  headers sort too.
+- **Discipline**: from the folder name (shown as "(auto)"), or set by hand.
+- **Sort by**: Number, Ball in court (A–Z), Days in court (longest first) or Days till due (soonest
+  first). Column headers sort too.
+
+When nothing matches, **Clear filters** goes back to open items, everyone, any date and every discipline.
 
 **Days in court** counts from the day the item reached the person who has it now. Helix doesn't store
 that date, so each sync works it out from the item's saved versions in Helix: the first save after
@@ -178,7 +186,8 @@ updating so the new fields are read.
 
 ## Opening an item
 
-**Open item** opens that exact RFI or Submittal. Helix items open in the **item panel** beside the
+**⋯ → Open item** on a row (or double-clicking a row that has no folder yet) opens that exact RFI or
+Submittal; double-clicking a row with a folder opens the folder. Helix items open in the **item panel** beside the
 list (drag the bar between them to resize): Helix has no web address for a single item, so the panel
 opens the project's RFI or Submittal list in CA Tracker's browser (already signed in) and then the item
 in Helix's detail viewer; you work on it there as in Helix. Opening another item reuses the panel, so it
@@ -187,13 +196,14 @@ opens quickly. Procore items open in your usual browser at the item's own page.
 While a Helix item is open in the panel, CA Tracker checks it every few seconds. When you send it on
 (or answer, close or void it) and Helix saves the change, CA Tracker re-reads that project's RFIs or
 Submittals and updates the list by itself — the item leaves your court (and your person filter) without
-a refresh. The panel's status line says where the item went. Closing the item (or opening another)
+a sync. The panel's status line says where the item went. Esc closes the panel. Closing the item (or opening another)
 re-reads the project once more, so changes you made to other items in the panel are picked up too.
 Procore items update at the next background sync.
 
 ## Test cases from real projects
 
-When CA Tracker gets whose court an item is in wrong, **Settings → Export a Helix test sample** saves
+When CA Tracker gets whose court an item is in wrong, **Settings → General → Troubleshooting →
+Developer tools → Export a Helix test sample** saves
 an anonymized copy of the selected Helix project's items to `%LOCALAPPDATA%\SMC-CA-Tracker\exports`:
 people become "Person 1, 2…", companies "Company A…", titles "Item <number>". The file lists what
 CA Tracker works out for each item under `expected`; correct the wrong ones and add the file to
@@ -201,7 +211,7 @@ CA Tracker works out for each item under `expected`; correct the wrong ones and 
 
 ## Downloading an RFI or Submittal
 
-**Download** on an item's row (Helix items) opens a window listing the item's Details PDF and its
+**⋯ → Download…** on an item's row (Helix items) opens a window listing the item's Details PDF and its
 current attachments, with each file's name and upload date. Check the files you want. They go into a
 folder named `<number> - <name>` (e.g. `P000210 - Overhead Coiling Doors`), with a leading project
 name or code taken off the name:
@@ -220,50 +230,56 @@ saved file is added to `journal.jsonl`. Procore downloads aren't supported yet.
 
 ## Settings
 
-**Settings** (top right) replaces the project list with the Settings page. Its sidebar has:
+**Settings** (top right) replaces the project list with the Settings page (the button then reads
+**← Projects**). Its sidebar has:
 
-- **General settings**: appearance, default folder names, the returned rule and refresh options.
-  Changes apply when you select **Save**; **Discard changes** goes back to the saved values.
-- **Connections**: Helix and Procore, each with its sign-in status, when it last synced, how many
-  projects are connected to it (and how many are set to not sync), and **Connect** / **Sync now**
-  buttons; and the optional **Company server**: its address (unless the company settings set it) and your
+- **General settings**: appearance (saved as soon as you pick it), default folder names, the returned
+  rule, background sync and troubleshooting (the log folder). Other changes apply when you select
+  **Save**; **Discard changes** goes back to the saved values. Fields are checked as you type, and
+  leaving with unsaved changes asks whether to save them.
+- **Connections**: Helix and Procore, each with a status badge (Syncing, Synced, N projects not read,
+  Sign-in needed, Not connected), when it last synced, how many projects it has (and how many are
+  archived or set to not sync), a progress bar while it syncs, and **Sign in** / **Sync now** buttons;
+  **Sign out of Helix and Procore**; and the optional **Company server**: its address (unless the company settings set it) and your
   access token. Once connected, CA Tracker shares every couple of minutes while it is open: what you
   read from Helix and Procore and your projects' discipline choices go to everyone tracking the same
   projects, and theirs come to you. Your CA folder locations and project names stay on your PC.
 
-**← Back to projects** returns to the project list.
+**← Back to projects** (or **← Projects**) returns to the project list.
 
 ## Sync
 
-**Sync…** (top right) opens a small window listing each connection with when it last synced.
-**Sync** reads every project of that site in the background (no window), except projects set to not
-sync. For Procore it first looks through every company you belong to for new projects. A project
-that can't be read is marked and the rest carry on; **Stop** finishes the current project and skips
-the rest. **Sync all** does Helix, then Procore. A connection's last sync is the most recent read of
-any of its projects. While the app is open, tracked Helix projects and every Procore project (except
-those set to not sync) also sync by themselves every 15 minutes, and your Procore companies are
-looked through again for new projects every 6 hours (Settings → Refresh → Keep Helix and Procore
-projects up to date).
+**Sync all** (top right) reads every project of each signed-in site in the background (no window),
+Helix then Procore, except projects set to not sync; with nothing signed in it opens Connections. Its
+**▾** syncs one site or opens Connections. For Procore it first looks through every company you belong
+to for new projects. A project that can't be read is marked and the rest carry on; while it runs the
+button reads **Stop syncing**, which finishes the current project and skips the rest. Progress shows
+above the project list and on each Connections card. A connection's last sync is the most recent read
+of any of its projects. While the app is open, tracked Helix projects and every Procore project
+(except those set to not sync) also sync by themselves every 15 minutes, and your Procore companies
+are looked through again for new projects every 6 hours (Settings → Background sync).
 
-## Refresh
+## Syncing one project
 
-**Refresh** always re-lists the CA folder. For a connected project it also reads the project:
+**Sync from Helix / Procore** on the project card (F5) always re-lists the CA folder. For a linked
+project it also reads the project:
 
-- **Helix:** in the background, on the hidden Helix page — no window opens. Refresh reads all of the
+- **Helix:** in the background, on the hidden Helix page — no window opens. Syncing one project reads all of the
   project's items; background syncs fetch only items changed since the last read (plus a quick list of
-  ids, so deleted or moved items drop out). If Helix needs you to sign in again, Connections says so
-  and background syncs pause until you use **Settings → Connections → Connect to Helix**.
+  ids, so deleted or moved items drop out). If Helix needs you to sign in again, the banner and
+  Connections say so within a few seconds, and background syncs pause until you sign in again.
 - **Procore:** in the background too, reading **every** RFI and Submittal (not just the rows a list
-  shows), with your Connect to Procore sign-in: a hidden Procore page asks Procore's own REST service
+  shows), with your Procore sign-in: a hidden Procore page asks Procore's own REST service
   for the lists, as Procore's web pages do. It sees exactly what you can see in Procore — across every
   company you belong to — and nothing has to be installed in any company's Procore account. A tool
   you can't see on a project (say, Submittals) is left as it was rather than emptied. If Procore
-  refuses the page way for your account, Refresh falls back to reading the RFIs and Submittals lists
+  refuses the page way for your account, the sync falls back to reading the RFIs and Submittals lists
   in the CA Tracker browser window, as before; those reads only see the rows Procore's lists show.
-**Settings → Sign out of the built-in browser** forgets the sign-in.
+**Settings → Connections → Sign out of Helix and Procore** forgets the sign-in.
 
-The project header shows **when the Helix/Procore data was last refreshed** and **when the CA folder
-was last checked**. While a refresh runs it shows progress, and you can cancel it.
+The project card shows **when the Helix/Procore data was last synced** and **when the CA folder was
+last rescanned** (a failed sync says why, in full). While a sync runs it shows progress, and you can
+cancel it.
 
 ## Folder layout
 
@@ -318,7 +334,7 @@ online-only files are not downloaded.
 ## Base Build and Tenant Fit Out
 
 A job split into Base Build (BB) and Tenant Fit Out (TFO) is set up as two projects, for example
-"CMH04 BB" and "CMH04 TFO". Each has its own refresh, timestamps and list. In **Edit project → Base
+"CMH04 BB" and "CMH04 TFO". Each has its own sync, timestamps and list. In **Edit project → Base
 Build / Tenant Fit Out**, choose the part, then pick how the two are separated:
 
 - **Separate Helix/Procore projects or separate CA folders:** connect or choose each project's own.

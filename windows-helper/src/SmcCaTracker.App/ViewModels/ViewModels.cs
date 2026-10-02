@@ -131,7 +131,7 @@ public sealed class ProjectViewModel : ObservableObject
 
     private bool isArchived;
 
-    /// <summary>Archived by you (hidden from your list unless "Show archived" is ticked; not synced).</summary>
+    /// <summary>Archived by you (hidden from your list unless "Show archived" is checked; not synced).</summary>
     public bool IsArchived
     {
         get => isArchived;
@@ -177,20 +177,20 @@ public sealed class ProjectViewModel : ObservableObject
 
             if (IsFavorite)
             {
-                lines.Add("★ Favorite (for you only). Right-click → Remove from favorites.");
+                lines.Add("★ Favorite (for you only). Right-click or ⋯ → Remove from favorites.");
             }
 
             if (IsArchived)
             {
-                lines.Add("Archived (for you only). Right-click → Unarchive to bring it back.");
+                lines.Add("Archived (for you only). Right-click or ⋯ → Unarchive to bring it back.");
             }
             else if (IsSyncSkipped)
             {
-                lines.Add("Not synced. Right-click → Sync this project to turn it back on.");
+                lines.Add("Sync turned off. Right-click or ⋯ → Sync this project to turn it back on.");
             }
             else if (LastReadFailed && !string.IsNullOrWhiteSpace(lastRun!.Error))
             {
-                lines.Add($"Last read failed: {lastRun.Error}");
+                lines.Add($"Last sync failed: {lastRun.Error}");
             }
 
             return string.Join(Environment.NewLine, lines);
@@ -213,7 +213,7 @@ public sealed class ProjectViewModel : ObservableObject
     public string Name => string.IsNullOrWhiteSpace(project.Name) ? "Untitled project" : project.Name;
     public bool IsConnected => project.Connection is not null;
     public string ProviderLabel => project.Connection is null ? "" : Providers.Label(project.Connection.Provider);
-    public string ConnectionText => project.Connection?.Label ?? "Not connected to Helix or Procore";
+    public string ConnectionText => project.Connection?.Label ?? "Not linked to Helix or Procore";
     public string PhaseText => project.Scope is { IsSplit: true } ? Phases.Short(project.Scope.Phase) : "";
     public bool IsRefreshing => activeRefresh is { IsFinished: false } || syncDepth > 0;
 
@@ -295,7 +295,7 @@ public sealed class ProjectViewModel : ObservableObject
             var part = PhaseText.Length > 0 ? $"{PhaseText} · " : "";
             if (project.Connection is null)
             {
-                return $"{part}Not connected";
+                return $"{part}Not linked to Helix or Procore";
             }
 
             if (IsArchived)
@@ -320,12 +320,12 @@ public sealed class ProjectViewModel : ObservableObject
 
             if (IsSyncSkipped)
             {
-                return $"{part}{ProviderLabel}{CompanyPart} · not synced";
+                return $"{part}{ProviderLabel}{CompanyPart} · sync turned off";
             }
 
             if (LastReadFailed)
             {
-                return $"{part}{ProviderLabel}{CompanyPart} · ⚠ last read failed {Formatting.When(lastRun!.StartedAt)}";
+                return $"{part}{ProviderLabel}{CompanyPart} · ⚠ last sync failed {Formatting.When(lastRun!.StartedAt)}";
             }
 
             if (IsPlaceholder && snapshot is null)
@@ -334,8 +334,8 @@ public sealed class ProjectViewModel : ObservableObject
             }
 
             return snapshot is null
-                ? $"{part}{ProviderLabel} · not refreshed yet"
-                : $"{part}{ProviderLabel}{CompanyPart} · refreshed {Formatting.When(snapshot.ScannedAt)}";
+                ? $"{part}{ProviderLabel} · not synced yet"
+                : $"{part}{ProviderLabel}{CompanyPart} · synced {Formatting.When(snapshot.ScannedAt)}";
         }
     }
 
@@ -376,6 +376,8 @@ public sealed class ProjectViewModel : ObservableObject
             {
                 OnPropertyChanged(nameof(BadgeText));
                 OnPropertyChanged(nameof(HasBadge));
+                OnPropertyChanged(nameof(BadgeToolTip));
+                OnPropertyChanged(nameof(HasOverdue));
             }
         }
     }
@@ -398,8 +400,9 @@ public sealed class ProjectViewModel : ObservableObject
 
     public bool HasBadge => MatchingCount > 0;
     public string BadgeText => MatchingCount?.ToString() ?? "";
-    public string OverdueText => OverdueCount.ToString();
-    public bool HasOverdue => OverdueCount > 0;
+    public string BadgeToolTip => MatchingCount == 1 ? "1 item matches the filters above the item list" : $"{MatchingCount} items match the filters above the item list";
+    public string OverdueText => $"{OverdueCount} overdue";
+    public bool HasOverdue => OverdueCount > 0 && HasBadge;
 
     private void RaiseAll()
     {
@@ -449,7 +452,11 @@ public sealed class RowViewModel : ObservableObject
     public ProjectViewModel Project { get; }
     public ProjectComparison Comparison { get; }
     public string ProjectName => Project.Name;
+    /// <summary>"RFIs" / "Submittals", for the list's headings.</summary>
     public string TypeLabel => ItemTypes.Plural(Row.ItemType);
+
+    /// <summary>"RFI" / "Submittal", for the Type column.</summary>
+    public string TypeSingular => ItemTypes.Singular(Row.ItemType);
 
     /// <summary>People the item is with now.</summary>
     public IReadOnlyList<SnapshotHolder> Holders { get; }
@@ -477,6 +484,9 @@ public sealed class RowViewModel : ObservableObject
         _ => $"In {DaysTillDue} days"
     };
 
+    /// <summary>Hover text for "Days till due" (the date column starts hidden).</summary>
+    public string DueToolTip => DueDateText.Length == 0 ? "No due date" : $"Due {DueDateText}";
+
     public bool IsOverdue => DaysTillDue < 0;
     public bool IsDueToday => DaysTillDue == 0;
 
@@ -486,7 +496,7 @@ public sealed class RowViewModel : ObservableObject
         set => Set(ref isChecked, value && CanSelect);
     }
 
-    /// <summary>Rows with a folder (for moves) or an item (for presetting its discipline) can be ticked.</summary>
+    /// <summary>Rows with a folder (for moves) or an item (for presetting its discipline) can be checked.</summary>
     public bool CanSelect => Row.Folder is not null || Row.Item is not null;
     public RowStatus Status => Row.Status;
     public string StatusText => ComparisonRow.StatusLabel(Row.Status);
@@ -497,7 +507,13 @@ public sealed class RowViewModel : ObservableObject
     public string FolderName => Row.Folder?.Name ?? "—";
     public string LocationText { get; }
     public string Detail => Row.Detail;
-    public string DisciplineText => Row.Discipline?.Label ?? (Row.DisciplineSource == DisciplineSource.Manual ? "None" : "—");
+    /// <summary>The discipline; "(auto)" when it was detected rather than set by hand.</summary>
+    public string DisciplineText => Row.Discipline is { } discipline
+        ? Row.DisciplineSource == DisciplineSource.Detected ? $"{discipline.Label} (auto)" : discipline.Label
+        : Row.DisciplineSource == DisciplineSource.Manual ? "None" : "—";
+
+    /// <summary>Hover text for the Folder column: where the folder is, and that double-click opens it.</summary>
+    public string? FolderToolTip => Row.Folder is null ? null : $"{LocationText}\nDouble-click the row to open this folder.";
     public bool DisciplineIsDetected => Row.DisciplineSource == DisciplineSource.Detected;
 
     public string DisciplineToolTip => Row.DisciplineSource switch
@@ -510,6 +526,17 @@ public sealed class RowViewModel : ObservableObject
     };
     public bool HasFolder => Row.Folder is not null;
     public bool HasItem => Row.Item is not null;
+
+    /// <summary>Downloads work for Helix items only.</summary>
+    public bool CanDownload => Row.Item is not null
+        && string.Equals(Project.Project.Connection?.Provider, Providers.Helix, StringComparison.OrdinalIgnoreCase);
+
+    public string DownloadToolTip => CanDownload
+        ? "Choose files to download into a \"number - name\" folder"
+        : Row.Item is null ? "No Helix or Procore item for this folder" : "Downloads work for Helix items only";
+
+    /// <summary>Hover text for the whole row: what double-clicking does.</summary>
+    public string RowToolTip => HasFolder ? "Double-click to open this folder" : HasItem ? "Double-click to open this item" : "";
     public string? SourceUrl => Row.Item?.SourceUrl;
 
     public bool HasLink => Uri.TryCreate(SourceUrl, UriKind.Absolute, out var uri)
@@ -569,7 +596,7 @@ public static class Formatting
     }
 }
 
-/// <summary>One site (Helix or Procore) on the Connections page and in the Sync window.</summary>
+/// <summary>One site (Helix or Procore) on the Connections page, the sign-in banner and the Sync all menu.</summary>
 public sealed class ConnectionViewModel : ObservableObject
 {
     private string statusText = "";
@@ -623,7 +650,7 @@ public sealed class ConnectionViewModel : ObservableObject
             if (Set(ref projectCount, value))
             {
                 OnPropertyChanged(nameof(CanSync));
-                OnPropertyChanged(nameof(IsListed));
+                OnPropertyChanged(nameof(WantsSignIn));
             }
         }
     }
@@ -636,7 +663,6 @@ public sealed class ConnectionViewModel : ObservableObject
             if (Set(ref isSignedIn, value))
             {
                 OnPropertyChanged(nameof(ConnectButtonText));
-                OnPropertyChanged(nameof(IsListed));
                 OnPropertyChanged(nameof(CanSync));
                 RaiseState();
             }
@@ -758,16 +784,17 @@ public sealed class ConnectionViewModel : ObservableObject
 
     private void RaiseState()
     {
-        foreach (var name in new[] { nameof(IsBusy), nameof(State), nameof(StateText), nameof(HasFailedText), nameof(IsProgressUnknown) })
+        foreach (var name in new[] { nameof(IsBusy), nameof(State), nameof(StateText), nameof(HasFailedText), nameof(IsProgressUnknown), nameof(WantsSignIn) })
         {
             OnPropertyChanged(name);
         }
     }
 
-    /// <summary>Shown in the Sync window: signed in, or has projects connected to it.</summary>
-    public bool IsListed => IsSignedIn || ProjectCount > 0;
+    public string ConnectButtonText => IsSignedIn ? "Sign in again" : $"Sign in to {Label}";
+    public string SignInText => $"Sign in to {Label}";
 
-    public string ConnectButtonText => IsSignedIn ? $"Reconnect to {Label}" : $"Connect to {Label}";
+    /// <summary>For the main window's banner: not signed in, but its sign-in expired or it still has projects to sync.</summary>
+    public bool WantsSignIn => !IsSignedIn && (NeedsSignIn || ProjectCount > 0);
 
     public bool IsSyncing
     {
@@ -789,9 +816,9 @@ public sealed class ConnectionViewModel : ObservableObject
     }
 
     public bool IsNotSyncing => !IsSyncing;
-    /// <summary>Procore can sync with no projects listed yet: Sync first finds them.</summary>
-    public bool CanSync => !IsSyncing
-        && (ProjectCount > 0 || (IsSignedIn && string.Equals(Provider, Providers.Procore, StringComparison.OrdinalIgnoreCase)));
+    /// <summary>Needs a sign-in. Procore can sync with no projects listed yet: Sync first finds them.</summary>
+    public bool CanSync => !IsSyncing && IsSignedIn
+        && (ProjectCount > 0 || string.Equals(Provider, Providers.Procore, StringComparison.OrdinalIgnoreCase));
 
     public string SyncMessage
     {

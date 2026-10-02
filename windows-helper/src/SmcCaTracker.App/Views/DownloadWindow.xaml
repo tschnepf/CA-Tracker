@@ -37,31 +37,35 @@
                     <DataGridTemplateColumn.CellTemplate>
                         <DataTemplate>
                             <CheckBox IsChecked="{Binding IsChecked, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
-                                      IsEnabled="{Binding CanChange}" HorizontalAlignment="Center" />
+                                      IsEnabled="{Binding CanChange}" HorizontalAlignment="Center"
+                                      AutomationProperties.Name="{Binding Name, StringFormat=Download {0}}" />
                         </DataTemplate>
                     </DataGridTemplateColumn.CellTemplate>
                 </DataGridTemplateColumn>
                 <DataGridTextColumn Header="File" Binding="{Binding Name}" Width="2*" />
                 <DataGridTextColumn Header="Uploaded" Binding="{Binding UploadedText}" Width="150" SortMemberPath="UploadedAt" />
                 <DataGridTextColumn Header="Saved as" Binding="{Binding TargetName}" Width="2*" />
-                <DataGridTextColumn Header="" Binding="{Binding StatusText}" Width="1.3*" />
+                <DataGridTextColumn Header="Note" Binding="{Binding StatusText}" Width="1.3*" />
             </DataGrid.Columns>
         </DataGrid>
 
         <!-- Only shown when Helix asks you to sign in. -->
         <wv2:WebView2 x:Name="Browser" Grid.Row="3" />
 
+        <!-- Buttons are declared in the order Tab visits them; the main one is last, on the right. -->
         <DockPanel Grid.Row="4" Margin="0,12,0,0" LastChildFill="False">
-            <Button x:Name="AllButton" DockPanel.Dock="Left" Content="Select all" Click="All_Click" Margin="0,0,6,0" />
-            <Button x:Name="NoneButton" DockPanel.Dock="Left" Content="Select none" Click="None_Click" />
-            <Button x:Name="CloseButton" DockPanel.Dock="Right" Content="Cancel" Click="Close_Click" />
-            <!-- Downloading several checked items: stops before the rest. -->
-            <Button x:Name="StopBatchButton" DockPanel.Dock="Right" Content="Stop" Click="StopBatch_Click" Margin="0,0,8,0"
-                    Visibility="Collapsed" ToolTip="Don't go on to the remaining checked items" />
-            <Button x:Name="DownloadButton" DockPanel.Dock="Right" Content="Download" Style="{StaticResource AccentButton}"
-                    Click="Download_Click" Margin="0,0,8,0" IsEnabled="False" />
-            <Button x:Name="OpenFolderButton" DockPanel.Dock="Right" Content="Open folder" Click="OpenFolder_Click"
-                    Margin="0,0,8,0" Visibility="Collapsed" />
+            <Button x:Name="AllButton" DockPanel.Dock="Left" Content="Check all" Click="All_Click" Margin="0,0,6,0" />
+            <Button x:Name="NoneButton" DockPanel.Dock="Left" Content="Uncheck all" Click="None_Click" />
+            <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
+                <Button x:Name="OpenFolderButton" Content="Open folder" Click="OpenFolder_Click"
+                        Margin="0,0,8,0" Visibility="Collapsed" />
+                <!-- Downloading several checked items: stops before the rest. -->
+                <Button x:Name="StopBatchButton" Content="Stop after this item" Click="StopBatch_Click" Margin="0,0,8,0"
+                        Visibility="Collapsed" ToolTip="Don't go on to the remaining checked items" />
+                <Button x:Name="CloseButton" Content="Cancel" Click="Close_Click" IsCancel="True" Margin="0,0,8,0" />
+                <Button x:Name="DownloadButton" Content="_Download" Style="{StaticResource AccentButton}"
+                        Click="Download_Click" IsEnabled="False" />
+            </StackPanel>
         </DockPanel>
     </Grid>
 </Window>

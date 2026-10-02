@@ -8,7 +8,7 @@
     <SolidColorBrush x:Key="LineBrush" Color="#D5DEE6" />
     <SolidColorBrush x:Key="TextPrimary" Color="#13202B" />
     <SolidColorBrush x:Key="TextSecondary" Color="#4B5E6D" />
-    <SolidColorBrush x:Key="TextMuted" Color="#6B7D8B" />
+    <SolidColorBrush x:Key="TextMuted" Color="#5A6B78" />
     <SolidColorBrush x:Key="AccentBrush" Color="#0B6FB3" />
     <SolidColorBrush x:Key="AccentForeground" Color="#FFFFFF" />
     <SolidColorBrush x:Key="AccentSoftBrush" Color="#DCEEFB" />
@@ -21,4 +21,5 @@
     <SolidColorBrush x:Key="SuccessBrush" Color="#1E7A45" />
     <SolidColorBrush x:Key="SuccessSoftBrush" Color="#DDF3E6" />
     <SolidColorBrush x:Key="NeutralSoftBrush" Color="#EBEFF3" />
+    <SolidColorBrush x:Key="ScrollThumbBrush" Color="#C3CDD6" />
 </ResourceDictionary>

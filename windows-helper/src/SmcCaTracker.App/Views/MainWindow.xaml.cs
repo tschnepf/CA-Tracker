@@ -24,7 +24,9 @@ public partial class MainWindow : Window
     // Windows with their own page in the built-in browser (they share its profile with the item panel).
     private int browserWindowsOpen;
     private int downloadWindowsOpen;
-    private SyncWindow? syncWindow;
+
+    // Right-click a column heading: turn columns on or off (remembered).
+    private readonly ContextMenu columnsMenu = new();
 
     public MainWindow(MainViewModel viewModel, AppPaths paths)
     {
@@ -62,8 +64,6 @@ public partial class MainWindow : Window
             ItemPanel.Shutdown();
             ShowItemPanel(false);
         };
-        // A sync found Procore's sign-in expired: open Connect to Procore so it's clear what to do.
-        viewModel.SignInRequested += provider => OpenSignIn(provider, signInExpired: true);
         Closed += (_, _) =>
         {
             ItemPanel.Shutdown();
@@ -73,8 +73,10 @@ public partial class MainWindow : Window
         // Coming back to the app (e.g. from Explorer): check the CA folders straight away.
         Activated += (_, _) => viewModel.CheckFoldersSoon();
         GroupProjectList();
+        InitColumnsMenu();
         ApplyItemGrouping();
         UpdateSortArrows();
+        PreviewKeyDown += Window_PreviewKeyDown;
         viewModel.PropertyChanged += (_, args) =>
         {
             switch (args.PropertyName)
@@ -102,6 +104,13 @@ public partial class MainWindow : Window
             current.Browser = edited.Browser;
             current.Sync = edited.Sync;
             ThemeManager.Apply(current.Theme);
+            await viewModel.ApplySettingsAsync(current);
+        };
+        // The theme is saved as soon as it's picked; only that changes.
+        SettingsView.ThemeChosen += async theme =>
+        {
+            var current = viewModel.CloneSettings();
+            current.Theme = theme;
             await viewModel.ApplySettingsAsync(current);
         };
         SettingsView.ConnectRequested += provider => OpenSignIn(provider);
@@ -138,18 +147,24 @@ public partial class MainWindow : Window
         // The toolbar shows the restored choices (setting them again changes nothing in the view model).
         foreach (var radio in Descendants<RadioButton>(this))
         {
-            if (radio.Tag is string tag && radio.GroupName is "Type" or "Filter")
+            if (radio.Tag is string tag && radio.GroupName == "Type")
             {
-                radio.IsChecked = radio.GroupName == "Type" ? tag == viewModel.SelectedType : tag == viewModel.Filter;
+                radio.IsChecked = tag == viewModel.SelectedType;
             }
         }
 
-        SelectByTag(DueBox, viewModel.DueFilter.ToString());
-        SelectByTag(DisciplineBox, viewModel.DisciplineFilter);
+        ShowFilterChoices();
         SelectByTag(GroupBox, viewModel.GroupBy);
-        settingSortBox = true;
-        SelectByTag(SortBox, viewModel.SortBy);
-        settingSortBox = false;
+        if (string.IsNullOrEmpty(viewModel.SortBy))
+        {
+            ShowColumnSort();
+        }
+        else
+        {
+            settingSortBox = true;
+            SelectByTag(SortBox, viewModel.SortBy);
+            settingSortBox = false;
+        }
         ApplyItemGrouping();
         UpdateSortArrows();
         UpdateColumns();
@@ -158,6 +173,28 @@ public partial class MainWindow : Window
 
     private static void SelectByTag(ComboBox box, string tag) =>
         box.SelectedItem = box.Items.OfType<ComboBoxItem>().FirstOrDefault(item => item.Tag as string == tag);
+
+    /// <summary>The Show, Due and Discipline boxes show the view model's filters.</summary>
+    private void ShowFilterChoices()
+    {
+        SelectByTag(ShowBox, viewModel.Filter);
+        SelectByTag(DueBox, viewModel.DueFilter.ToString());
+        SelectByTag(DisciplineBox, viewModel.DisciplineFilter);
+    }
+
+    private void Show_Changed(object sender, SelectionChangedEventArgs e)
+    {
+        if (DataContext is MainViewModel model && ShowBox.SelectedItem is ComboBoxItem { Tag: string tag })
+        {
+            model.Filter = tag;
+        }
+    }
+
+    private void ClearFilters_Click(object sender, RoutedEventArgs e)
+    {
+        viewModel.ClearFilters();
+        ShowFilterChoices();
+    }
 
     private static IEnumerable<T> Descendants<T>(DependencyObject parent) where T : DependencyObject
     {
@@ -192,16 +229,28 @@ public partial class MainWindow : Window
     /// </summary>
     private void ProjectList_ContextMenuOpening(object sender, ContextMenuEventArgs e)
     {
-        var selected = ProjectsInSelection();
-        if (selected.Count == 0)
+        if (!PrepareProjectMenu())
         {
             e.Handled = true;
             return;
         }
 
+        ProjectList.ContextMenu!.PlacementTarget = ProjectList;
+        ProjectList.ContextMenu.Placement = System.Windows.Controls.Primitives.PlacementMode.MousePoint;
+    }
+
+    /// <summary>Labels the project menu for the selected projects. False when none is selected.</summary>
+    private bool PrepareProjectMenu()
+    {
+        var selected = ProjectsInSelection();
+        if (selected.Count == 0)
+        {
+            return false;
+        }
+
         static Visibility Show(bool value) => value ? Visibility.Visible : Visibility.Collapsed;
         var count = selected.Count;
-        ArchiveProjectMenu.Header = count > 1 ? $"Archive these {count} projects" : "Archive";
+        ArchiveProjectMenu.Header = count > 1 ? $"Archive these {count} projects (hide and stop syncing)" : "Archive (hide and stop syncing)";
         UnarchiveProjectMenu.Header = count > 1 ? $"Unarchive these {count} projects" : "Unarchive";
         FavoriteProjectMenu.Header = count > 1 ? $"Add these {count} to favorites" : "Add to favorites";
         UnfavoriteProjectMenu.Header = count > 1 ? $"Remove these {count} from favorites" : "Remove from favorites";
@@ -212,11 +261,29 @@ public partial class MainWindow : Window
 
         var procore = ProcoreProjectsInSelection().Where(project => !project.IsArchived).ToList();
         var several = procore.Count > 1;
-        SyncProjectMenu.Header = several ? $"Sync these {procore.Count} projects" : "Sync this project";
-        SkipProjectMenu.Header = several ? $"Don't sync these {procore.Count} projects" : "Don't sync this project";
+        SyncProjectMenu.Header = several ? $"Turn syncing back on for these {procore.Count}" : "Turn syncing back on";
+        SkipProjectMenu.Header = several ? $"Stop syncing these {procore.Count} (keep them listed)" : "Stop syncing (keep it listed)";
         SyncProjectMenu.Visibility = Show(procore.Any(project => project.IsSyncSkipped));
         SkipProjectMenu.Visibility = Show(procore.Any(project => !project.IsSyncSkipped));
         SyncMenuSeparator.Visibility = Show(procore.Count > 0);
+        return true;
+    }
+
+    /// <summary>The ⋯ button on the project card: the same menu as right-clicking the project list.</summary>
+    private void ProjectMenu_Click(object sender, RoutedEventArgs e)
+    {
+        var menu = ProjectList.ContextMenu;
+        if (menu is null || !PrepareProjectMenu())
+        {
+            return;
+        }
+
+        // Below the button, right edges lined up (it sits at the card's right edge).
+        menu.PlacementTarget = ProjectMenuButton;
+        menu.Placement = System.Windows.Controls.Primitives.PlacementMode.Left;
+        menu.HorizontalOffset = ProjectMenuButton.ActualWidth;
+        menu.VerticalOffset = ProjectMenuButton.ActualHeight + 2;
+        menu.IsOpen = true;
     }
 
     private void FavoriteProject_Click(object sender, RoutedEventArgs e) => viewModel.SetFavorite(ProjectsInSelection(), favorite: true);
@@ -277,12 +344,63 @@ public partial class MainWindow : Window
         }
     }
 
-    /// <summary>Project column when several projects are shown; Type column when both types are.</summary>
+    /// <summary>
+    /// Project column when several projects are shown; Type column when both types are; the others
+    /// unless turned off (right-click a heading).
+    /// </summary>
     private void UpdateColumns()
     {
         ProjectColumn.Visibility = viewModel.IsMultiProject ? Visibility.Visible : Visibility.Collapsed;
         TypeColumn.Visibility = viewModel.SelectedType == ItemTypeChoices.Both ? Visibility.Visible : Visibility.Collapsed;
+        foreach (var (column, name, _) in OptionalColumns())
+        {
+            column.Visibility = viewModel.IsColumnHidden(name) ? Visibility.Collapsed : Visibility.Visible;
+        }
+
         ScheduleColumnFit();
+    }
+
+    /// <summary>Columns you can turn off, with the name they are remembered by and their menu label.</summary>
+    private IEnumerable<(DataGridColumn Column, string Name, string Label)> OptionalColumns() => new (DataGridColumn, string, string)[]
+    {
+        (StatusColumn, nameof(StatusColumn), "Item status"),
+        (CourtColumn, nameof(CourtColumn), "Ball in court"),
+        (DaysInCourtColumn, nameof(DaysInCourtColumn), "Days in court"),
+        (DueColumn, nameof(DueColumn), "Due date"),
+        (DaysTillDueColumn, nameof(DaysTillDueColumn), "Days till due"),
+        (FolderColumn, nameof(FolderColumn), "Folder"),
+        (DisciplineColumn, nameof(DisciplineColumn), "Discipline"),
+        (ResultColumn, nameof(ResultColumn), "Folder status")
+    };
+
+    /// <summary>Right-click any column heading: a checked item per column you can turn off.</summary>
+    private void InitColumnsMenu()
+    {
+        columnsMenu.Items.Add(new MenuItem { Header = "Show these columns:", IsEnabled = false });
+        foreach (var (_, name, label) in OptionalColumns())
+        {
+            var item = new MenuItem { Header = label, IsCheckable = true, StaysOpenOnClick = true, Tag = name };
+            item.Click += (_, _) =>
+            {
+                viewModel.SetColumnHidden(name, !item.IsChecked);
+                UpdateColumns();
+            };
+            columnsMenu.Items.Add(item);
+        }
+
+        columnsMenu.Opened += (_, _) =>
+        {
+            foreach (var item in columnsMenu.Items.OfType<MenuItem>().Where(item => item.Tag is string))
+            {
+                item.IsChecked = !viewModel.IsColumnHidden((string)item.Tag);
+            }
+        };
+
+        var headerStyle = new Style(typeof(System.Windows.Controls.Primitives.DataGridColumnHeader),
+            (Style)FindResource(typeof(System.Windows.Controls.Primitives.DataGridColumnHeader)));
+        headerStyle.Setters.Add(new Setter(ContextMenuProperty, columnsMenu));
+        headerStyle.Setters.Add(new Setter(ToolTipProperty, "Click to sort. Right-click to choose the columns."));
+        ItemsGrid.ColumnHeaderStyle = headerStyle;
     }
 
     private void Group_Changed(object sender, SelectionChangedEventArgs e)
@@ -330,8 +448,16 @@ public partial class MainWindow : Window
             ? !viewModel.SortDescending
             : column is nameof(RowViewModel.DaysInCourt);
         viewModel.SetSort(column, descending, fromHeader: true);
+        ShowColumnSort();
+    }
+
+    /// <summary>Sorted by a column heading: the Sort box says which ("Title ↑") instead of going blank.</summary>
+    private void ShowColumnSort()
+    {
+        var header = ItemsGrid.Columns.FirstOrDefault(column => column.SortMemberPath == viewModel.SortColumn)?.Header as string;
+        SortByColumnItem.Content = header is null ? "By column heading" : $"{header} {(viewModel.SortDescending ? "↓" : "↑")}";
         settingSortBox = true;
-        SortBox.SelectedIndex = -1;
+        SortBox.SelectedItem = SortByColumnItem;
         settingSortBox = false;
     }
 
@@ -400,6 +526,21 @@ public partial class MainWindow : Window
 
     private void PersonPopup_Closed(object? sender, EventArgs e) => personPopupClosedAt = DateTime.UtcNow;
 
+    /// <summary>The keyboard goes into the list of people, so it can be used without a mouse.</summary>
+    private void PersonPopup_Opened(object? sender, EventArgs e) =>
+        Dispatcher.InvokeAsync(() => PersonPopup.Child?.MoveFocus(new TraversalRequest(FocusNavigationDirection.First)),
+            System.Windows.Threading.DispatcherPriority.Input);
+
+    private void PersonPopup_KeyDown(object sender, KeyEventArgs e)
+    {
+        if (e.Key == Key.Escape)
+        {
+            PersonPopup.IsOpen = false;
+            PersonButton.Focus();
+            e.Handled = true;
+        }
+    }
+
     private void ClearPeople_Click(object sender, RoutedEventArgs e) => viewModel.ClearPeople();
 
     private void Due_Changed(object sender, SelectionChangedEventArgs e)
@@ -421,18 +562,11 @@ public partial class MainWindow : Window
 
     private void Sort_Changed(object sender, SelectionChangedEventArgs e)
     {
-        if (!settingSortBox && DataContext is MainViewModel model && sender is ComboBox { SelectedItem: ComboBoxItem { Tag: string tag } })
+        if (!settingSortBox && DataContext is MainViewModel model && sender is ComboBox { SelectedItem: ComboBoxItem { Tag: string tag } }
+            && tag != "column")
         {
             model.SortBy = tag;
             UpdateSortArrows();
-        }
-    }
-
-    private void Filter_Checked(object sender, RoutedEventArgs e)
-    {
-        if (DataContext is MainViewModel model && sender is FrameworkElement { Tag: string tag })
-        {
-            model.Filter = tag;
         }
     }
 
@@ -444,7 +578,7 @@ public partial class MainWindow : Window
             return;
         }
 
-        // Archived projects are hidden unless "Show archived" is ticked.
+        // Archived projects are hidden unless "Show archived" is checked.
         view.Filter = item => item is not ProjectViewModel project || viewModel.IsShownInList(project);
         view.IsLiveFiltering = true;
         view.LiveFilteringProperties.Add(nameof(ProjectViewModel.IsArchived));
@@ -473,6 +607,12 @@ public partial class MainWindow : Window
             Title = fromProvider is null ? "Choose the new project's CA folder" : $"Choose the CA folder for {fromProvider.Name}",
             Multiselect = false
         };
+        // Start beside the projects already tracked (e.g. the client folder that holds the selected one).
+        if (NearProjects() is { } start)
+        {
+            dialog.InitialDirectory = start;
+        }
+
         if (dialog.ShowDialog(this) != true)
         {
             return;
@@ -493,7 +633,7 @@ public partial class MainWindow : Window
             // The folder is already tracked but not connected: connect it rather than splitting it.
             var connect = MessageBox.Show(
                 this,
-                $"That CA folder already belongs to \"{existing.Name}\", which isn't connected to Helix or Procore.\n\nConnect \"{existing.Name}\" to {fromProvider.ConnectionText}?",
+                $"That CA folder already belongs to \"{existing.Name}\", which isn't linked to Helix or Procore.\n\nLink \"{existing.Name}\" to {fromProvider.ConnectionText}?",
                 "CA folder already used",
                 MessageBoxButton.YesNo,
                 MessageBoxImage.Question,
@@ -552,6 +692,32 @@ public partial class MainWindow : Window
         }
     }
 
+    /// <summary>
+    /// The folder holding a tracked project's folder (two up from its CA folder: "…\Client\Job\CA" → "…\Client"),
+    /// from the selected project or else the first tracked one; null when none exists.
+    /// </summary>
+    private string? NearProjects()
+    {
+        var folders = new[] { viewModel.SelectedProject?.Project.CaFolder }
+            .Concat(viewModel.Settings.Projects.Select(project => project.CaFolder));
+        foreach (var folder in folders.Where(folder => !string.IsNullOrWhiteSpace(folder)))
+        {
+            try
+            {
+                var near = Path.GetDirectoryName(Path.GetDirectoryName(Path.TrimEndingDirectorySeparator(folder!)));
+                if (!string.IsNullOrEmpty(near) && Directory.Exists(near))
+                {
+                    return near;
+                }
+            }
+            catch (Exception error) when (error is ArgumentException or IOException or UnauthorizedAccessException)
+            {
+            }
+        }
+
+        return null;
+    }
+
     private async void EditProject_Click(object sender, RoutedEventArgs e)
     {
         if (viewModel.SelectedProject is null)
@@ -608,7 +774,7 @@ public partial class MainWindow : Window
 
     private void ClearTicks_Click(object sender, RoutedEventArgs e) => viewModel.ClearChecks();
 
-    /// <summary>The heading box: ticks everything shown, or unticks it all when everything already is.</summary>
+    /// <summary>The heading box: checks everything shown, or unchecks it all when everything already is.</summary>
     private void TickAllShown_Click(object sender, RoutedEventArgs e) =>
         viewModel.SetAllShownChecked(viewModel.AllShownChecked != true);
 
@@ -620,7 +786,7 @@ public partial class MainWindow : Window
             .ToList();
         if (rows.Count == 0)
         {
-            ShowInfo("Check the active folders you want to move into the returned folder first. \"Check all ready to return\" selects the suggested ones.");
+            ShowInfo("Check the active folders you want to move into the Returned folder first. \"Check all ready to return\" checks the suggested ones.");
             return;
         }
 
@@ -638,7 +804,7 @@ public partial class MainWindow : Window
             .ToList();
         if (rows.Count == 0)
         {
-            ShowInfo("Check folders that are currently in the returned folder to move them back.");
+            ShowInfo("Check folders that are in the Returned folder now to move them back.");
             return;
         }
 
@@ -652,6 +818,23 @@ public partial class MainWindow : Window
         if (viewModel.Comparison is not null)
         {
             await PreviewAndRunAsync(OperationPlanner.PlanCreateTypeFolders(viewModel.Comparison));
+        }
+    }
+
+    /// <summary>The folder warning's button: count folders that say neither BB nor TFO as this part.</summary>
+    private async void IncludeUnlabeled_Click(object sender, RoutedEventArgs e)
+    {
+        if (viewModel.SelectedProject is not { } project)
+        {
+            return;
+        }
+
+        var answer = MessageBox.Show(this,
+            $"Also include folders and items that mention neither BB nor TFO in \"{project.Name}\"?\n\nNothing in the folders changes. You can turn this off again in Edit project → Base Build / Tenant Fit Out.",
+            "Include them", MessageBoxButton.YesNo, MessageBoxImage.Question, MessageBoxResult.Yes);
+        if (answer == MessageBoxResult.Yes)
+        {
+            await viewModel.IncludeUnlabeledAsync();
         }
     }
 
@@ -697,6 +880,31 @@ public partial class MainWindow : Window
         new PreviewWindow(plan, results) { Owner = this }.ShowDialog();
         // The app just changed folders: list them again rather than waiting for the background check.
         await viewModel.RecheckFoldersAsync();
+    }
+
+    /// <summary>A row's ⋯ button: the row's menu (also on right-click), just below the button.</summary>
+    private void RowMenu_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not FrameworkElement button)
+        {
+            return;
+        }
+
+        DependencyObject? parent = button;
+        while (parent is not null and not DataGridRow)
+        {
+            parent = System.Windows.Media.VisualTreeHelper.GetParent(parent);
+        }
+
+        if (parent is DataGridRow { ContextMenu: { } menu } row)
+        {
+            var corner = button.TranslatePoint(new Point(0, button.ActualHeight), row);
+            menu.PlacementTarget = row;
+            menu.Placement = System.Windows.Controls.Primitives.PlacementMode.Relative;
+            menu.HorizontalOffset = corner.X;
+            menu.VerticalOffset = corner.Y;
+            menu.IsOpen = true;
+        }
     }
 
     private void OpenRowFolder_Click(object sender, RoutedEventArgs e)
@@ -794,7 +1002,16 @@ public partial class MainWindow : Window
 
     private async void OpenRowLink_Click(object sender, RoutedEventArgs e)
     {
-        if (sender is not FrameworkElement { DataContext: RowViewModel row } || row.Row.Item is not { } item)
+        if (sender is FrameworkElement { DataContext: RowViewModel row })
+        {
+            await OpenItemAsync(row);
+        }
+    }
+
+    /// <summary>Helix items open in the item panel (Helix has no link to one item); Procore items in the web browser.</summary>
+    private async Task OpenItemAsync(RowViewModel row)
+    {
+        if (row.Row.Item is not { } item)
         {
             return;
         }
@@ -836,13 +1053,22 @@ public partial class MainWindow : Window
 
     private GridLength itemPanelWidth = new(0.9, GridUnitType.Star);
 
-    private void Grid_MouseDoubleClick(object sender, MouseButtonEventArgs e)
+    /// <summary>Double-click a row: open its folder, or the item when it has no folder yet.</summary>
+    private async void Grid_MouseDoubleClick(object sender, MouseButtonEventArgs e)
     {
-        if (e.OriginalSource is DependencyObject source
-            && ItemsControl.ContainerFromElement(ItemsGrid, source) is DataGridRow { Item: RowViewModel row }
-            && row.HasFolder)
+        if (e.OriginalSource is not DependencyObject source
+            || ItemsControl.ContainerFromElement(ItemsGrid, source) is not DataGridRow { Item: RowViewModel row })
+        {
+            return;
+        }
+
+        if (row.HasFolder)
         {
             OpenInExplorer(row.Row.Folder!.FullPath);
+        }
+        else if (row.HasItem)
+        {
+            await OpenItemAsync(row);
         }
     }
 
@@ -889,14 +1115,25 @@ public partial class MainWindow : Window
         window.Show();
     }
 
-    private void Settings_Click(object sender, RoutedEventArgs e) => ShowSettings(SettingsSection.General);
+    /// <summary>Settings, or back to the projects when Settings is open (asking about unsaved changes).</summary>
+    private void Settings_Click(object sender, RoutedEventArgs e)
+    {
+        if (SettingsView.Visibility != Visibility.Visible)
+        {
+            ShowSettings(SettingsSection.General);
+        }
+        else if (SettingsView.ConfirmLeave())
+        {
+            ShowProjects();
+        }
+    }
 
     private async void InstallUpdate_Click(object sender, RoutedEventArgs e)
     {
         var answer = MessageBox.Show(this,
-            $"{viewModel.UpdateText}? CA Tracker closes, installs the new version and starts again.\n\nFrom: {viewModel.UpdateSource}\n\n{viewModel.UpdateNotes}",
-            "CA Tracker", MessageBoxButton.OKCancel, MessageBoxImage.Question);
-        if (answer != MessageBoxResult.OK)
+            $"{viewModel.UpdateText.TrimEnd('…')} now? CA Tracker closes, installs it and starts again.\n\n{viewModel.UpdateNotes}\n\nFrom: {viewModel.UpdateSource}",
+            "Install update", MessageBoxButton.YesNo, MessageBoxImage.Question, MessageBoxResult.Yes);
+        if (answer != MessageBoxResult.Yes)
         {
             return;
         }
@@ -926,41 +1163,108 @@ public partial class MainWindow : Window
 
         ProjectsPage.Visibility = Visibility.Collapsed;
         SettingsView.Visibility = Visibility.Visible;
-        SettingsButton.IsEnabled = false;
+        SettingsButton.Content = "← _Projects";
     }
 
     private void ShowProjects()
     {
-        // Undo a theme previewed but not saved.
-        ThemeManager.Apply(viewModel.Settings.Theme);
         SettingsView.Visibility = Visibility.Collapsed;
         ProjectsPage.Visibility = Visibility.Visible;
-        SettingsButton.IsEnabled = true;
+        SettingsButton.Content = "Se_ttings";
     }
 
-    private void Sync_Click(object sender, RoutedEventArgs e)
+    /// <summary>Sync all (or Stop while it runs). With nothing signed in, Connections opens instead.</summary>
+    private async void SyncAll_Click(object sender, RoutedEventArgs e)
     {
-        if (syncWindow is not null)
+        if (viewModel.IsAnySyncing)
         {
-            syncWindow.Activate();
+            viewModel.StopSyncs();
             return;
         }
 
-        syncWindow = new SyncWindow(viewModel) { Owner = this };
-        syncWindow.ManageConnectionsRequested += (_, _) =>
+        if (!await viewModel.SyncAllAsync())
         {
-            syncWindow?.Close();
             ShowSettings(SettingsSection.Connections);
-        };
-        syncWindow.Closed += (_, _) => syncWindow = null;
-        syncWindow.Show();
+        }
+    }
+
+    private void SyncMenu_Click(object sender, RoutedEventArgs e)
+    {
+        var menu = SyncMenuButton.ContextMenu!;
+        SyncHelixMenu.IsEnabled = viewModel.ConnectionFor(Providers.Helix).CanSync;
+        SyncProcoreMenu.IsEnabled = viewModel.ConnectionFor(Providers.Procore).CanSync;
+        menu.PlacementTarget = SyncMenuButton;
+        menu.Placement = System.Windows.Controls.Primitives.PlacementMode.Bottom;
+        menu.IsOpen = true;
+    }
+
+    private async void SyncHelix_Click(object sender, RoutedEventArgs e) => await viewModel.SyncAsync(Providers.Helix);
+
+    private async void SyncProcore_Click(object sender, RoutedEventArgs e) => await viewModel.SyncAsync(Providers.Procore);
+
+    private void OpenConnections_Click(object sender, RoutedEventArgs e) => ShowSettings(SettingsSection.Connections);
+
+    private void DismissBanner_Click(object sender, RoutedEventArgs e) => viewModel.DismissSignInBanner();
+
+    private void BannerSignIn_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is FrameworkElement { DataContext: ConnectionViewModel connection })
+        {
+            OpenSignIn(connection.Provider, signInExpired: connection.NeedsSignIn);
+        }
+    }
+
+    /// <summary>F5 syncs the selected project, Ctrl+F finds a project, Esc closes the item panel.</summary>
+    private async void Window_PreviewKeyDown(object sender, KeyEventArgs e)
+    {
+        if (ProjectsPage.Visibility != Visibility.Visible)
+        {
+            return;
+        }
+
+        if (e.Key == Key.F5 && Keyboard.Modifiers == ModifierKeys.None)
+        {
+            e.Handled = true;
+            if (viewModel.CanRefresh)
+            {
+                await viewModel.StartRefreshAsync();
+            }
+        }
+        else if (e.Key == Key.F && Keyboard.Modifiers == ModifierKeys.Control)
+        {
+            e.Handled = true;
+            ProjectSearchBox.Focus();
+            ProjectSearchBox.SelectAll();
+        }
+        else if (e.Key == Key.Escape && ItemPanel.Visibility == Visibility.Visible && !PersonPopup.IsOpen
+                 && Keyboard.FocusedElement is not TextBox)
+        {
+            e.Handled = true;
+            ShowItemPanel(false);
+        }
+    }
+
+    /// <summary>Esc in "Find a project" clears it; Enter goes to the list.</summary>
+    private void ProjectSearch_KeyDown(object sender, KeyEventArgs e)
+    {
+        if (e.Key == Key.Escape && ProjectSearchBox.Text.Length > 0)
+        {
+            ProjectSearchBox.Clear();
+            e.Handled = true;
+        }
+        else if (e.Key == Key.Enter && ProjectList.Items.Count > 0)
+        {
+            ProjectList.SelectedIndex = 0;
+            (ProjectList.ItemContainerGenerator.ContainerFromIndex(0) as UIElement)?.Focus();
+            e.Handled = true;
+        }
     }
 
     private void OpenInExplorer(string? path)
     {
         if (string.IsNullOrWhiteSpace(path) || !Directory.Exists(path))
         {
-            ShowInfo("That folder cannot be found. Select Refresh to update the list.");
+            ShowInfo("That folder can't be found. Select Sync (or Rescan CA folder) to update the list.");
             return;
         }
 

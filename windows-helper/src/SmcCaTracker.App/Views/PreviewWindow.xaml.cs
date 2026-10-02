@@ -40,7 +40,7 @@ public partial class PreviewWindow : Window
             var skipped = results.Count - done - failed;
             Title = $"Results — {plan.Title}";
             HeadingText.Text = failed == 0 ? $"{plan.Title}: finished" : $"{plan.Title}: finished with problems";
-            SummaryText.Text = $"{done} done, {failed} failed, {skipped} skipped. Each step is recorded in the tracker's journal.";
+            SummaryText.Text = $"{done} done, {failed} failed, {skipped} skipped. Each step is also written to the log (Settings → General → Troubleshooting).";
             FooterText.Text = "";
             ApplyButton.Visibility = Visibility.Collapsed;
             CancelButton.Content = "Close";

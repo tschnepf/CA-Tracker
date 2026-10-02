@@ -40,6 +40,12 @@ public sealed class ViewState
 
     /// <summary>Width of the project list, in pixels (drag the bar beside it).</summary>
     public double ProjectsPaneWidth { get; set; } = 290;
+
+    /// <summary>
+    /// Item-list columns you turned off (right-click a column heading), by the column's name. The due
+    /// date starts hidden: "Days till due" shows it on hover.
+    /// </summary>
+    public List<string> HiddenColumns { get; set; } = new() { "DueColumn" };
 }
 
 public sealed class ViewStateStore
@@ -73,6 +79,7 @@ public sealed class ViewStateStore
             state.SortPreset ??= "";
             state.ArchivedProjects ??= new List<string>();
             state.FavoriteProjects ??= new List<string>();
+            state.HiddenColumns ??= new List<string>();
             return state;
         }
         catch (Exception error) when (error is JsonException or IOException or UnauthorizedAccessException)

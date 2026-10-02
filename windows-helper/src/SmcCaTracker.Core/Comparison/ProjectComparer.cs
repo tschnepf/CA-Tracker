@@ -60,16 +60,16 @@ public sealed class ComparisonRow
 
     public static string StatusLabel(RowStatus status) => status switch
     {
-        RowStatus.ReadyToReturn => "Ready to move to returned",
-        RowStatus.Reopened => "Back in court — folder is in returned",
+        RowStatus.ReadyToReturn => "Ready to return",
+        RowStatus.Reopened => "Back in court — folder is in Returned",
         RowStatus.Duplicate => "More than one folder",
         RowStatus.Ambiguous => "Folder matches several items",
-        RowStatus.NotInProvider => "Not found in provider",
+        RowStatus.NotInProvider => "Not in Helix/Procore",
         RowStatus.NoFolder => "No folder",
         RowStatus.Open => "Open",
         RowStatus.Filed => "Returned",
         RowStatus.NotInView => "Not in last Procore view",
-        _ => "No provider data yet"
+        _ => "Not synced yet"
     };
 }
 

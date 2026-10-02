@@ -159,6 +159,15 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         store.Changed += OnStoreChanged;
         store.SaveFailed += OnSaveFailed;
 
+        refreshMessageHide.Tick += (_, _) =>
+        {
+            refreshMessageHide.Stop();
+            if (!refreshMessageIsError && !IsRefreshing)
+            {
+                SetRefreshMessage("", false);
+            }
+        };
+
         syncProgressHide.Tick += (_, _) =>
         {
             syncProgressHide.Stop();
@@ -281,13 +290,33 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     /// <summary>Raised when a refresh should run in the app's built-in browser window.</summary>
     public event Action<RefreshRequest>? BrowserRefreshRequested;
 
-    /// <summary>
-    /// Raised once when Procore's sign-in has expired and a sync needs you to sign in again, so the
-    /// Connect to Procore window can open by itself instead of the sync just looking like it failed.
-    /// </summary>
-    public event Action<string>? SignInRequested;
-
     private readonly HashSet<string> signInRequested = new(StringComparer.OrdinalIgnoreCase);
+    private bool signInBannerDismissed;
+
+    /// <summary>
+    /// A banner under the header while Helix or Procore needs you to sign in (its sign-in expired, or you
+    /// signed out while its projects are still listed), so a sync doesn't just look like it failed.
+    /// </summary>
+    public bool ShowSignInBanner => !signInBannerDismissed && Connections.Any(connection => connection.WantsSignIn);
+
+    public string SignInBannerText
+    {
+        get
+        {
+            var sites = Connections.Where(connection => connection.WantsSignIn).ToList();
+            var names = string.Join(" and ", sites.Select(site => site.Label));
+            return sites.Count == 0 ? ""
+                : sites.All(site => site.NeedsSignIn) ? $"Your {names} sign-in has expired. Sign in again to keep your projects up to date."
+                : $"Sign in to {names} to keep your projects up to date.";
+        }
+    }
+
+    /// <summary>Hides the banner until the next sign-in expires.</summary>
+    public void DismissSignInBanner()
+    {
+        signInBannerDismissed = true;
+        OnPropertyChanged(nameof(ShowSignInBanner));
+    }
 
     // ---- Archive (yours only) -------------------------------------------------------------
 
@@ -334,7 +363,38 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     public string ShowArchivedText => $"Show archived ({ArchivedCount})";
 
     /// <summary>Whether the project list shows this project now.</summary>
-    public bool IsShownInList(ProjectViewModel project) => showArchived || !project.IsArchived;
+    public bool IsShownInList(ProjectViewModel project)
+    {
+        if (!showArchived && project.IsArchived)
+        {
+            return false;
+        }
+
+        var search = projectSearch.Trim();
+        return search.Length == 0
+            || project.Name.Contains(search, StringComparison.CurrentCultureIgnoreCase)
+            || project.Project.CompanyName?.Contains(search, StringComparison.CurrentCultureIgnoreCase) == true;
+    }
+
+    private string projectSearch = "";
+
+    /// <summary>"Find a project": the list shows only projects whose name (or company) contains this.</summary>
+    public string ProjectSearch
+    {
+        get => projectSearch;
+        set
+        {
+            if (Set(ref projectSearch, value ?? ""))
+            {
+                ProjectFilterChanged?.Invoke();
+                OnPropertyChanged(nameof(IsProjectSearchEmpty));
+                OnPropertyChanged(nameof(HasNoSearchResults));
+            }
+        }
+    }
+
+    public bool IsProjectSearchEmpty => projectSearch.Length == 0;
+    public bool HasNoSearchResults => projectSearch.Trim().Length > 0 && !Projects.Any(IsShownInList);
 
     /// <summary>Width of the project list (remembered).</summary>
     public double ProjectsPaneWidth
@@ -400,8 +460,8 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     public BulkObservableCollection<RowViewModel> Rows { get; } = new();
 
     /// <summary>
-    /// People who have items now, for the Person filter: your company first, then names. Tick any
-    /// number; none ticked means everyone.
+    /// People who have items now, for the Person filter: your company first, then names. Check any
+    /// number; none checked means everyone.
     /// </summary>
     public ObservableCollection<PersonChoiceViewModel> PersonChoices { get; } = new();
 
@@ -426,6 +486,15 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     }
 
     private bool suppressPersonEvents;
+
+    /// <summary>Back to the default view: open items, everyone, any date, every discipline.</summary>
+    public void ClearFilters()
+    {
+        Filter = Filters.Open;
+        DueFilter = DueFilter.Any;
+        DisciplineFilter = "";
+        ClearPeople();
+    }
 
     public void ClearPeople()
     {
@@ -458,7 +527,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
 
         if (sender is PersonChoiceViewModel choice)
         {
-            // Remembered by name, so a tick survives switching projects and restarting.
+            // Remembered by name, so a check survives switching projects and restarting.
             if (choice.IsCompany)
             {
                 rememberCompany = choice.IsChecked;
@@ -676,21 +745,64 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     public bool IsBusy
     {
         get => isBusy;
-        set => Set(ref isBusy, value);
+        set
+        {
+            if (Set(ref isBusy, value))
+            {
+                OnPropertyChanged(nameof(HasFooter));
+            }
+        }
     }
 
     public string StatusMessage
     {
         get => statusMessage;
-        set => Set(ref statusMessage, value);
+        set
+        {
+            if (Set(ref statusMessage, value ?? ""))
+            {
+                OnPropertyChanged(nameof(HasFooter));
+            }
+        }
     }
 
-    /// <summary>Helix and Procore, for the Connections settings page and the Sync window.</summary>
+    /// <summary>The footer shows only while there is a message or work going on.</summary>
+    public bool HasFooter => statusMessage.Length > 0 || isBusy;
+
+    /// <summary>Helix and Procore, for the Connections settings page, the sign-in banner and Sync all.</summary>
     public ObservableCollection<ConnectionViewModel> Connections { get; } = new(
         Providers.All.Select(provider => new ConnectionViewModel(provider)));
 
     public bool IsAnySyncing => Connections.Any(connection => connection.IsSyncing);
-    public bool HasNoListedConnections => !Connections.Any(connection => connection.IsListed);
+
+    /// <summary>The header's button: Sync all, or Stop while a sync it started runs.</summary>
+    public string SyncAllText => IsAnySyncing ? "Stop syncing" : "Sync all";
+
+    /// <summary>
+    /// Syncs every signed-in site, one after another (so only one browser window is ever open).
+    /// False when no site is signed in, so the window can open Connections instead.
+    /// </summary>
+    public async Task<bool> SyncAllAsync()
+    {
+        var ready = Connections.Where(connection => connection.CanSync).ToList();
+        foreach (var connection in ready)
+        {
+            await SyncAsync(connection.Provider);
+        }
+
+        return ready.Count > 0;
+    }
+
+    /// <summary>Stop: each running sync finishes its current project and skips the rest.</summary>
+    public void StopSyncs()
+    {
+        foreach (var connection in Connections.Where(connection => connection.IsSyncing))
+        {
+            connection.StopRequested = true;
+            connection.SyncMessage = "Stopping after the current project…";
+        }
+    }
+
 
     public ConnectionViewModel ConnectionFor(string provider) =>
         Connections.First(connection => string.Equals(connection.Provider, provider, StringComparison.OrdinalIgnoreCase));
@@ -703,13 +815,14 @@ public sealed class MainViewModel : ObservableObject, IDisposable
             var account = store.Account(connection.Provider);
             connection.IsSignedIn = account is { NeedsSignIn: false };
             connection.NeedsSignIn = account is { NeedsSignIn: true };
+            // The badge says the state; this line says who, or what to do.
             connection.StatusText = account is null
-                ? "Not connected"
+                ? $"Sign in once and CA Tracker keeps your {connection.Label} projects up to date in the background."
                 : account.NeedsSignIn
-                    ? "Sign-in needed — connect again"
+                    ? "Your sign-in has expired. Sign in again to keep syncing."
                 : string.IsNullOrWhiteSpace(account.UserName)
-                    ? $"Connected (signed in {Formatting.When(account.SignedInAt)})"
-                    : $"Connected as {account.UserName}{(string.IsNullOrWhiteSpace(account.Company) ? "" : $" · {account.Company}")}";
+                    ? $"Signed in {Formatting.When(account.SignedInAt)}"
+                    : $"Signed in as {account.UserName}{(string.IsNullOrWhiteSpace(account.Company) ? "" : $" · {account.Company}")}";
 
             var projects = ProjectsFor(connection.Provider, includeUntracked: true);
             var tracked = projects.Count(project => !project.IsPlaceholder);
@@ -717,11 +830,11 @@ public sealed class MainViewModel : ObservableObject, IDisposable
             connection.ProjectCount = projects.Count;
             connection.ProjectsText = projects.Count switch
             {
-                0 when ProviderSites.IsProcore(connection.Provider) => "No Procore projects found yet. Connect to Procore, then Sync, to find them.",
+                0 when ProviderSites.IsProcore(connection.Provider) => "No Procore projects found yet. Sign in to Procore and they are found by themselves.",
                 0 => $"No {connection.Label} projects listed yet",
                 1 => $"1 project ({tracked} with a CA folder)",
                 _ => $"{projects.Count} projects ({tracked} with a CA folder)"
-            } + (skipped > 0 ? $" · {skipped} not synced" : "");
+            } + (skipped > 0 ? $" · {skipped} archived or with sync turned off" : "");
             var lastSynced = projects
                 .Select(project => project.Snapshot?.ScannedAt)
                 .Where(value => value is not null)
@@ -744,23 +857,24 @@ public sealed class MainViewModel : ObservableObject, IDisposable
                   ". Hover one in the project list to see why.";
         }
 
-        OnPropertyChanged(nameof(HasNoListedConnections));
-
-        // Helix or Procore needs you to sign in again: ask once (opening its Connect window), not on
-        // every check. Signing in clears it, so the next expiry asks again.
+        // Helix or Procore needs you to sign in again: the banner says so. A new expiry brings back a
+        // banner you dismissed; signing in clears it.
         foreach (var provider in Providers.All)
         {
             var needsSignIn = store.Account(provider) is { NeedsSignIn: true };
             if (needsSignIn && signInRequested.Add(provider))
             {
-                AppLog.Info(provider, $"{Providers.Label(provider)} needs a new sign-in: opening Connect to {Providers.Label(provider)}.");
-                System.Windows.Application.Current?.Dispatcher.InvokeAsync(() => SignInRequested?.Invoke(provider));
+                AppLog.Info(provider, $"{Providers.Label(provider)} needs a new sign-in.");
+                signInBannerDismissed = false;
             }
             else if (!needsSignIn)
             {
                 signInRequested.Remove(provider);
             }
         }
+
+        OnPropertyChanged(nameof(ShowSignInBanner));
+        OnPropertyChanged(nameof(SignInBannerText));
     }
 
     private List<ProjectViewModel> ProjectsFor(string provider, bool includeUntracked = false) =>
@@ -787,6 +901,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         connection.IsSyncing = true;
         connection.StopRequested = false;
         OnPropertyChanged(nameof(IsAnySyncing));
+        OnPropertyChanged(nameof(SyncAllText));
         try
         {
             string? found = null;
@@ -809,7 +924,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
             {
                 connection.SyncMessage = all.Count > 0
                     ? $"Every {connection.Label} project is archived or set to not sync. Right-click a project to turn syncing back on."
-                    : found ?? $"No {connection.Label} projects yet. Use Connect to {connection.Label} in Settings → Connections to list them.";
+                    : found ?? $"No {connection.Label} projects yet. Sign in to {connection.Label} in Settings → Connections to list them.";
                 return;
             }
 
@@ -824,6 +939,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         {
             connection.IsSyncing = false;
             OnPropertyChanged(nameof(IsAnySyncing));
+            OnPropertyChanged(nameof(SyncAllText));
             RefreshAccounts();
         }
     }
@@ -1090,7 +1206,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
                 }
             }
 
-            EndSyncProgress(run, projects);
+            EndSyncProgress(run, projects, result?.NeedsSignIn == true);
             if (site is not null)
             {
                 site.EndBusy();
@@ -1175,7 +1291,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
             : $"Syncing {run.Label}: {name} ({index + 1} of {run.Total})…";
     }
 
-    private void EndSyncProgress(SyncProgressRun run, IReadOnlyList<ProjectViewModel> projects)
+    private void EndSyncProgress(SyncProgressRun run, IReadOnlyList<ProjectViewModel> projects, bool needsSignIn = false)
     {
         syncRuns.Remove(run);
         if (syncRuns.Count > 0)
@@ -1190,8 +1306,10 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         var done = projects.Count(project => project.JustSynced && !project.LastReadFailed);
         IsSyncProgressRunning = false;
         SyncProgressValue = 100;
-        SyncProgressText = $"{run.Label} synced {DateTimeOffset.Now.ToLocalTime():h:mm tt}: {done} of {projects.Count} project{(projects.Count == 1 ? "" : "s")} updated" +
-            (failed > 0 ? $", {failed} couldn't be read (marked ⚠)." : ".");
+        SyncProgressText = needsSignIn && done == 0
+            ? $"{run.Label} needs you to sign in, so nothing was synced."
+            : $"{run.Label} synced {DateTimeOffset.Now.ToLocalTime():h:mm tt}: {done} of {projects.Count} project{(projects.Count == 1 ? "" : "s")} updated" +
+              (failed > 0 ? $", {failed} couldn't be read (marked ⚠)." : ".");
         syncProgressHide.Stop();
         syncProgressHide.Start();
     }
@@ -1345,9 +1463,9 @@ public sealed class MainViewModel : ObservableObject, IDisposable
             return $"{text}  ·  {suffix}";
         }
     }
-    public string RefreshButtonText => IsRefreshing ? "Refreshing…"
-        : IsMultiProject ? $"Refresh {selectedProjects.Count} projects"
-        : IsConnected ? $"Refresh from {SelectedProject!.ProviderLabel}" : "Refresh";
+    public string RefreshButtonText => IsRefreshing ? "Syncing…"
+        : IsMultiProject ? $"Sync {selectedProjects.Count} projects"
+        : IsConnected ? $"Sync from {SelectedProject!.ProviderLabel}" : "Rescan CA folder";
 
     public string DataTimestampText
     {
@@ -1363,13 +1481,13 @@ public sealed class MainViewModel : ObservableObject, IDisposable
             if (SelectedProject.LastReadFailed)
             {
                 var run = SelectedProject.LastRun!;
-                return $"{label}: the last read {Formatting.When(run.StartedAt)} failed — {run.Error}" +
-                    (snapshot is null ? "" : $" · showing items read {Formatting.When(snapshot.ScannedAt)}");
+                return $"{label}: the last sync {Formatting.When(run.StartedAt)} failed — {run.Error}" +
+                    (snapshot is null ? "" : $" · showing items synced {Formatting.When(snapshot.ScannedAt)}");
             }
 
             if (snapshot is null)
             {
-                return $"{label} data: never refreshed";
+                return $"{label} data: never synced";
             }
 
             var types = ItemTypes.All
@@ -1379,13 +1497,18 @@ public sealed class MainViewModel : ObservableObject, IDisposable
             var distinctTimes = types.Select(entry => entry.coverage!.ScannedAt).Distinct().Count();
             return distinctTimes > 1
                 ? $"{label} data: " + string.Join(" · ", types.Select(entry => $"{ItemTypes.Plural(entry.type)} {Formatting.When(entry.coverage!.ScannedAt)}"))
-                : $"{label} data refreshed {Formatting.When(snapshot.ScannedAt)}";
+                : $"{label} data synced {Formatting.When(snapshot.ScannedAt)}";
         }
     }
 
+    public bool LastSyncFailed => SelectedProject is { LastReadFailed: true } && IsConnected;
+
+    /// <summary>When the items and the CA folder were last read, on one line above the list.</summary>
+    public string TimestampText => string.Join("  ·  ", new[] { DataTimestampText, FolderTimestampText }.Where(text => text.Length > 0));
+
     public string FolderTimestampText => comparison is null || !HasCaFolder
         ? ""
-        : $"CA folder checked {Formatting.When(comparison.ComparedAt)}";
+        : $"CA folder rescanned {Formatting.When(comparison.ComparedAt)}";
 
     public string RefreshMessage => refreshMessage;
     public bool HasRefreshMessage => refreshMessage.Length > 0;
@@ -1397,7 +1520,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         {
             if (IsMultiProject)
             {
-                return $"Showing items from all {selectedProjects.Count} selected projects. The CA folder and connection above are for {SelectedProject?.Name}.";
+                return $"Showing items from all {selectedProjects.Count} selected projects. The CA folder and link above are for {SelectedProject?.Name}; Edit project… edits it.";
             }
 
             var snapshot = SelectedProject?.Snapshot;
@@ -1423,7 +1546,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
 
             if (!comparison.Company.IsKnown)
             {
-                return "Returned: closed items only until a company is known (refresh, or choose one in Edit project).";
+                return "Returned: closed items only until your company is known (sync, or choose it in Edit project).";
             }
 
             var rule = Settings.Returned;
@@ -1463,12 +1586,10 @@ public sealed class MainViewModel : ObservableObject, IDisposable
                 .Where(message => message is not null)
                 .Distinct()
                 .ToList();
-            var hidden = comparison.Types.Values.Sum(type => type.HiddenByPhase);
-            if (hidden > 0 && comparison.Project.Scope is { IsSplit: true } scope)
+            var hidden = HiddenByPhaseCount;
+            if (hidden > 0)
             {
-                var part = Phases.Short(scope.Phase);
-                problems.Add($"{hidden} folder{(hidden == 1 ? " is" : "s are")} hidden because the name says neither BB nor TFO. " +
-                    $"To include them in {part}, open Edit project → Base Build / Tenant Fit Out and check \"Also include items and folders that mention neither BB nor TFO\".");
+                problems.Add($"{hidden} folder{(hidden == 1 ? " is" : "s are")} hidden because {(hidden == 1 ? "its name says" : "their names say")} neither BB nor TFO.");
             }
 
             return string.Join("  ", problems);
@@ -1476,6 +1597,40 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     }
 
     public bool HasFolderWarning => FolderWarning.Length > 0;
+
+    /// <summary>Folders the Base Build / Tenant Fit Out split hides because their names say neither part.</summary>
+    private int HiddenByPhaseCount => comparison is null || !HasCaFolder || comparison.Project.Scope is not { IsSplit: true }
+        ? 0
+        : comparison.Types.Values.Sum(type => type.HiddenByPhase);
+
+    /// <summary>The folder warning's button: count those folders (and items) as this project's part.</summary>
+    public bool CanIncludeUnlabeled => HiddenByPhaseCount > 0 && !IsMultiProject && comparison?.Project.Scope is { IncludeUnlabeled: false };
+
+    public string IncludeUnlabeledText => comparison?.Project.Scope is { IsSplit: true } scope
+        ? $"Include them in {Phases.Short(scope.Phase)}…"
+        : "Include them…";
+
+    /// <summary>
+    /// Counts folders and items that say neither BB nor TFO as the selected project's part (the "Also
+    /// include…" box in Edit project). Only the tracker's settings change.
+    /// </summary>
+    public async Task IncludeUnlabeledAsync()
+    {
+        if (SelectedProject is not { IsPlaceholder: false } project)
+        {
+            return;
+        }
+
+        var edited = CloneProject(project.Project);
+        edited.Scope ??= new PhaseScope();
+        edited.Scope.IncludeUnlabeled = true;
+        await UpdateProjectAsync(edited);
+    }
+
+    /// <summary>Hover text for Move to Returned: what "returned" means for this project.</summary>
+    public string MarkReturnedToolTip => CompanyText.Length > 0
+        ? $"{CompanyText} A preview shows every move before anything changes."
+        : "Moves the checked folders into the Returned folder. A preview shows every move before anything changes.";
 
     /// <summary>The selected project is a Helix/Procore project with no CA folder chosen yet.</summary>
     public bool IsPlaceholder => SelectedProject?.IsPlaceholder == true;
@@ -1493,18 +1648,95 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     public string EmptyText => !HasProject ? ""
         : IsPlaceholder && Rows.Count == 0 ? "Select Choose CA folder… to track this project's RFIs and Submittals against its CA folder."
         : !HasCaFolder && Rows.Count == 0 ? "Choose this project's CA folder in Edit project."
-        : !IsConnected && Rows.Count == 0 ? "Connect this project to Helix or Procore, then Refresh, to compare its items."
+        : !IsConnected && Rows.Count == 0 ? "Link this project to its Helix or Procore project (Link… above), then Sync, to compare its items."
         : Rows.Count == 0 && Filter == Filters.Attention && !HasPersonFilter && DueFilter == DueFilter.Any ? "Nothing needs attention here."
-        : Rows.Count == 0 ? "No items match this filter."
+        : Rows.Count == 0 && HasActiveFilters ? "No items match the filters above."
+        : Rows.Count == 0 ? "No items here."
         : "";
 
     public bool HasEmptyText => EmptyText.Length > 0;
 
-    public int CheckedCount => allRows.Count(row => row.IsChecked);
+    /// <summary>Anything narrower than the default view (open items, everyone, any date, every discipline).</summary>
+    public bool HasActiveFilters => Filter != Filters.Open || HasPersonFilter || DueFilter != DueFilter.Any || DisciplineFilter.Length > 0;
 
-    public string SelectionText => CheckedCount == 0 ? "Nothing checked" : $"{CheckedCount} checked";
+    /// <summary>What is checked, worked out once per change (checking every shown row is one change).</summary>
+    private sealed record CheckSummary(int Checked, int Hidden, int Returnable, int MoveBack, int Discipline, int Download)
+    {
+        public static readonly CheckSummary None = new(0, 0, 0, 0, 0, 0);
+    }
 
-    /// <summary>Header tick: true when every tickable shown row is ticked, null when some are, false when none.</summary>
+    private CheckSummary checks = CheckSummary.None;
+    private bool checksPending;
+
+    private CheckSummary SummarizeChecks()
+    {
+        var checkedRows = allRows.Where(row => row.IsChecked).ToList();
+        if (checkedRows.Count == 0)
+        {
+            return CheckSummary.None;
+        }
+
+        // A folder shown under both the BB and TFO projects is moved once, an item downloaded once.
+        static int Folders(IEnumerable<RowViewModel> rows) =>
+            rows.Select(row => row.Row.Folder!.FullPath).Distinct(StringComparer.OrdinalIgnoreCase).Count();
+        return new CheckSummary(
+            checkedRows.Count,
+            checkedRows.Count - Rows.Count(row => row.IsChecked),
+            Folders(checkedRows.Where(row => row.Row.CanMarkReturned)),
+            Folders(checkedRows.Where(row => row.Row.CanMoveBack)),
+            checkedRows.Count(row => row.CanSelect),
+            checkedRows.Where(row => row.CanDownload)
+                .Select(row => $"{row.Project.Project.Connection?.ProjectId}|{row.Row.ItemType}|{row.Row.Item!.ItemId}")
+                .Distinct(StringComparer.Ordinal).Count());
+    }
+
+    /// <summary>A row was checked or unchecked: update the action bar once the batch is done.</summary>
+    private void ChecksChangedSoon()
+    {
+        if (checksPending)
+        {
+            return;
+        }
+
+        checksPending = true;
+        System.Windows.Application.Current?.Dispatcher.InvokeAsync(() =>
+        {
+            checksPending = false;
+            RaiseChecks();
+        }, DispatcherPriority.Background);
+    }
+
+    private void RaiseChecks()
+    {
+        checks = SummarizeChecks();
+        foreach (var name in new[]
+                 {
+                     nameof(CheckedCount), nameof(HasChecks), nameof(SelectionText), nameof(AllShownChecked),
+                     nameof(CanMarkReturned), nameof(MarkReturnedText), nameof(CanMoveBack), nameof(MoveBackText),
+                     nameof(CanSetDiscipline), nameof(SetDisciplineText), nameof(CanDownloadChecked), nameof(DownloadCheckedText)
+                 })
+        {
+            OnPropertyChanged(name);
+        }
+    }
+
+    public int CheckedCount => checks.Checked;
+    public bool HasChecks => checks.Checked > 0;
+
+    public string SelectionText => checks.Checked == 0 ? "Nothing checked"
+        : checks.Hidden > 0 ? $"{checks.Checked} checked ({checks.Hidden} hidden by filters)"
+        : $"{checks.Checked} checked";
+
+    public bool CanMarkReturned => checks.Returnable > 0;
+    public string MarkReturnedText => checks.Returnable == 0 ? "Move to Returned…" : $"Move {checks.Returnable} to Returned…";
+    public bool CanMoveBack => checks.MoveBack > 0;
+    public string MoveBackText => checks.MoveBack == 0 ? "Move back to active…" : $"Move {checks.MoveBack} back to active…";
+    public bool CanSetDiscipline => checks.Discipline > 0;
+    public string SetDisciplineText => checks.Discipline == 0 ? "Set discipline…" : $"Set discipline of {checks.Discipline}…";
+    public bool CanDownloadChecked => checks.Download > 0;
+    public string DownloadCheckedText => checks.Download == 0 ? "Download…" : $"Download {checks.Download}…";
+
+    /// <summary>Header box: true when every checkable shown row is checked, null when some are, false when none.</summary>
     public bool? AllShownChecked
     {
         get
@@ -1515,7 +1747,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         }
     }
 
-    /// <summary>Ticks (or unticks) every row the current filters show.</summary>
+    /// <summary>Checks (or unchecks) every row the current filters show.</summary>
     public void SetAllShownChecked(bool value)
     {
         foreach (var row in Rows.Where(row => row.CanSelect))
@@ -1524,7 +1756,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         }
     }
 
-    /// <summary>Ticked rows, from every shown project.</summary>
+    /// <summary>Checked rows, from every shown project.</summary>
     public IReadOnlyList<RowViewModel> CheckedRows() => allRows.Where(row => row.IsChecked).ToList();
 
     /// <summary>
@@ -1773,9 +2005,9 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         {
             var result = await RefreshSequentiallyAsync(
                 targets,
-                (index, project) => SetRefreshMessage($"Refreshing {project.Name} ({index + 1} of {targets.Count})…", false),
+                (index, project) => SetRefreshMessage($"Syncing {project.Name} ({index + 1} of {targets.Count})…", false),
                 () => stopMany);
-            SetRefreshMessage(result.Summary(targets.Count, "Refreshed"), result.Failed.Count > 0);
+            SetRefreshMessage(result.Summary(targets.Count, "Synced"), result.Failed.Count > 0);
             await RecheckFoldersAsync();
         }
         finally
@@ -1833,7 +2065,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         {
             if (selected)
             {
-                SetRefreshMessage("Folder checked. Connect this project to Helix or Procore to refresh its items.", false);
+                SetRefreshMessage("CA folder rescanned. Link this project to its Helix or Procore project to sync its items.", false);
             }
 
             return;
@@ -1852,8 +2084,8 @@ public sealed class MainViewModel : ObservableObject, IDisposable
             {
                 SetRefreshMessage(
                     result.Problem ?? (result.Done > 0
-                        ? $"Updated from Helix {Formatting.When(DateTimeOffset.Now)} · {(result.Changed == 0 ? "no changes" : result.Changed == 1 ? "1 item changed" : $"{result.Changed} items changed")}."
-                        : $"Helix could not be read for {project.Name}. Try again, or see the log in Settings."),
+                        ? $"Synced from Helix {Formatting.When(DateTimeOffset.Now)} · {(result.Changed == 0 ? "no changes" : result.Changed == 1 ? "1 item changed" : $"{result.Changed} items changed")}."
+                        : $"Helix could not be read for {project.Name}. Try again, or open the log folder (Settings → General → Troubleshooting)."),
                     result.Problem is not null || result.Done == 0);
             }
 
@@ -1874,8 +2106,8 @@ public sealed class MainViewModel : ObservableObject, IDisposable
                 {
                     SetRefreshMessage(
                         procore.Problem ?? (procore.Done > 0
-                            ? $"Updated from Procore {Formatting.When(DateTimeOffset.Now)} · every RFI and Submittal read."
-                            : $"Procore could not be read for {project.Name}. Try again, or see the log in Settings."),
+                            ? $"Synced from Procore {Formatting.When(DateTimeOffset.Now)} · every RFI and Submittal read."
+                            : $"Procore could not be read for {project.Name}. Try again, or open the log folder (Settings → General → Troubleshooting)."),
                         procore.Problem is not null || procore.Done == 0);
                 }
 
@@ -1941,7 +2173,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         }
 
         project.ActiveRefresh = refreshStore.Cancel(project.ActiveRefresh.Id, DateTimeOffset.Now);
-        SetRefreshMessage("Refresh cancelled.", false);
+        SetRefreshMessage("Sync cancelled.", false);
         OnHeaderChanged();
     }
 
@@ -2013,13 +2245,13 @@ public sealed class MainViewModel : ObservableObject, IDisposable
             {
                 if (latest.Status == RefreshStatus.Complete)
                 {
-                    SetRefreshMessage($"Refreshed from {project.ProviderLabel} {Formatting.When(latest.FinishedAt ?? now)} · {latest.ItemCount} items.", false);
+                    SetRefreshMessage($"Synced from {project.ProviderLabel} {Formatting.When(latest.FinishedAt ?? now)} · {latest.ItemCount} items.", false);
                     LoadProjects();
                     await CompareAsync();
                 }
                 else if (latest.Status == RefreshStatus.Failed)
                 {
-                    SetRefreshMessage($"Refresh did not finish: {latest.Error}", true);
+                    SetRefreshMessage($"Sync did not finish: {latest.Error}", true);
                 }
 
                 OnHeaderChanged();
@@ -2052,7 +2284,16 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         OnPropertyChanged(nameof(RefreshMessage));
         OnPropertyChanged(nameof(HasRefreshMessage));
         OnPropertyChanged(nameof(RefreshMessageIsError));
+
+        // How a sync went fades after a while (the times above the list keep it); progress and errors stay.
+        refreshMessageHide.Stop();
+        if (!isError && message.Length > 0 && !message.EndsWith('…'))
+        {
+            refreshMessageHide.Start();
+        }
     }
+
+    private readonly DispatcherTimer refreshMessageHide = new() { Interval = TimeSpan.FromSeconds(20) };
 
     // ---- Comparison -----------------------------------------------------------------------
 
@@ -2097,7 +2338,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
                 return;
             }
 
-            // Keep ticks on folders and items that are still shown.
+            // Keep checks on folders and items that are still shown.
             var ticked = allRows
                 .Where(row => row.IsChecked && row.CanSelect)
                 .Select(TickKey)
@@ -2122,9 +2363,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
                         {
                             if (args.PropertyName == nameof(RowViewModel.IsChecked))
                             {
-                                OnPropertyChanged(nameof(CheckedCount));
-                                OnPropertyChanged(nameof(SelectionText));
-                                OnPropertyChanged(nameof(AllShownChecked));
+                                ChecksChangedSoon();
                             }
                         };
                         rows.Add(rowView);
@@ -2324,7 +2563,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         if (result.FallbackToWindow)
         {
             // Can't be read in the background: Sync or Refresh reads it in the browser window.
-            connection.SyncMessage = $"{label} is read in the browser window when you Sync or Refresh.";
+            connection.SyncMessage = $"{label} is read in the browser window when you sync.";
             return;
         }
 
@@ -2334,7 +2573,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
                (result.FailedProjectIds.Count > 0 ? $" {result.FailedProjectIds.Count} couldn't be read (marked in the project list)." : "");
         if (result.NeedsSignIn)
         {
-            StatusMessage = $"{label} needs you to sign in again: Settings → Connections → Connect to {label}.";
+            StatusMessage = $"{label} needs you to sign in again: Settings → Connections → Sign in to {label}.";
         }
     }
 
@@ -2377,7 +2616,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         company = settings;
         companyPath = path;
         companyError = error;
-        foreach (var name in new[] { nameof(ManagedByText), nameof(HasManagedByText), nameof(AreFoldersLocked) })
+        foreach (var name in new[] { nameof(ManagedByText), nameof(HasManagedByText), nameof(AreFoldersLocked), nameof(IsSyncLocked) })
         {
             OnPropertyChanged(name);
         }
@@ -2388,10 +2627,19 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         ? $"The company settings file couldn't be read ({companyError}); the app's own settings are used."
         : company is null ? ""
         : $"Some settings are set by {(string.IsNullOrWhiteSpace(company.CompanyName) ? "your company" : company.CompanyName)}" +
-          (company.Locked.Count > 0 ? $" and can't be changed here ({string.Join(", ", company.Locked)})." : ".");
+          (company.Locked.Count > 0 ? $" and can't be changed here: {string.Join(", ", company.Locked.Select(LockedLabel))}." : ".");
+
+    private static string LockedLabel(string name) => name.ToLowerInvariant() switch
+    {
+        "folders" => "folder names",
+        "sync" => "how often projects sync",
+        "disciplines" => "disciplines",
+        _ => name
+    };
 
     public bool HasManagedByText => ManagedByText.Length > 0;
     public bool AreFoldersLocked => company?.IsLocked("folders") == true;
+    public bool IsSyncLocked => company?.IsLocked("sync") == true;
 
     // ---- Company server (optional) ---------------------------------------------------------
 
@@ -2422,6 +2670,9 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     public string CentralServerText => central?.Server ?? "";
 
     public bool IsCentralServerLocked => central?.IsCompanyServer == true;
+
+    /// <summary>A company server is set up (Share now and Disconnect apply).</summary>
+    public bool IsCentralSetUp => central is { Server.Length: > 0 };
 
     /// <summary>What Settings → Connections shows about the company server.</summary>
     public string CentralStatusText
@@ -2464,6 +2715,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         OnPropertyChanged(nameof(CentralServerText));
         OnPropertyChanged(nameof(IsCentralServerLocked));
         OnPropertyChanged(nameof(CentralStatusText));
+        OnPropertyChanged(nameof(IsCentralSetUp));
     }
 
     /// <summary>Saves the server and token, checks them and shares. Null when it worked; otherwise what's wrong.</summary>
@@ -2548,7 +2800,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     }
 
     public bool IsUpdateAvailable => update is not null;
-    public string UpdateText => update is null ? "" : $"Update to {update.Version}";
+    public string UpdateText => update is null ? "" : $"Install version {update.Version}…";
     public string? UpdateNotes => update?.Notes;
     /// <summary>Where the installer comes from, shown before installing so people can see it's the company's location.</summary>
     public string? UpdateSource => update?.Installer;
@@ -2617,9 +2869,8 @@ public sealed class MainViewModel : ObservableObject, IDisposable
 
         OnPropertyChanged(nameof(EmptyText));
         OnPropertyChanged(nameof(HasEmptyText));
-        OnPropertyChanged(nameof(CheckedCount));
-        OnPropertyChanged(nameof(SelectionText));
-        OnPropertyChanged(nameof(AllShownChecked));
+        OnPropertyChanged(nameof(HasActiveFilters));
+        RaiseChecks();
         OnPropertyChanged(nameof(RfiTabText));
         OnPropertyChanged(nameof(SubmittalTabText));
         OnPropertyChanged(nameof(BothTabText));
@@ -2765,7 +3016,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
             return true;
         }
 
-        // Any ticked person (or the company) having the item is a match.
+        // Any checked person (or the company) having the item is a match.
         return chosen.Any(choice => choice.IsCompany
             ? row.Holders.Any(holder => row.Comparison.Company.Matches(holder.CompanyId, holder.Company))
             : row.HolderNames.Contains(choice.Name, StringComparer.OrdinalIgnoreCase));
@@ -2852,7 +3103,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         _ => row.Number
     };
 
-    /// <summary>Fills the Person filter from everyone holding an item in this project, keeping ticks.</summary>
+    /// <summary>Fills the Person filter from everyone holding an item in this project, keeping checks.</summary>
     private void RebuildPersonOptions()
     {
         var choices = new List<PersonChoiceViewModel>();
@@ -2906,8 +3157,10 @@ public sealed class MainViewModel : ObservableObject, IDisposable
                  {
                      nameof(HasProject), nameof(HasCaFolder), nameof(IsConnected), nameof(IsNotConnected), nameof(IsRefreshing), nameof(CanRefresh),
                      nameof(ProjectTitle), nameof(CaFolderText), nameof(ConnectionText), nameof(RefreshButtonText),
-                     nameof(DataTimestampText), nameof(FolderTimestampText), nameof(ProjectSubtitle), nameof(HasProjectSubtitle),
+                     nameof(DataTimestampText), nameof(FolderTimestampText), nameof(TimestampText), nameof(ProjectSubtitle), nameof(HasProjectSubtitle),
                      nameof(CompanyText), nameof(FolderWarning), nameof(HasFolderWarning), nameof(CanCreateTypeFolders),
+                     nameof(LastSyncFailed), nameof(CanIncludeUnlabeled), nameof(IncludeUnlabeledText), nameof(MarkReturnedToolTip),
+                     nameof(HasActiveFilters),
                      nameof(IsPlaceholder), nameof(CanEditConnection), nameof(EditButtonText),
                      nameof(RfiTabText), nameof(SubmittalTabText), nameof(BothTabText), nameof(IsMultiProject), nameof(EmptyText), nameof(HasEmptyText), nameof(Comparison)
                  })
@@ -2959,7 +3212,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
 
     private void OnSaveFailed(string message) =>
         storeDebounce.Dispatcher.InvokeAsync(() =>
-            StatusMessage = $"Couldn't save to the database ({message}). Your changes stay while the app is open; see the log (Settings).");
+            StatusMessage = $"Couldn't save to the database ({message}). Your changes stay while the app is open; open the log folder (Settings → General → Troubleshooting) to see why.");
 
     private async Task OnStoreChangedAsync()
     {
@@ -3054,6 +3307,8 @@ public sealed class MainViewModel : ObservableObject, IDisposable
 
         showArchived = view.ShowArchived;
         projectsPaneWidth = view.ProjectsPaneWidth is >= 200 and <= 700 ? view.ProjectsPaneWidth : 290;
+        hiddenColumns.Clear();
+        hiddenColumns.UnionWith(view.HiddenColumns ?? new List<string>());
         rememberedPeople.Clear();
         rememberedPeople.UnionWith(view.People);
         rememberCompany = view.AnyoneAtCompany;
@@ -3099,8 +3354,22 @@ public sealed class MainViewModel : ObservableObject, IDisposable
             ArchivedProjects = archived.OrderBy(key => key, StringComparer.OrdinalIgnoreCase).ToList(),
             FavoriteProjects = favorites.OrderBy(key => key, StringComparer.OrdinalIgnoreCase).ToList(),
             ShowArchived = showArchived,
-            ProjectsPaneWidth = projectsPaneWidth
+            ProjectsPaneWidth = projectsPaneWidth,
+            HiddenColumns = hiddenColumns.OrderBy(name => name, StringComparer.Ordinal).ToList()
         });
+    }
+
+    private readonly HashSet<string> hiddenColumns = new(StringComparer.Ordinal);
+
+    /// <summary>Item-list columns turned off (right-click a heading), by the column's name.</summary>
+    public bool IsColumnHidden(string column) => hiddenColumns.Contains(column);
+
+    public void SetColumnHidden(string column, bool hidden)
+    {
+        if (hidden ? hiddenColumns.Add(column) : hiddenColumns.Remove(column))
+        {
+            ScheduleViewStateSave();
+        }
     }
 
     public void Dispose()

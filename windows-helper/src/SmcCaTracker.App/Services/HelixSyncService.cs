@@ -54,7 +54,7 @@ public sealed class ProviderSyncResult
 /// </summary>
 public sealed class HelixSyncService : IDisposable
 {
-    private const string SignInMessage = "Sign in to Helix: Settings → Connections → Connect to Helix.";
+    private const string SignInMessage = "Helix needs you to sign in: Settings → Connections → Sign in to Helix.";
 
     private readonly AppPaths paths;
     private readonly TrackerStore store;
@@ -301,6 +301,10 @@ public sealed class HelixSyncService : IDisposable
         }
 
         var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(60);
+        // Signed out in CA Tracker (or the sign-in expired): Helix's home page shows its sign-in without
+        // ever loading a user, so a page with no user after a few seconds is that, not a slow load.
+        var expectSignedOut = store.Account(Providers.Helix) is null or { NeedsSignIn: true };
+        var signedOutDeadline = DateTime.UtcNow + TimeSpan.FromSeconds(10);
         string? lastSeen = null;
         while (true)
         {
@@ -309,7 +313,7 @@ public sealed class HelixSyncService : IDisposable
             {
                 // Say what the page was showing, so a stuck page can be told from a sign-in problem.
                 AppLog.Warn("helix", $"The background Helix page never became ready. Last seen: {lastSeen ?? "no answer"} (at {core?.Source}).");
-                return Problem("Helix is taking too long to load. Try again in a minute.");
+                return Problem("Helix is taking too long to load. Try again in a minute; if it keeps happening, sign in again in Settings → Connections.");
             }
 
             if (!OnHelix())
@@ -352,6 +356,15 @@ public sealed class HelixSyncService : IDisposable
                 RecordUser(answer!.Value);
                 await ReadCatalogOnceAsync();
                 return null;
+            }
+
+            var reason = answer is { } reasoned && reasoned.TryGetProperty("reason", out var reasonElement) && reasonElement.ValueKind == JsonValueKind.String
+                ? reasonElement.GetString()
+                : null;
+            if (expectSignedOut && reason is "no-user-details" or "no-user-info" && DateTime.UtcNow > signedOutDeadline)
+            {
+                AppLog.Info("helix", $"No Helix user after 10 s and no saved sign-in: treating the page as signed out. Last seen: {lastSeen}.");
+                return Problem(SignInMessage, needsSignIn: true);
             }
 
             await Task.Delay(1000);

@@ -9,9 +9,9 @@ using SmcCaTracker.Core.Storage;
 
 namespace SmcCaTracker.App.Views;
 
-public sealed record ConnectOption(CatalogProject Project, string Title, string Detail);
+public sealed record ConnectOption(CatalogProject Project, string Title, string Detail, string ToolTip);
 
-/// <summary>Picks the Helix or Procore project a tracker project is connected to.</summary>
+/// <summary>Picks the Helix or Procore project a tracker project is linked to.</summary>
 public partial class ConnectWindow : Window
 {
     private readonly IReadOnlyList<CatalogProject> known;
@@ -22,6 +22,14 @@ public partial class ConnectWindow : Window
         loading = true;
         InitializeComponent();
         ThemeManager.Attach(this);
+        // Choosing from the list replaces a pasted link (and a pasted link clears the list's choice).
+        ProjectList.SelectionChanged += (_, _) =>
+        {
+            if (ProjectList.SelectedItem is not null && LinkBox.Text.Length > 0)
+            {
+                LinkBox.Clear();
+            }
+        };
         this.known = known;
         var provider = current?.Provider ?? Providers.Helix;
         HelixOption.IsChecked = provider == Providers.Helix;
@@ -65,15 +73,15 @@ public partial class ConnectWindow : Window
                 || project.Name.Contains(search, StringComparison.CurrentCultureIgnoreCase)
                 || (project.AccountName ?? "").Contains(search, StringComparison.CurrentCultureIgnoreCase)
                 || project.ProjectId.Contains(search, StringComparison.OrdinalIgnoreCase))
-            .Select(project => new ConnectOption(project, project.Name, Detail(project)))
+            .Select(project => new ConnectOption(project, project.Name, Detail(project), $"{Providers.Label(project.Provider)} project id {project.ProjectId}"))
             .ToList();
         ProjectList.ItemsSource = options;
         var label = Providers.Label(provider);
         EmptyText.Text = options.Count > 0 ? ""
             : search.Length > 0 ? "No matching projects."
             : provider == Providers.Helix
-                ? "No Helix projects yet. Select Connect to Helix at the top of the main window to sign in and list your projects, or paste a project link below."
-                : "No Procore projects yet. Connect to Procore (Settings → Connections) and CA Tracker lists every project you can see, or paste a project's RFIs link below.";
+                ? "No Helix projects listed yet. Sign in to Helix in Settings → Connections and your projects appear here, or paste a project link below."
+                : "No Procore projects listed yet. Sign in to Procore in Settings → Connections and every project you can see appears here, or paste a project's RFIs link below.";
         EmptyText.Visibility = options.Count > 0 ? Visibility.Collapsed : Visibility.Visible;
         OpenSiteButton.Content = $"Open {label} to copy a link";
     }
@@ -86,10 +94,9 @@ public partial class ConnectWindow : Window
             parts.Add(project.AccountName!);
         }
 
-        parts.Add($"id {project.ProjectId}");
         if (project.SeenAt != default)
         {
-            parts.Add($"seen {Formatting.When(project.SeenAt)}");
+            parts.Add($"listed {Formatting.When(project.SeenAt)}");
         }
 
         return string.Join(" · ", parts);
@@ -109,6 +116,16 @@ public partial class ConnectWindow : Window
         catch (Exception error)
         {
             ErrorText.Text = error.Message;
+        }
+    }
+
+    /// <summary>A pasted link is used instead of the list: say so, and clear the list's choice.</summary>
+    private void Link_Changed(object sender, TextChangedEventArgs e)
+    {
+        if (LinkBox.Text.Trim().Length > 0)
+        {
+            ProjectList.SelectedItem = null;
+            ErrorText.Text = "";
         }
     }
 

@@ -21,4 +21,5 @@
     <SolidColorBrush x:Key="SuccessBrush" Color="#8FE3B0" />
     <SolidColorBrush x:Key="SuccessSoftBrush" Color="#1E3F2E" />
     <SolidColorBrush x:Key="NeutralSoftBrush" Color="#243442" />
+    <SolidColorBrush x:Key="ScrollThumbBrush" Color="#3A4D5E" />
 </ResourceDictionary>

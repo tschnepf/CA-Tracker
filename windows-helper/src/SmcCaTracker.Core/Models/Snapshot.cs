@@ -93,4 +93,7 @@ public static class ItemTypes
 
     public static string Plural(string itemType) =>
         string.Equals(itemType, Submittal, StringComparison.OrdinalIgnoreCase) ? "Submittals" : "RFIs";
+
+    public static string Singular(string itemType) =>
+        string.Equals(itemType, Submittal, StringComparison.OrdinalIgnoreCase) ? "Submittal" : "RFI";
 }

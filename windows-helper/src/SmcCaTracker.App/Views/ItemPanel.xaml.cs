@@ -301,7 +301,7 @@ public partial class ItemPanel : UserControl
             else if (type == "quick-error")
             {
                 var message = root.TryGetProperty("message", out var text) ? text.GetString() : null;
-                FinishUpdate($"CA Tracker couldn't update from Helix ({message}). Refresh the project to update it.");
+                FinishUpdate($"CA Tracker couldn't update from Helix ({message}). Sync the project to update it.");
             }
             else if (type == "error")
             {
@@ -425,7 +425,7 @@ public partial class ItemPanel : UserControl
         }
         catch (Exception error)
         {
-            FinishUpdate($"CA Tracker couldn't update from Helix ({error.Message}). Refresh the project to update it.");
+            FinishUpdate($"CA Tracker couldn't update from Helix ({error.Message}). Sync the project to update it.");
         }
     }
 
@@ -447,7 +447,7 @@ public partial class ItemPanel : UserControl
             || !string.Equals(snapshot.ProjectId, projectId, StringComparison.Ordinal)
             || !snapshot.Covers(itemType))
         {
-            FinishUpdate("The Helix page moved to another project, so CA Tracker wasn't updated. Refresh the project to update it.");
+            FinishUpdate("The Helix page moved to another project, so CA Tracker wasn't updated. Sync the project to update it.");
             return;
         }
 

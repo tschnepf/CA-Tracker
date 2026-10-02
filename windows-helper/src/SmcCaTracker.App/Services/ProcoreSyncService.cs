@@ -172,7 +172,7 @@ public sealed class ProcoreSyncService : IDisposable
                 if (status == 401)
                 {
                     store.MarkSignInNeeded(Providers.Procore);
-                    return new ProcoreDiscovery { Problem = "Sign in to Procore again: Settings → Connections → Connect to Procore.", NeedsSignIn = true };
+                    return new ProcoreDiscovery { Problem = "Procore needs you to sign in again: Settings → Connections → Sign in to Procore.", NeedsSignIn = true };
                 }
 
                 return new ProcoreDiscovery { Problem = $"CA Tracker couldn't list your Procore projects: {message}" };
@@ -501,7 +501,7 @@ public sealed class ProcoreSyncService : IDisposable
                     {
                         SyncedProjectIds = synced,
                         FailedProjectIds = failed,
-                        Problem = "Sign in to Procore again: Settings → Connections → Connect to Procore.",
+                        Problem = "Procore needs you to sign in again: Settings → Connections → Sign in to Procore.",
                         NeedsSignIn = true
                     };
                 }
@@ -640,7 +640,7 @@ public sealed class ProcoreSyncService : IDisposable
         {
             AppLog.Warn("procore", $"The background Procore page ended up at {core?.Source}, not signed in.");
             store.MarkSignInNeeded(Providers.Procore);
-            return new PageProblem("Sign in to Procore: Settings → Connections → Connect to Procore.", true);
+            return new PageProblem("Procore needs you to sign in: Settings → Connections → Sign in to Procore.", true);
         }
 
         AppLog.Info("procore", $"The background Procore page is open at {core?.Source}.");

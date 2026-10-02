@@ -21,7 +21,7 @@
                         <TextBox x:Name="NameBox" Margin="0,4,0,10" />
                         <TextBlock Text="CA folder" Foreground="{DynamicResource TextSecondary}" />
                         <DockPanel Margin="0,4,0,0">
-                            <Button DockPanel.Dock="Right" Content="Change…" Click="BrowseFolder_Click" Margin="8,0,0,0" />
+                            <Button DockPanel.Dock="Right" Content="Browse…" Click="BrowseFolder_Click" Margin="8,0,0,0" />
                             <TextBox x:Name="FolderBox" IsReadOnly="True" VerticalContentAlignment="Center" />
                         </DockPanel>
                         <TextBlock Style="{StaticResource Muted}" Margin="0,8,0,0" FontSize="12"
@@ -31,16 +31,16 @@
 
                 <Border Style="{StaticResource Card}" Margin="0,0,0,14">
                     <StackPanel>
-                        <TextBlock Text="CONNECTION" Style="{StaticResource SectionTitle}" />
+                        <TextBlock Text="HELIX / PROCORE PROJECT" Style="{StaticResource SectionTitle}" />
                         <DockPanel>
                             <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
-                                <Button Content="Connect…" Click="Connect_Click" Margin="8,0,0,0" />
-                                <Button x:Name="DisconnectButton" Content="Disconnect" Click="Disconnect_Click" Margin="8,0,0,0" />
+                                <Button Content="_Link…" Click="Connect_Click" Margin="8,0,0,0" />
+                                <Button x:Name="DisconnectButton" Content="Unlink" Click="Disconnect_Click" Margin="8,0,0,0" />
                             </StackPanel>
                             <TextBlock x:Name="ConnectionText" VerticalAlignment="Center" TextWrapping="Wrap" />
                         </DockPanel>
                         <TextBlock Style="{StaticResource Muted}" Margin="0,8,0,0" FontSize="12"
-                                   Text="Connect the project to Helix or Procore so Refresh can read its RFIs and Submittals." />
+                                   Text="Link the project to its Helix or Procore project so Sync can read its RFIs and Submittals." />
                     </StackPanel>
                 </Border>
 
@@ -66,18 +66,22 @@
                             </CheckBox>
                         </StackPanel>
                         <TextBlock Style="{StaticResource Muted}" FontSize="12" Margin="0,4,0,0"
-                                   Text="Recognised words: BB, Base Build, Base Building · TFO, Tenant Fit Out, Fit-Out, Tenant Improvement. If each part has its own Helix/Procore project or its own folders, connect or Browse to those instead and leave the boxes unchecked." />
+                                   Text="Recognised words: BB, Base Build, Base Building · TFO, Tenant Fit Out, Fit-Out, Tenant Improvement. If each part has its own Helix/Procore project or its own folders, link or Browse to those instead and leave the boxes unchecked." />
                     </StackPanel>
                 </Border>
 
                 <Border Style="{StaticResource Card}" Margin="0,0,0,14">
                     <StackPanel>
                         <TextBlock Text="RETURNED MEANS OUT OF THIS COMPANY'S COURT" Style="{StaticResource SectionTitle}" />
+                        <TextBlock Text="Choose your company:" Foreground="{DynamicResource TextSecondary}" Margin="0,0,0,6" />
                         <ListBox x:Name="CompanyList" MaxHeight="150" DisplayMemberPath="Label"
                                  Background="{DynamicResource InputBackground}" BorderThickness="1"
-                                 BorderBrush="{DynamicResource LineBrush}" />
-                        <TextBlock Style="{StaticResource Muted}" Margin="0,8,0,0" FontSize="12"
-                                   Text="Companies appear here after the first refresh." />
+                                 BorderBrush="{DynamicResource LineBrush}"
+                                 AutomationProperties.Name="Your company" />
+                        <TextBlock x:Name="CompanyNote" Style="{StaticResource Muted}" Margin="0,8,0,0" FontSize="12"
+                                   Text="The other companies on this project appear here after its first sync." />
+                        <TextBlock Style="{StaticResource Muted}" Margin="0,4,0,0" FontSize="12"
+                                   Text="When an item counts as returned is set for every project in Settings → General." />
                     </StackPanel>
                 </Border>
 
@@ -120,9 +124,11 @@
                 <Button x:Name="RemoveButton" DockPanel.Dock="Left" Content="Remove from tracker…" Click="Remove_Click" />
                 <TextBlock x:Name="ErrorText" DockPanel.Dock="Left" Foreground="{DynamicResource DangerBrush}"
                            TextWrapping="Wrap" VerticalAlignment="Center" MaxWidth="300" Margin="12,0,0,0" />
-                <Button x:Name="SaveButton" DockPanel.Dock="Right" Content="Save" Style="{StaticResource AccentButton}"
-                        IsDefault="True" Click="Save_Click" />
-                <Button DockPanel.Dock="Right" Content="Cancel" IsCancel="True" Margin="0,0,8,0" />
+                <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
+                    <Button Content="Cancel" IsCancel="True" Margin="0,0,8,0" />
+                    <Button x:Name="SaveButton" Content="_Save" Style="{StaticResource AccentButton}"
+                            IsDefault="True" Click="Save_Click" />
+                </StackPanel>
             </DockPanel>
         </Border>
     </Grid>
