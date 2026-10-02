@@ -649,6 +649,14 @@ public sealed class HelixSyncService : IDisposable
                 confirmed.Add(target.ProjectId);
                 run.Status = "complete";
                 AppLog.Info("helix", $"{target.DisplayName}: {run.Mode} read, {run.ItemCount} items, {run.ChangedCount} changed.");
+                if (answer.Value.TryGetProperty("warnings", out var warnings) && warnings.ValueKind == JsonValueKind.Array)
+                {
+                    // Reads that failed without failing the sync (tried again next time).
+                    foreach (var warning in warnings.EnumerateArray().Where(warning => warning.ValueKind == JsonValueKind.String))
+                    {
+                        AppLog.Warn("helix", $"{target.DisplayName}: {warning.GetString()}");
+                    }
+                }
                 return run.ChangedCount;
             }
         }

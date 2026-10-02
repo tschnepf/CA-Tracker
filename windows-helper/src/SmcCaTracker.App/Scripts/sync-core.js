@@ -15,6 +15,9 @@
 
   const OVERLAP_MS = 5 * 60 * 1000;
   const DEFAULT_FULL_AFTER_MS = 12 * 60 * 60 * 1000;
+  // Items read again go in batches of this many ids (as Helix's history reads do), so a long list
+  // can't fail as a whole and one failing batch doesn't stop the rest.
+  const RETRY_BATCH_SIZE = 20;
   const cache = new Map();
 
   function newer(left, right) {
@@ -37,33 +40,54 @@
     const previous = cache.get(projectId) || null;
     let mode = request.full || !previous || !previous.latest || now - previous.fullAt > fullAfterMs ? "full" : "changes";
 
+    // Reads that failed without failing the sync: returned (the app logs them) and passed to onProgress.
+    const warnings = [];
+    const warn = (message, error) => {
+      const text = `${message}: ${String(error && error.message || error).slice(0, 200)}`;
+      warnings.push(text);
+      if (typeof request.onProgress === "function") request.onProgress({ phase: "warning", message: text });
+    };
+
     let rows = null;
     let present = null;
     if (mode === "changes") {
       const since = new Date(Date.parse(previous.latest) - OVERLAP_MS).toISOString();
       try {
         rows = await Bridge.readProjectItems(windowObject, { projectId, projectName: context.projectName, since });
-      } catch (_error) {
+      } catch (error) {
         // Helix didn't accept the changed-since filter: read everything instead.
+        warn("Reading only changed items failed, so everything was read", error);
         mode = "full";
       }
     }
     if (mode === "changes") {
       // Items whose court history couldn't be read last time: read them again.
       const retry = Array.from(previous.retryCourt || []).map((key) => key.slice(key.indexOf(":") + 1));
-      if (retry.length > 0) {
+      const seen = new Set(rows.map((row) => `${row.itemType}:${row.id}`));
+      for (let index = 0; index < retry.length; index += RETRY_BATCH_SIZE) {
         try {
-          const again = await Bridge.readProjectItems(windowObject, { projectId, projectName: context.projectName, ids: retry });
-          const seen = new Set(rows.map((row) => `${row.itemType}:${row.id}`));
-          rows = rows.concat(again.filter((row) => !seen.has(`${row.itemType}:${row.id}`)));
-        } catch (_error) {
-          // Tried again next time.
+          const again = await Bridge.readProjectItems(windowObject, {
+            projectId,
+            projectName: context.projectName,
+            ids: retry.slice(index, index + RETRY_BATCH_SIZE)
+          });
+          for (const row of again) {
+            const key = `${row.itemType}:${row.id}`;
+            if (!seen.has(key)) {
+              seen.add(key);
+              rows.push(row);
+            }
+          }
+        } catch (error) {
+          // Those items are tried again next time.
+          warn("Some items couldn't be read again for their court history", error);
         }
       }
       // Which items still exist in this project, to drop deleted or moved ones.
       try {
         present = await Bridge.readProjectItemIds(windowObject, projectId);
-      } catch (_error) {
+      } catch (error) {
+        warn("The list of the project's items couldn't be read, so deleted items stay until the next full read", error);
         present = null;
       }
     }
@@ -119,6 +143,7 @@
       mode,
       itemCount: items.length,
       changedCount,
+      warnings,
       user: { fullName: context.user.fullName, company: context.user.company || null }
     };
   }

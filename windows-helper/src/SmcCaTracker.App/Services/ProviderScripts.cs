@@ -57,6 +57,7 @@ public static class ProviderScripts
                   mode: result.mode,
                   itemCount: result.itemCount,
                   changedCount: result.changedCount,
+                  warnings: result.warnings,
                   user: result.user
                 });
               } catch (error) {
