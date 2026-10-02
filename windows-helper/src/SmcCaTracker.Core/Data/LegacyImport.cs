@@ -44,7 +44,14 @@ public static class LegacyImport
         using var timing = AppLog.Time("import.json", null, 2000);
         try
         {
-            var settings = new SettingsStore(paths).Load();
+            if (!new SettingsStore(paths).TryLoad(out var settings))
+            {
+                // Importing now would save no projects in place of yours: leave everything for next time.
+                AppLog.Error("import", $"{paths.SettingsFile} isn't valid JSON; nothing was imported.");
+                return new Result(false, 0, 0,
+                    $"{paths.SettingsFile} can't be read. Fix or replace it (a copy was kept next to it as .bad), then start CA Tracker again");
+            }
+
             var snapshots = new SnapshotStore(paths).LoadAll();
             var imported = 0;
 

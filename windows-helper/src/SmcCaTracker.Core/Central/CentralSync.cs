@@ -49,7 +49,8 @@ public sealed class CentralSync
     public const int Batch = 500;
     internal const string CursorKey = "central_cursor";
     internal const string ClientKey = "central_client_id";
-    internal const string ServerKey = "central_server";
+    /// <summary>The server this PC last shared with (kept when disconnecting, so reconnecting sends what waited).</summary>
+    public const string ServerKey = "central_server";
     internal const string BaselineKey = "central_send_everything";
 
     private readonly TrackerStore store;
@@ -679,8 +680,10 @@ public sealed class CentralSync
     /// <summary>
     /// Takes what is shared about a project. Discipline choices are combined: choices this PC doesn't
     /// have are added; with <paramref name="overwrite"/>, a different choice for the same folder or item
-    /// replaces this PC's (an empty choice means "detect it again"), and the folder names and Base
-    /// Build/TI scope are taken too. True when anything changed.
+    /// replaces this PC's (an empty choice means "detect it again"). The folder names and Base Build/TI
+    /// scope are taken too, but only from the same tracker project (same id) or a twin of the same
+    /// phase: a Base Build and a Tenant Fit-Out entry for one Helix project share choices, never scope.
+    /// True when anything changed.
     /// </summary>
     private static bool TakeSharedChoices(TrackerProject remote, TrackerProject local, bool overwrite)
     {
@@ -700,12 +703,12 @@ public sealed class CentralSync
             changed = true;
         }
 
-        if (!overwrite)
+        if (!overwrite || !SharesScope(remote, local))
         {
             return changed;
         }
 
-        if (!SameJson(remote.FoldersOverride, local.FoldersOverride))
+        if (IsSafeOverride(remote.FoldersOverride) && !SameJson(remote.FoldersOverride, local.FoldersOverride))
         {
             local.FoldersOverride = remote.FoldersOverride?.Clone();
             changed = true;
@@ -726,6 +729,24 @@ public sealed class CentralSync
 
         return changed;
     }
+
+    /// <summary>The same tracker project, or a twin (same Helix/Procore project) tracking the same phase.</summary>
+    private static bool SharesScope(TrackerProject remote, TrackerProject local) =>
+        string.Equals(local.Id, remote.Id, StringComparison.Ordinal)
+        || (remote.Scope?.Phase ?? ProjectPhase.Whole) == (local.Scope?.Phase ?? ProjectPhase.Whole);
+
+    /// <summary>
+    /// Folder names from another PC are taken only when they are valid and the RFI and Submittal
+    /// folders are plain names inside the CA folder (never a drive or share on the other PC). The
+    /// returned folder may be a full path, which is how a shared returned folder is set for everyone.
+    /// </summary>
+    internal static bool IsSafeOverride(FolderLayout? layout) =>
+        layout is null
+        || (layout.Validate().Count == 0
+            && !Path.IsPathFullyQualified(layout.RfiFolder ?? "")
+            && !Path.IsPathFullyQualified(layout.SubmittalFolder ?? "")
+            && !(layout.RfiFolder ?? "").StartsWith('\\') && !(layout.RfiFolder ?? "").StartsWith('/')
+            && !(layout.SubmittalFolder ?? "").StartsWith('\\') && !(layout.SubmittalFolder ?? "").StartsWith('/'));
 
     private static bool SameJson<T>(T left, T right) =>
         JsonSerializer.Serialize(left, TrackerJson.Options) == JsonSerializer.Serialize(right, TrackerJson.Options);

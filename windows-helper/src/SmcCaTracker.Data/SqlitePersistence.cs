@@ -2,7 +2,9 @@ using System.Globalization;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using Microsoft.Data.Sqlite;
+using SmcCaTracker.Core.Central;
 using SmcCaTracker.Core.Comparison;
 using SmcCaTracker.Core.Data;
 using SmcCaTracker.Core.Matching;
@@ -185,6 +187,31 @@ public sealed class SqlitePersistence : ITrackerPersistence
     private static string Hash(string text) => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(text)));
 
     private static string Json<T>(T value) => JsonSerializer.Serialize(value, TrackerJson.Options);
+
+    /// <summary>
+    /// An item as stored, for its content hash and the change log: dates in UTC, as the database keeps
+    /// them, so an item read back from the database hashes the same as when it was saved (Helix gives
+    /// local times such as -07:00, which would otherwise log every item again on each save).
+    /// </summary>
+    private static string ItemJson(SnapshotItem item) => JsonSerializer.Serialize(item, StoredJson);
+
+    private static readonly JsonSerializerOptions StoredJson = CreateStoredJson();
+
+    private static JsonSerializerOptions CreateStoredJson()
+    {
+        var options = new JsonSerializerOptions(TrackerJson.Options);
+        options.Converters.Insert(0, new UtcDates());
+        return options;
+    }
+
+    private sealed class UtcDates : JsonConverter<DateTimeOffset>
+    {
+        public override DateTimeOffset Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options) =>
+            reader.GetDateTimeOffset();
+
+        public override void Write(Utf8JsonWriter writer, DateTimeOffset value, JsonSerializerOptions options) =>
+            writer.WriteStringValue(value.ToUniversalTime());
+    }
 
     private static T? FromJson<T>(string? json) where T : class
     {
@@ -400,7 +427,7 @@ public sealed class SqlitePersistence : ITrackerPersistence
         var items = new Dictionary<string, SnapshotItem>(StringComparer.Ordinal);
         using (var command = Command(
                    "SELECT provider, project_id, item_type, item_id, number, title, status, status_rank, closed, responsible, contract, " +
-                   "attachment_count, created_at, modified_at, due_at, source_url FROM items;",
+                   "attachment_count, created_at, modified_at, due_at, source_url, revision FROM items;",
                    null))
         using (var reader = command.ExecuteReader())
         {
@@ -427,7 +454,8 @@ public sealed class SqlitePersistence : ITrackerPersistence
                     CreatedAt = ParseDate(Text(reader, 12)),
                     ModifiedAt = ParseDate(Text(reader, 13)),
                     DueAt = ParseDate(Text(reader, 14)),
-                    SourceUrl = Text(reader, 15)
+                    SourceUrl = Text(reader, 15),
+                    Revision = Text(reader, 16)
                 };
                 snapshot.Items.Add(item);
                 items[$"{snapshot.Provider}|{snapshot.ProjectId}|{item.ItemType}|{item.ItemId}"] = item;
@@ -768,17 +796,18 @@ public sealed class SqlitePersistence : ITrackerPersistence
 
         using var upsertItem = Command(
             "INSERT INTO items (provider, project_id, item_type, item_id, number, title, status, status_rank, closed, responsible, contract, " +
-            "attachment_count, created_at, modified_at, due_at, source_url, content_hash, first_seen_at, updated_at) VALUES ($provider, $project, " +
-            "$type, $id, $number, $title, $status, $rank, $closed, $responsible, $contract, $attachments, $created, $modified, $due, $url, $hash, " +
+            "attachment_count, created_at, modified_at, due_at, source_url, revision, content_hash, first_seen_at, updated_at) VALUES ($provider, $project, " +
+            "$type, $id, $number, $title, $status, $rank, $closed, $responsible, $contract, $attachments, $created, $modified, $due, $url, $revision, $hash, " +
             "$now, $now) ON CONFLICT (provider, project_id, item_type, item_id) DO UPDATE SET number = excluded.number, title = excluded.title, " +
             "status = excluded.status, status_rank = excluded.status_rank, closed = excluded.closed, responsible = excluded.responsible, " +
             "contract = excluded.contract, attachment_count = excluded.attachment_count, created_at = excluded.created_at, " +
-            "modified_at = excluded.modified_at, due_at = excluded.due_at, source_url = excluded.source_url, content_hash = excluded.content_hash, " +
+            "modified_at = excluded.modified_at, due_at = excluded.due_at, source_url = excluded.source_url, revision = excluded.revision, " +
+            "content_hash = excluded.content_hash, " +
             "updated_at = excluded.updated_at;",
             transaction,
             ("$provider", null), ("$project", null), ("$type", null), ("$id", null), ("$number", null), ("$title", null), ("$status", null),
             ("$rank", null), ("$closed", null), ("$responsible", null), ("$contract", null), ("$attachments", null), ("$created", null),
-            ("$modified", null), ("$due", null), ("$url", null), ("$hash", null), ("$now", null));
+            ("$modified", null), ("$due", null), ("$url", null), ("$revision", null), ("$hash", null), ("$now", null));
         using var deleteHolders = Command(
             "DELETE FROM item_holders WHERE provider = $provider AND project_id = $project AND item_type = $type AND item_id = $id;",
             transaction, ("$provider", null), ("$project", null), ("$type", null), ("$id", null));
@@ -798,7 +827,7 @@ public sealed class SqlitePersistence : ITrackerPersistence
                 continue;
             }
 
-            var payload = Json(item);
+            var payload = ItemJson(item);
             var hash = Hash(payload);
             if (stored.TryGetValue(key, out var previousHash) && previousHash == hash)
             {
@@ -809,7 +838,7 @@ public sealed class SqlitePersistence : ITrackerPersistence
                 ("$number", item.Number ?? ""), ("$title", item.Title ?? ""), ("$status", item.Status ?? ""), ("$rank", item.StatusRank),
                 ("$closed", Flag(item.Closed)), ("$responsible", item.Responsible ?? ""), ("$contract", item.Contract ?? ""),
                 ("$attachments", item.AttachmentCount), ("$created", Iso(item.CreatedAt)), ("$modified", Iso(item.ModifiedAt)),
-                ("$due", Iso(item.DueAt)), ("$url", item.SourceUrl), ("$hash", hash), ("$now", now));
+                ("$due", Iso(item.DueAt)), ("$url", item.SourceUrl), ("$revision", item.Revision), ("$hash", hash), ("$now", now));
             upsertItem.ExecuteNonQuery();
 
             Set(deleteHolders, ("$provider", snapshot.Provider), ("$project", snapshot.ProjectId), ("$type", item.ItemType), ("$id", item.ItemId));
@@ -1014,13 +1043,41 @@ public sealed class SqlitePersistence : ITrackerPersistence
         return keys;
     }
 
+    public void PruneChangeLog(bool sharing)
+    {
+        if (sharing)
+        {
+            return;
+        }
+
+        var everShared = !string.IsNullOrEmpty(GetMeta(CentralSync.ServerKey));
+        using var scope = new WriteScope(this);
+        var transaction = scope.Transaction;
+        if (!everShared)
+        {
+            // Never shared: the first share sends everything as it is then, so nothing waiting is needed.
+            Execute("DELETE FROM change_log WHERE synced_at IS NULL;", transaction);
+        }
+        else
+        {
+            // Shared before, not now: only the newest change of each project or item would be sent.
+            Execute(
+                "DELETE FROM change_log WHERE synced_at IS NULL AND seq NOT IN " +
+                "(SELECT MAX(seq) FROM change_log WHERE synced_at IS NULL GROUP BY entity, entity_key);",
+                transaction);
+        }
+
+        scope.Commit();
+    }
+
     public void QueueEverything()
     {
         RunBatch(() =>
         {
             var transaction = ambient!;
             var now = Iso(DateTimeOffset.Now);
-            Execute("UPDATE change_log SET synced_at = $now WHERE synced_at IS NULL;", transaction, ("$now", now));
+            // Everything that is here goes again below; removals are kept waiting, as nothing else sends them.
+            Execute("UPDATE change_log SET synced_at = $now WHERE synced_at IS NULL AND operation <> 'delete';", transaction, ("$now", now));
             foreach (var project in LoadSettings().Projects)
             {
                 LogChange(transaction, "project", project.Id, "update", Json(project), now);
@@ -1032,7 +1089,7 @@ public sealed class SqlitePersistence : ITrackerPersistence
                 {
                     // Dated when the item was read, not now: a newer read elsewhere must win over it.
                     var readAt = Iso(snapshot.CoverageFor(item.ItemType)?.ScannedAt ?? snapshot.ScannedAt);
-                    LogChange(transaction, "item", $"{snapshot.Provider}|{snapshot.ProjectId}|{item.ItemType}|{item.ItemId}", "update", Json(item), readAt);
+                    LogChange(transaction, "item", $"{snapshot.Provider}|{snapshot.ProjectId}|{item.ItemType}|{item.ItemId}", "update", ItemJson(item), readAt);
                 }
             }
         });

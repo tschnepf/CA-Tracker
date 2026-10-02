@@ -46,7 +46,7 @@ public partial class BrowserWindow : Window
 
         var provider = Providers.Label(request.Provider);
         Title = $"{provider} — CA Tracker";
-        HeadingText.Text = $"Refreshing {(string.IsNullOrWhiteSpace(request.ProjectName) ? $"{provider} project" : request.ProjectName)}";
+        HeadingText.Text = $"Syncing {(string.IsNullOrWhiteSpace(request.ProjectName) ? $"{provider} project" : request.ProjectName)}";
         SetStatus($"Opening {provider}…");
 
         keepAlive = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
@@ -80,8 +80,8 @@ public partial class BrowserWindow : Window
         core.Settings.AreDevToolsEnabled = false;
         core.Settings.IsStatusBarEnabled = false;
         // Saves your Helix/Procore password in this browser's profile, encrypted for your Windows user
-        // (Windows DPAPI), and fills it in on their sign-in pages. Settings → Sign out of the built-in
-        // browser deletes it.
+        // (Windows DPAPI), and fills it in on their sign-in pages. Signing out (Settings →
+        // Connections) keeps it.
         core.Settings.IsPasswordAutosaveEnabled = true;
         core.Settings.IsGeneralAutofillEnabled = true;
         // A new page (e.g. a sign-in redirect in the middle of a scan) ends any scan of the old one.
@@ -147,7 +147,7 @@ public partial class BrowserWindow : Window
     private void ShowSignIn()
     {
         waitingForSignIn = true;
-        SetStatus($"Sign in to {ProviderLabel} below. The refresh continues by itself when the project opens — you only need to sign in once.");
+        SetStatus($"Sign in to {ProviderLabel} below. The sync continues by itself when the project opens — you only need to sign in once.");
         OpenProjectButton.Visibility = Visibility.Visible;
         if (!IsActive)
         {
@@ -163,7 +163,7 @@ public partial class BrowserWindow : Window
         var claim = refreshes.Claim(request.Id, request.Provider, DateTimeOffset.Now);
         if (claim.Request is null)
         {
-            Fail(claim.Error ?? "This refresh can no longer run.");
+            Fail(claim.Error ?? "This sync can no longer run.");
             return;
         }
 
@@ -258,7 +258,7 @@ public partial class BrowserWindow : Window
         var result = refreshes.CompleteStep(request.Id, step, snapshot, now);
         if (result is null)
         {
-            Fail("The refresh was cancelled or timed out in the app.");
+            Fail("The sync was cancelled or timed out in the app.");
             return;
         }
 
@@ -271,7 +271,7 @@ public partial class BrowserWindow : Window
 
         if (request.Status != RefreshStatus.Complete)
         {
-            Fail(request.Error ?? "The refresh did not complete.");
+            Fail(request.Error ?? "The sync did not complete.");
             return;
         }
 
@@ -299,7 +299,7 @@ public partial class BrowserWindow : Window
         {
             finished = true;
             keepAlive.Stop();
-            SetStatus(latest?.Status == RefreshStatus.Complete ? "Done." : latest?.Error ?? "The refresh has ended.");
+            SetStatus(latest?.Status == RefreshStatus.Complete ? "Done." : latest?.Error ?? "The sync has ended.");
             CloseButton.Content = "Close";
             if (latest?.Status == RefreshStatus.Cancelled)
             {

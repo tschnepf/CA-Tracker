@@ -184,6 +184,26 @@ test("project catalogs list Helix assignments and Procore discovery results", ()
   assert.equal(Snapshot.buildProcoreCatalog({ items: [] }, null, "evil.example.com").projects.length, 0);
 });
 
+test("one person seen with and without a contact id is one holder", () => {
+  const asReviewer = { id: "d-cc", contactId: "c-cc", fullName: "Chris Contractor", companyId: "co-gc", company: "GC" };
+  const asCreator = { id: "d-cc", fullName: "Chris Contractor", companyId: "co-gc", company: "GC" };
+  const snapshot = Snapshot.buildHelixSnapshot(scan([
+    item({ id: "dup", creator: asCreator, workflow: { required: [{ assigned: asReviewer }] } })
+  ]));
+  assert.deepEqual(snapshot.items[0].holders.map((holder) => [holder.name, holder.companyId, holder.state]), [
+    ["Chris Contractor", "co-gc", "current"]
+  ]);
+});
+
+test("someone named only in the waiting-on text still holds the item", () => {
+  const snapshot = Snapshot.buildHelixSnapshot(scan([
+    item({ id: "w", itemType: "rfi", number: "RFI-020", responsible: "Waiting on Chris Contractor" })
+  ]));
+  assert.deepEqual(snapshot.items[0].holders.map((holder) => [holder.name, holder.companyId, holder.state]), [
+    ["Chris Contractor", null, "current"]
+  ]);
+});
+
 test("current holders carry the date the item reached them when Helix records it", () => {
   const snapshot = Snapshot.buildHelixSnapshot(scan([
     item({ id: "second", workflow: { required: [{ assigned: architect, reviewedAt: "2026-09-02T15:00:00Z" }, { assigned: us }] } }),
@@ -206,6 +226,9 @@ test("Procore rows keep the Ball In Court people and a due date from any due col
     due_date_formatted: { text: "2026-10-05", href: "" },
     status: { text: "Open", href: "" }
   }], "2026-09-29T15:00:00Z");
+  // The link is on the subject: the number comes from its own column, not from the title.
+  assert.equal(queue.items[0].number, "7");
+  assert.equal(queue.items[0].title, "Slab edge");
   const snapshot = Snapshot.buildProcoreProjectSnapshot(queue, { projectId: "34", accountId: "12", itemTypes: ["rfi"] });
   const entry = snapshot.items[0];
   assert.deepEqual(entry.holders.map((holder) => [holder.name, holder.state]), [["Alex Architect", "current"], ["Sam Coworker", "current"]]);

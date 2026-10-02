@@ -459,6 +459,25 @@ public sealed class TrackerStore : IDisposable
         Raise(new StoreChange { Kind = StoreChangeKind.Accounts });
     }
 
+    /// <summary>Forgets one site's sign-in (Sign out of Helix / Procore); the other site's stays.</summary>
+    public void ClearAccount(string provider)
+    {
+        List<ProviderAccount> updated;
+        lock (gate)
+        {
+            updated = accounts.Where(account => !string.Equals(account.Provider, provider, StringComparison.OrdinalIgnoreCase)).ToList();
+            if (updated.Count == accounts.Count)
+            {
+                return;
+            }
+
+            accounts = updated;
+            Enqueue(target => target.SaveAccounts(updated));
+        }
+
+        Raise(new StoreChange { Kind = StoreChangeKind.Accounts });
+    }
+
     public void ClearAccounts()
     {
         lock (gate)
@@ -505,8 +524,17 @@ public sealed class TrackerStore : IDisposable
             }
 
             Enqueue(target => target.RecordSyncRun(run));
+            if (DateTimeOffset.Now - lastPrune >= TimeSpan.FromHours(1))
+            {
+                // No access token, nothing is sent: keep the change log from growing (once an hour at most).
+                lastPrune = DateTimeOffset.Now;
+                var sharing = !string.IsNullOrEmpty(settings.Central.TokenProtected);
+                Enqueue(target => target.PruneChangeLog(sharing));
+            }
         }
     }
+
+    private DateTimeOffset lastPrune = DateTimeOffset.MinValue;
 
     /// <summary>The latest finished sync of one Helix/Procore project (or the latest that read everything it meant to).</summary>
     public SyncRun? LastSyncRun(string provider, string projectId, bool completeOnly = false)

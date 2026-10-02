@@ -4,17 +4,16 @@ using System.Net.Http;
 using System.Text.Json;
 using SmcCaTracker.Core.Diagnostics;
 using SmcCaTracker.Core.Storage;
+using SmcCaTracker.Core.Updates;
 
 namespace SmcCaTracker.App.Services;
-
-/// <summary>A newer version published to the company's update location.</summary>
-public sealed record UpdateInfo(Version Version, string Installer, string? Notes);
 
 /// <summary>
 /// Checks the company's update location (Settings from ca-tracker-company.json → updateFeed: a folder such
 /// as \\server\apps\ca-tracker, or an https address) for <c>latest.json</c>:
-/// <code>{ "version": "3.1.0", "installer": "SMC-CA-Tracker-Setup-3.1.0.exe", "notes": "…" }</code>
-/// and installs a newer version when asked: the installer runs quietly, closes the app and starts it again.
+/// <code>{ "version": "3.1.0", "installer": "SMC-CA-Tracker-Setup-3.1.0.exe", "sha256": "…", "notes": "…" }</code>
+/// and installs a newer version when asked: the installer (which must sit next to latest.json and match the
+/// published SHA-256) runs quietly, closes the app and starts it again.
 /// </summary>
 public sealed class UpdateService
 {
@@ -27,28 +26,24 @@ public sealed class UpdateService
 
     public static Version Current => Version.TryParse(TrackerVersion.Current, out var version) ? version : new Version(0, 0, 0);
 
-    /// <summary>The newer version on offer, or null (none, or the location can't be reached right now).</summary>
+    /// <summary>The newer version on offer, or null (none, or the location can't be reached or trusted right now).</summary>
     public async Task<UpdateInfo?> CheckAsync(string feed)
     {
         try
         {
-            var json = await ReadTextAsync(Combine(feed, "latest.json"));
+            var json = await ReadTextAsync(UpdateFeed.Resolve(feed, "latest.json"));
             if (json is null)
             {
                 return null;
             }
 
-            using var document = JsonDocument.Parse(json);
-            var root = document.RootElement;
-            var versionText = root.TryGetProperty("version", out var versionElement) ? versionElement.GetString() : null;
-            var installer = root.TryGetProperty("installer", out var installerElement) ? installerElement.GetString() : null;
-            if (!Version.TryParse(versionText, out var version) || string.IsNullOrWhiteSpace(installer) || version <= Current)
+            var update = UpdateFeed.Parse(feed, json, Current, out var reason);
+            if (reason is not null)
             {
-                return null;
+                AppLog.Warn("update", $"Ignoring {feed}: {reason}.");
             }
 
-            var notes = root.TryGetProperty("notes", out var notesElement) ? notesElement.GetString() : null;
-            return new UpdateInfo(version, Combine(feed, installer), notes);
+            return update;
         }
         catch (Exception error) when (error is IOException or UnauthorizedAccessException or HttpRequestException or JsonException or TaskCanceledException
             or InvalidOperationException or UriFormatException or ArgumentException or NotSupportedException)
@@ -58,27 +53,53 @@ public sealed class UpdateService
         }
     }
 
-    /// <summary>Copies the installer to a temporary folder and runs it quietly; the caller then closes the app.</summary>
+    /// <summary>
+    /// Copies the installer to a temporary folder, checks its SHA-256 against latest.json and runs it quietly;
+    /// the caller then closes the app. Returns the problem when it couldn't start.
+    /// </summary>
     public async Task<string?> StartInstallAsync(UpdateInfo update)
     {
         try
         {
             var folder = Path.Combine(Path.GetTempPath(), "SMC-CA-Tracker-update");
             Directory.CreateDirectory(folder);
-            var name = Path.GetFileName(IsWeb(update.Installer) ? Uri.UnescapeDataString(new Uri(update.Installer).AbsolutePath) : update.Installer);
-            var local = Path.Combine(folder, string.IsNullOrWhiteSpace(name) ? "SMC-CA-Tracker-Setup.exe" : name);
-            if (IsWeb(update.Installer))
+            var name = Path.GetFileName(UpdateFeed.IsWeb(update.Installer) ? Uri.UnescapeDataString(new Uri(update.Installer).AbsolutePath) : update.Installer);
+            if (!UpdateFeed.IsBareFileName(name))
+            {
+                return "The update feed names an installer that isn't a file next to latest.json.";
+            }
+
+            var local = Path.Combine(folder, name);
+            if (UpdateFeed.IsWeb(update.Installer))
             {
                 await using var source = await http.GetStreamAsync(update.Installer);
                 await using var target = File.Create(local);
                 await source.CopyToAsync(target);
             }
+            else if (UpdateFeed.IsInsecureWeb(update.Installer))
+            {
+                return "The update feed must be a folder or an https address.";
+            }
             else
             {
-                File.Copy(update.Installer, local, overwrite: true);
+                // Opening a file on a share waits on the server: off the screen's thread, so the window
+                // doesn't freeze while a slow or offline server answers.
+                await Task.Run(async () =>
+                {
+                    await using var source = new FileStream(update.Installer, FileMode.Open, FileAccess.Read, FileShare.Read, 1 << 16, useAsync: true);
+                    await using var target = new FileStream(local, FileMode.Create, FileAccess.Write, FileShare.None, 1 << 16, useAsync: true);
+                    await source.CopyToAsync(target);
+                });
             }
 
-            AppLog.Info("update", $"Installing version {update.Version} from {update.Installer}.");
+            if (!await UpdateFeed.MatchesAsync(local, update.Sha256))
+            {
+                File.Delete(local);
+                AppLog.Error("update", $"The installer at {update.Installer} does not match the sha256 in latest.json; not running it.");
+                return "The downloaded installer doesn't match the published checksum, so it was not run. Tell whoever publishes updates.";
+            }
+
+            AppLog.Info("update", $"Installing version {update.Version} from {update.Installer} (sha256 {update.Sha256}).");
             Process.Start(new ProcessStartInfo(local, "/SILENT /SUPPRESSMSGBOXES /NORESTART /CLOSEAPPLICATIONS") { UseShellExecute = true });
             return null;
         }
@@ -90,22 +111,14 @@ public sealed class UpdateService
         }
     }
 
-    private static bool IsWeb(string location) =>
-        location.StartsWith("https://", StringComparison.OrdinalIgnoreCase) || location.StartsWith("http://", StringComparison.OrdinalIgnoreCase);
-
-    private static string Combine(string feed, string name) =>
-        IsWeb(name) || Path.IsPathFullyQualified(name) ? name
-        : IsWeb(feed) ? $"{feed.TrimEnd('/')}/{Uri.EscapeDataString(name)}"
-        : Path.Combine(feed, name);
-
     private async Task<string?> ReadTextAsync(string location)
     {
-        if (IsWeb(location))
+        if (UpdateFeed.IsWeb(location))
         {
             using var response = await http.GetAsync(location);
             return response.IsSuccessStatusCode ? await response.Content.ReadAsStringAsync() : null;
         }
 
-        return File.Exists(location) ? await File.ReadAllTextAsync(location) : null;
+        return await Task.Run(() => File.Exists(location) ? File.ReadAllText(location) : null);
     }
 }

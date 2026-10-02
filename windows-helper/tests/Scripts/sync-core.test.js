@@ -196,3 +196,35 @@ test("a sample export hides names, companies and titles but keeps whose court ea
   assert.deepEqual(holders[0], [sample.user.fullName, "current"]);
   assert.ok(holders.every(([name]) => /^Person \d+$/.test(name)));
 });
+
+test("items read again go in batches of 20, and a batch that fails is reported", async () => {
+  Sync.forget();
+  const datasets = { HelixProjectRFIs: [rfi("a")], HelixProjectSubmittalPackages: [], HelixProjectHistories: [] };
+  const page = helixPage(datasets);
+  await Sync.syncProject(page, { projectId: "p1", projectName: "Project One", now: Date.parse("2026-09-10T00:00:00Z") });
+
+  // 45 items whose court history couldn't be read last time; Helix refuses the batch holding "r44".
+  const ids = Array.from({ length: 45 }, (_, index) => `r${index}`);
+  Sync._test.cache.get("p1").retryCourt = new Set(ids.map((id) => `rfi:${id}`));
+  const read = page.Master.readFromCollection;
+  const asked = [];
+  page.Master.readFromCollection = async (collection, query) => {
+    const wanted = query.filter && query.filter._id && query.filter._id.$in;
+    if (wanted && collection === "HelixProjectRFIs") asked.push(wanted.length);
+    if (wanted && wanted.includes("r44")) throw new Error("Helix refused the read");
+    return read(collection, query);
+  };
+  const progress = [];
+  const result = await Sync.syncProject(page, {
+    projectId: "p1",
+    projectName: "Project One",
+    now: Date.parse("2026-09-10T00:10:00Z"),
+    onProgress: (message) => progress.push(message)
+  });
+
+  assert.equal(result.mode, "changes");
+  assert.deepEqual(asked, [20, 20, 5]);
+  assert.equal(result.warnings.length, 1);
+  assert.match(result.warnings[0], /Helix refused the read/);
+  assert.equal(progress.filter((message) => message.phase === "warning").length, 1);
+});

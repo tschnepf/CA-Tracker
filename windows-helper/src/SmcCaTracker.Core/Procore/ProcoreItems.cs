@@ -99,20 +99,14 @@ public static class ProcoreItems
 
         var status = Status(element);
         var holders = Holders(element);
-        var number = Text(element, "formatted_number", "number") ?? id;
+        // The revision stays out of the number, so "03 30 00-1" still matches its CA folder.
         var revision = Text(element, "revision");
-        if (!string.IsNullOrWhiteSpace(revision) && revision != "0"
-            && !number.Contains("rev", StringComparison.OrdinalIgnoreCase))
-        {
-            // Matches how CA folders name revisions ("… Rev 2"), so downloads go into R2.
-            number = $"{number} Rev {revision}";
-        }
-
         return new SnapshotItem
         {
             ItemType = ItemTypes.Submittal,
             ItemId = id,
-            Number = number,
+            Number = Text(element, "formatted_number", "number") ?? id,
+            Revision = string.IsNullOrWhiteSpace(revision) ? null : revision.Trim(),
             Title = Text(element, "title", "name", "description") ?? "",
             Status = Capitalize(status),
             Closed = IsClosed(element, status),

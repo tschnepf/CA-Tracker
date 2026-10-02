@@ -35,19 +35,19 @@ public partial class MainWindow
     private IEnumerable<ColumnFit> ColumnFits() => new[]
     {
         new ColumnFit(ProjectColumn, row => row.ProjectName, 140, 420),
-        new ColumnFit(TypeColumn, row => row.TypeLabel, 0, 160),
+        new ColumnFit(TypeColumn, row => row.TypeSingular, 0, 160),
         new ColumnFit(NumberColumn, row => row.Number, 0, 240),
-        new ColumnFit(TitleColumn, row => row.Title, 280, 900),
+        new ColumnFit(TitleColumn, row => row.Title, 220, 900),
         new ColumnFit(StatusColumn, row => row.ProviderStatus, 0, 220),
-        new ColumnFit(CourtColumn, row => row.HolderText, 180, 600),
+        new ColumnFit(CourtColumn, row => row.HolderText, 150, 600),
         new ColumnFit(DaysInCourtColumn, row => row.DaysInCourtText, 0, 160),
         new ColumnFit(DueColumn, row => row.DueDateText, 0, 160),
         new ColumnFit(DaysTillDueColumn, row => row.DaysTillDueText, 0, 200, Bold: true),
-        new ColumnFit(FolderColumn, row => row.FolderName, 160, 520),
+        new ColumnFit(FolderColumn, row => row.FolderName, 140, 520),
         // The "Set" link sits beside the discipline text.
-        new ColumnFit(DisciplineColumn, row => row.DisciplineText, 120, 300, Extra: 44),
+        new ColumnFit(DisciplineColumn, row => row.DisciplineText, 110, 300, Extra: 44),
         // Status pill: smaller text inside 8px padding each side.
-        new ColumnFit(ResultColumn, row => row.StatusText, 130, 320, Extra: 18, FontSize: 12),
+        new ColumnFit(ResultColumn, row => row.StatusText, 120, 320, Extra: 18, FontSize: 12),
     };
 
     private void InitColumnFitting()
@@ -121,11 +121,8 @@ public partial class MainWindow
             needed[fit.Column] = Math.Ceiling(Math.Min(fit.Max, Math.Max(header, content + fit.Extra + CellPadding)));
         }
 
-        // Room left for the measured columns once the tick box, actions and scroll bar are counted.
-        var actions = ActionsColumn.ActualWidth > 0
-            ? ActionsColumn.ActualWidth
-            : new[] { "Folder", "Open item", "Download" }.Sum(text => Measure(text, ItemsGrid.FontSize, false) + 16) + 16;
-        var available = ItemsGrid.ActualWidth - CheckColumn.ActualWidth - actions
+        // Room left for the measured columns once the check box, the ⋯ column and scroll bar are counted.
+        var available = ItemsGrid.ActualWidth - CheckColumn.ActualWidth - ActionsColumn.Width.Value
                         - SystemParameters.VerticalScrollBarWidth - 4;
 
         var widths = new Dictionary<DataGridColumn, double>(needed);

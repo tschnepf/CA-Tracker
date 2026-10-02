@@ -60,16 +60,16 @@ public sealed class ComparisonRow
 
     public static string StatusLabel(RowStatus status) => status switch
     {
-        RowStatus.ReadyToReturn => "Ready to move to returned",
-        RowStatus.Reopened => "Back in court — folder is in returned",
+        RowStatus.ReadyToReturn => "Ready to return",
+        RowStatus.Reopened => "Back in court — folder is in Returned",
         RowStatus.Duplicate => "More than one folder",
         RowStatus.Ambiguous => "Folder matches several items",
-        RowStatus.NotInProvider => "Not found in provider",
+        RowStatus.NotInProvider => "Not in Helix/Procore",
         RowStatus.NoFolder => "No folder",
         RowStatus.Open => "Open",
         RowStatus.Filed => "Returned",
         RowStatus.NotInView => "Not in last Procore view",
-        _ => "No provider data yet"
+        _ => "Not synced yet"
     };
 }
 
@@ -119,7 +119,7 @@ public static class ProjectComparer
     {
         var layout = project.EffectiveFolders(settings.Folders);
         var company = CompanyIdentity.For(project, snapshot);
-        var holdersReported = snapshot is not null && string.Equals(snapshot.Provider, Providers.Helix, StringComparison.OrdinalIgnoreCase);
+        var holdersReported = HoldersReported(snapshot);
         var types = new Dictionary<string, TypeComparison>(StringComparer.OrdinalIgnoreCase);
         foreach (var itemType in ItemTypes.All)
         {
@@ -164,10 +164,9 @@ public static class ProjectComparer
         var coverage = snapshot?.CoverageFor(itemType);
         var complete = hasData && (coverage?.Complete ?? snapshot!.Complete);
         var items = hasData
-            ? snapshot!.Items
+            ? NewestRevisions(snapshot!.Items
                 .Where(item => string.Equals(item.ItemType, itemType, StringComparison.OrdinalIgnoreCase))
-                .Where(item => includeItem is null || includeItem(item))
-                .ToList()
+                .Where(item => includeItem is null || includeItem(item)))
             : new List<SnapshotItem>();
 
         var matches = FolderMatcher.Match(scan.Folders, items);
@@ -205,7 +204,7 @@ public static class ProjectComparer
             }
 
             var item = match.Item;
-            var court = CourtEvaluator.Evaluate(item, company, holdersReported);
+            var court = CourtEvaluator.Evaluate(item, company, holdersReported && HoldersKnown(snapshot, item));
             var returned = CourtEvaluator.IsReturned(item, court, rule);
             RowStatus rowStatus;
             if (foldersByItem[item.ItemId].Count > 1)
@@ -238,7 +237,7 @@ public static class ProjectComparer
 
         foreach (var item in items.Where(item => !foldersByItem.ContainsKey(item.ItemId)))
         {
-            var court = CourtEvaluator.Evaluate(item, company, holdersReported);
+            var court = CourtEvaluator.Evaluate(item, company, holdersReported && HoldersKnown(snapshot, item));
             rows.Add(new ComparisonRow
             {
                 ItemType = itemType,
@@ -282,5 +281,49 @@ public static class ProjectComparer
             ScannedAt = coverage?.ScannedAt ?? snapshot?.ScannedAt,
             Rows = rows
         };
+    }
+
+    /// <summary>
+    /// Whether the snapshot says who holds its items in a way the company can be told from: always for
+    /// Helix; for Procore when its Ball In Court people come with their company (the REST read), not
+    /// when they are only names (Procore's list page), where whose court stays unknown.
+    /// </summary>
+    public static bool HoldersReported(ProviderSnapshot? snapshot) =>
+        snapshot is not null && (IsHelix(snapshot) || snapshot.Items.Any(item => item.Holders.Any(HasCompany)));
+
+    /// <summary>
+    /// A list-page read can update single items of a Procore snapshot that otherwise came from the
+    /// background read; an item whose people are only names still can't say whose court it is in.
+    /// </summary>
+    private static bool HoldersKnown(ProviderSnapshot? snapshot, SnapshotItem item) =>
+        IsHelix(snapshot) || item.Holders.Count == 0 || item.Holders.Any(HasCompany);
+
+    private static bool IsHelix(ProviderSnapshot? snapshot) =>
+        string.Equals(snapshot?.Provider, Providers.Helix, StringComparison.OrdinalIgnoreCase);
+
+    private static bool HasCompany(SnapshotHolder holder) =>
+        !string.IsNullOrWhiteSpace(holder.CompanyId) || !string.IsNullOrWhiteSpace(holder.Company);
+
+    /// <summary>
+    /// Procore keeps each revision of a submittal as its own item with the same number. The folder is
+    /// judged by the newest revision, and older ones aren't listed separately. Items with the same
+    /// number but no revisions (real duplicates) are all kept, so the folder still shows as ambiguous.
+    /// </summary>
+    private static List<SnapshotItem> NewestRevisions(IEnumerable<SnapshotItem> items)
+    {
+        var kept = new List<SnapshotItem>();
+        foreach (var group in items.GroupBy(item => ItemNumber.ExactKey(item.Number), StringComparer.Ordinal))
+        {
+            if (group.Key.Length == 0 || group.Count() == 1 || group.All(item => item.Revision is null))
+            {
+                kept.AddRange(group);
+                continue;
+            }
+
+            kept.Add(group.Aggregate((newest, item) =>
+                ItemNumber.CompareNatural(item.Revision ?? "", newest.Revision ?? "") > 0 ? item : newest));
+        }
+
+        return kept;
     }
 }

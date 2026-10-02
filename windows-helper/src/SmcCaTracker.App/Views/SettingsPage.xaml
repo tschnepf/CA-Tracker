@@ -4,6 +4,14 @@
     <!-- Shown in place of the project list. DataContext is the main window's MainViewModel. -->
     <UserControl.Resources>
         <BooleanToVisibilityConverter x:Key="Visible" />
+        <!-- A field's problem, shown under it as you type. -->
+        <Style x:Key="FieldError" TargetType="TextBlock">
+            <Setter Property="Foreground" Value="{DynamicResource DangerBrush}" />
+            <Setter Property="FontSize" Value="12" />
+            <Setter Property="TextWrapping" Value="Wrap" />
+            <Setter Property="Margin" Value="0,4,0,0" />
+            <Setter Property="Visibility" Value="Collapsed" />
+        </Style>
     </UserControl.Resources>
     <Grid Margin="16">
         <Grid.ColumnDefinitions>
@@ -15,20 +23,20 @@
         <!-- Sidebar -->
         <Border Grid.Column="0" Style="{StaticResource Card}" Padding="10">
             <DockPanel>
+                <Button DockPanel.Dock="Top" Content="← Back to projects" Click="Back_Click" Margin="4,2,4,10" />
                 <TextBlock DockPanel.Dock="Top" Text="SETTINGS" Style="{StaticResource SectionTitle}" Margin="6,4,0,8" />
-                <Button DockPanel.Dock="Bottom" Content="← Back to projects" Click="Back_Click" Margin="4,8,4,2" />
-                <ListBox x:Name="SectionList" SelectionChanged="Section_Changed">
-                    <ListBoxItem x:Name="GeneralItem" Padding="10,8">
+                <ListBox x:Name="SectionList" SelectionChanged="Section_Changed" AutomationProperties.Name="Settings sections">
+                    <ListBoxItem x:Name="GeneralItem" Padding="10,8" AutomationProperties.Name="General settings">
                         <StackPanel>
                             <TextBlock Text="General settings" FontWeight="SemiBold" />
-                            <TextBlock Text="Appearance, folders, returned rule, refresh" FontSize="11.5"
+                            <TextBlock Text="Appearance, folders, returned rule, background sync, troubleshooting" FontSize="11.5"
                                        Foreground="{DynamicResource TextSecondary}" TextWrapping="Wrap" />
                         </StackPanel>
                     </ListBoxItem>
-                    <ListBoxItem x:Name="ConnectionsItem" Padding="10,8">
+                    <ListBoxItem x:Name="ConnectionsItem" Padding="10,8" AutomationProperties.Name="Connections">
                         <StackPanel>
                             <TextBlock Text="Connections" FontWeight="SemiBold" />
-                            <TextBlock Text="Helix and Procore sign-in and sync" FontSize="11.5"
+                            <TextBlock Text="Helix, Procore and company server" FontSize="11.5"
                                        Foreground="{DynamicResource TextSecondary}" TextWrapping="Wrap" />
                         </StackPanel>
                     </ListBoxItem>
@@ -44,98 +52,137 @@
             </Grid.RowDefinitions>
             <ScrollViewer Grid.Row="0" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
                 <StackPanel>
-                        <TextBlock Text="{Binding ManagedByText}" TextWrapping="Wrap" Margin="2,0,0,12"
-                                   Foreground="{DynamicResource TextSecondary}"
-                                   Visibility="{Binding HasManagedByText, Converter={StaticResource Visible}}" />
-                        <!-- Appearance -->
-                        <Border Style="{StaticResource Card}" Margin="0,0,0,14">
-                            <StackPanel>
-                                <TextBlock Text="APPEARANCE" Style="{StaticResource SectionTitle}" />
-                                <StackPanel Orientation="Horizontal">
-                                    <RadioButton x:Name="ThemeSystem" GroupName="Theme" Content="Match Windows" Checked="Theme_Checked" />
-                                    <RadioButton x:Name="ThemeLight" GroupName="Theme" Content="Light" Checked="Theme_Checked" />
-                                    <RadioButton x:Name="ThemeDark" GroupName="Theme" Content="Dark" Checked="Theme_Checked" />
-                                </StackPanel>
+                    <TextBlock Text="{Binding ManagedByText}" TextWrapping="Wrap" Margin="2,0,0,12"
+                               Foreground="{DynamicResource TextSecondary}"
+                               Visibility="{Binding HasManagedByText, Converter={StaticResource Visible}}" />
+                    <!-- Appearance: applied and saved as soon as it's picked. -->
+                    <Border Style="{StaticResource Card}" Margin="0,0,0,14">
+                        <StackPanel>
+                            <TextBlock Text="APPEARANCE" Style="{StaticResource SectionTitle}" />
+                            <StackPanel Orientation="Horizontal">
+                                <RadioButton x:Name="ThemeSystem" GroupName="Theme" Content="Match Windows" Checked="Theme_Checked" />
+                                <RadioButton x:Name="ThemeLight" GroupName="Theme" Content="Light" Checked="Theme_Checked" />
+                                <RadioButton x:Name="ThemeDark" GroupName="Theme" Content="Dark" Checked="Theme_Checked" />
                             </StackPanel>
-                        </Border>
+                        </StackPanel>
+                    </Border>
 
-                        <!-- Folder names -->
-                        <Border Style="{StaticResource Card}" Margin="0,0,0,14">
-                            <StackPanel>
-                                <TextBlock Text="DEFAULT FOLDER NAMES INSIDE EACH CA FOLDER" Style="{StaticResource SectionTitle}" />
-                                <Grid>
-                                    <Grid.ColumnDefinitions>
-                                        <ColumnDefinition Width="170" />
-                                        <ColumnDefinition Width="*" />
-                                    </Grid.ColumnDefinitions>
-                                    <Grid.RowDefinitions>
-                                        <RowDefinition Height="Auto" />
-                                        <RowDefinition Height="Auto" />
-                                        <RowDefinition Height="Auto" />
-                                    </Grid.RowDefinitions>
-                                    <TextBlock Grid.Row="0" Text="RFI folder" VerticalAlignment="Center" />
-                                    <TextBox Grid.Row="0" Grid.Column="1" x:Name="RfiFolderBox" Margin="0,0,0,6" />
-                                    <TextBlock Grid.Row="1" Text="Submittal folder" VerticalAlignment="Center" />
-                                    <TextBox Grid.Row="1" Grid.Column="1" x:Name="SubmittalFolderBox" Margin="0,0,0,6" />
-                                    <TextBlock Grid.Row="2" Text="Returned subfolder" VerticalAlignment="Center" />
-                                    <TextBox Grid.Row="2" Grid.Column="1" x:Name="ReturnedFolderBox" />
-                                </Grid>
-                                <TextBlock Style="{StaticResource Muted}" Margin="0,8,0,0" FontSize="12"
-                                           Text="Example: CA\RFIs\~Returned. Renaming here does not rename any folders on disk." />
-                            </StackPanel>
-                        </Border>
+                    <!-- Folder names -->
+                    <Border Style="{StaticResource Card}" Margin="0,0,0,14">
+                        <StackPanel>
+                            <TextBlock Text="DEFAULT FOLDER NAMES INSIDE EACH CA FOLDER" Style="{StaticResource SectionTitle}" />
+                            <Grid HorizontalAlignment="Left">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="170" />
+                                    <ColumnDefinition Width="320" />
+                                </Grid.ColumnDefinitions>
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                </Grid.RowDefinitions>
+                                <TextBlock Grid.Row="0" Text="RFI folder" VerticalAlignment="Center" />
+                                <TextBox Grid.Row="0" Grid.Column="1" x:Name="RfiFolderBox" Margin="0,0,0,6" AutomationProperties.Name="RFI folder" />
+                                <TextBlock Grid.Row="1" Text="Submittal folder" VerticalAlignment="Center" />
+                                <TextBox Grid.Row="1" Grid.Column="1" x:Name="SubmittalFolderBox" Margin="0,0,0,6" AutomationProperties.Name="Submittal folder" />
+                                <TextBlock Grid.Row="2" Text="Returned subfolder" VerticalAlignment="Center" />
+                                <TextBox Grid.Row="2" Grid.Column="1" x:Name="ReturnedFolderBox" AutomationProperties.Name="Returned subfolder" />
+                            </Grid>
+                            <TextBlock x:Name="FoldersError" Style="{StaticResource FieldError}" />
+                            <TextBlock Style="{StaticResource Muted}" Margin="0,8,0,0" FontSize="12"
+                                       Text="Example: CA\RFIs\~Returned. Renaming here does not rename any folders on disk. A project can use its own names in Edit project → Folder names." />
+                        </StackPanel>
+                    </Border>
 
-                        <!-- Returned rule -->
-                        <Border Style="{StaticResource Card}" Margin="0,0,0,14">
-                            <StackPanel>
-                                <TextBlock Text="WHEN IS AN ITEM RETURNED?" Style="{StaticResource SectionTitle}" />
-                                <CheckBox x:Name="WhenNotHeldBox" Content="No one from the selected company holds it (default)" Margin="0,0,0,6" />
-                                <CheckBox x:Name="WhenClosedBox" Content="It is closed, complete, or voided" Margin="0,0,0,6" />
-                                <CheckBox x:Name="WhenComingUpBox" Content="Also when the company only has a later review step (coming up)" Margin="0,0,0,10" />
-                                <TextBlock Text="Always treat these statuses as returned (comma-separated)" Foreground="{DynamicResource TextSecondary}" />
-                                <TextBox x:Name="AlwaysStatusesBox" Margin="0,4,0,8" />
-                                <TextBlock Text="Never treat these statuses as returned (comma-separated)" Foreground="{DynamicResource TextSecondary}" />
-                                <TextBox x:Name="NeverStatusesBox" Margin="0,4,0,0" />
-                            </StackPanel>
-                        </Border>
+                    <!-- Returned rule -->
+                    <Border Style="{StaticResource Card}" Margin="0,0,0,14">
+                        <StackPanel>
+                            <TextBlock Text="WHEN IS AN ITEM RETURNED?" Style="{StaticResource SectionTitle}" />
+                            <TextBlock Style="{StaticResource Muted}" FontSize="12" Margin="0,0,0,8"
+                                       Text="For every project. Each project's company is chosen in Edit project." />
+                            <CheckBox x:Name="WhenNotHeldBox" Content="No one from your company holds it (default)" Margin="0,0,0,6" />
+                            <CheckBox x:Name="WhenClosedBox" Content="It is closed, complete, or voided" Margin="0,0,0,6" />
+                            <CheckBox x:Name="WhenComingUpBox" Content="Also when your company only has a review step coming up later" Margin="0,0,0,10" />
+                            <TextBlock Text="Always treat these statuses as returned (comma-separated, spelled as in Helix or Procore)"
+                                       Foreground="{DynamicResource TextSecondary}" TextWrapping="Wrap" />
+                            <Grid Margin="0,4,0,8">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" MaxWidth="620" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <TextBox x:Name="AlwaysStatusesBox" AutomationProperties.Name="Always treat these statuses as returned"
+                                         ToolTip="For example: Closed, Void" />
+                            </Grid>
+                            <TextBlock Text="Never treat these statuses as returned (comma-separated)" Foreground="{DynamicResource TextSecondary}" />
+                            <Grid Margin="0,4,0,0">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" MaxWidth="620" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <TextBox x:Name="NeverStatusesBox" AutomationProperties.Name="Never treat these statuses as returned"
+                                         ToolTip="For example: Draft" />
+                            </Grid>
+                        </StackPanel>
+                    </Border>
 
-                        <!-- Refresh -->
-                        <Border Style="{StaticResource Card}">
-                            <StackPanel>
-                                <TextBlock Text="REFRESH" Style="{StaticResource SectionTitle}" />
-                                <TextBlock Style="{StaticResource Muted}" TextWrapping="Wrap" Margin="0,0,0,10"
-                                           Text="Helix and Procore are read in the background, without opening a window. Sign in once in Connections; it remembers you. Procore projects in every company you belong to are found and synced by themselves — right-click a project to stop syncing it." />
-                                <CheckBox x:Name="AutoSyncBox" Content="Keep Helix and Procore projects up to date in the background" Margin="0,0,0,8" />
-                                <StackPanel Orientation="Horizontal" Margin="24,0,0,10">
-                                    <TextBlock Text="Every" VerticalAlignment="Center" Margin="0,0,8,0" />
-                                    <TextBox x:Name="SyncIntervalBox" Width="60" />
-                                    <TextBlock Text="minutes (only changed items are read)" VerticalAlignment="Center" Margin="8,0,0,0" />
-                                </StackPanel>
-                                <CheckBox x:Name="CloseWindowBox" Content="Close the browser window when a refresh finishes" Margin="0,0,0,8" />
-                                <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
-                                    <TextBlock Text="Stop waiting after" VerticalAlignment="Center" Margin="0,0,8,0" />
-                                    <TextBox x:Name="TimeoutBox" Width="60" />
-                                    <TextBlock Text="seconds" VerticalAlignment="Center" Margin="8,0,0,0" />
-                                </StackPanel>
-                                <StackPanel Orientation="Horizontal">
-                                    <Button Content="Sign out of the built-in browser…" Click="ClearBrowser_Click" Margin="0,0,8,0" />
-                                    <Button Content="Open the log folder" Click="OpenLogs_Click" Margin="0,0,8,0"
-                                            ToolTip="Timings and errors, one file per day. Useful when something is slow or fails." />
-                                    <Button Content="Export a Helix test sample" Click="ExportSample_Click"
-                                            ToolTip="Saves an anonymized copy of the selected Helix project's items (names, companies and titles replaced) so wrong 'whose court' results can become test cases." />
-                                </StackPanel>
+                    <!-- Background sync -->
+                    <Border Style="{StaticResource Card}" Margin="0,0,0,14">
+                        <StackPanel>
+                            <TextBlock Text="BACKGROUND SYNC" Style="{StaticResource SectionTitle}" />
+                            <TextBlock Style="{StaticResource Muted}" TextWrapping="Wrap" Margin="0,0,0,10"
+                                       Text="Helix and Procore are read in the background with your sign-in from Connections. Every Procore project you can see is found by itself; right-click a project to stop syncing it." />
+                            <CheckBox x:Name="AutoSyncBox" Content="Keep Helix and Procore projects up to date in the background" Margin="0,0,0,8" />
+                            <StackPanel Orientation="Horizontal" Margin="24,0,0,0">
+                                <TextBlock Text="Every" VerticalAlignment="Center" Margin="0,0,8,0" />
+                                <TextBox x:Name="SyncIntervalBox" Width="60" AutomationProperties.Name="Sync every how many minutes" />
+                                <TextBlock Text="minutes (5–240; only changed items are read)" VerticalAlignment="Center" Margin="8,0,0,0" />
                             </StackPanel>
-                        </Border>
+                            <TextBlock x:Name="IntervalError" Style="{StaticResource FieldError}" Margin="24,4,0,0" />
+
+                            <TextBlock Text="WHEN PROCORE NEEDS THE BROWSER WINDOW" Style="{StaticResource SectionTitle}" Margin="0,16,0,6" />
+                            <CheckBox x:Name="CloseWindowBox" Content="Close the window when the sync finishes" Margin="0,0,0,8" />
+                            <StackPanel Orientation="Horizontal">
+                                <TextBlock Text="Give up after" VerticalAlignment="Center" Margin="0,0,8,0" />
+                                <TextBox x:Name="TimeoutBox" Width="60" AutomationProperties.Name="Give up after how many seconds" />
+                                <TextBlock Text="seconds (30–1800)" VerticalAlignment="Center" Margin="8,0,0,0" />
+                            </StackPanel>
+                            <TextBlock x:Name="TimeoutError" Style="{StaticResource FieldError}" />
+                        </StackPanel>
+                    </Border>
+
+                    <!-- Troubleshooting -->
+                    <Border Style="{StaticResource Card}">
+                        <StackPanel>
+                            <TextBlock Text="TROUBLESHOOTING" Style="{StaticResource SectionTitle}" />
+                            <DockPanel>
+                                <Button DockPanel.Dock="Left" Content="Open the log folder" Click="OpenLogs_Click" VerticalAlignment="Center" />
+                                <TextBlock Style="{StaticResource Muted}" FontSize="12" Margin="12,0,0,0" VerticalAlignment="Center"
+                                           Text="Timings and errors, one file per day. Send today's file along when something is slow or fails." />
+                            </DockPanel>
+                            <Expander Header="Developer tools" Margin="0,12,0,0" Foreground="{DynamicResource TextSecondary}">
+                                <DockPanel Margin="0,8,0,0">
+                                    <Button DockPanel.Dock="Left" Content="Export a Helix test sample" Click="ExportSample_Click" VerticalAlignment="Center" />
+                                    <TextBlock Style="{StaticResource Muted}" FontSize="12" Margin="12,0,0,0" VerticalAlignment="Center"
+                                               Text="Saves an anonymized copy of the selected Helix project's items (names, companies and titles replaced), so a wrong ball-in-court result can become a test case." />
+                                </DockPanel>
+                            </Expander>
+                        </StackPanel>
+                    </Border>
                 </StackPanel>
             </ScrollViewer>
+            <!-- Save bar. Buttons are declared in the order Tab visits them. -->
             <Border Grid.Row="1" Style="{StaticResource Card}" Margin="0,14,0,0" Padding="16,10">
                 <DockPanel LastChildFill="False">
+                    <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
+                        <Button x:Name="DiscardButton" Content="Discard changes" Click="Discard_Click" Margin="0,0,8,0" IsEnabled="False" />
+                        <Button x:Name="SaveButton" Content="_Save" Style="{StaticResource AccentButton}" Click="Save_Click" IsEnabled="False" />
+                    </StackPanel>
                     <TextBlock x:Name="ErrorText" DockPanel.Dock="Left" Foreground="{DynamicResource DangerBrush}"
-                               TextWrapping="Wrap" VerticalAlignment="Center" MaxWidth="460" />
+                               TextWrapping="Wrap" VerticalAlignment="Center" MaxWidth="520" />
                     <TextBlock x:Name="SavedText" DockPanel.Dock="Left" Text="Saved." Foreground="{DynamicResource SuccessBrush}"
                                VerticalAlignment="Center" Visibility="Collapsed" />
-                    <Button DockPanel.Dock="Right" Content="Save" Style="{StaticResource AccentButton}" Click="Save_Click" />
-                    <Button DockPanel.Dock="Right" Content="Discard changes" Click="Discard_Click" Margin="0,0,8,0" />
+                    <TextBlock x:Name="UnsavedText" DockPanel.Dock="Left" Text="Unsaved changes" Foreground="{DynamicResource TextSecondary}"
+                               VerticalAlignment="Center" Visibility="Collapsed" />
                 </DockPanel>
             </Border>
         </Grid>
@@ -145,24 +192,50 @@
                       VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
             <StackPanel>
                 <TextBlock Style="{StaticResource Muted}" TextWrapping="Wrap" Margin="2,0,0,12"
-                           Text="Connect signs you in to Helix or Procore in CA Tracker's own browser, once. Syncing then happens in the background with that sign-in. For Procore, CA Tracker finds every project you can see in every company (including projects hosted by other companies) — no links to paste and nothing to install in anyone's Procore account." />
-                <ItemsControl ItemsSource="{Binding Connections}">
+                           Text="Sign in once to Helix and Procore in CA Tracker's own browser. CA Tracker then keeps your projects up to date in the background. For Procore, every project you can see, in every company, is found by itself." />
+                <ItemsControl ItemsSource="{Binding Connections}" Focusable="False">
                     <ItemsControl.ItemTemplate>
                         <DataTemplate>
                             <Border Style="{StaticResource Card}" Margin="0,0,0,14">
                                 <DockPanel>
                                     <StackPanel DockPanel.Dock="Right" VerticalAlignment="Center" MinWidth="170">
-                                        <Button Content="{Binding ConnectButtonText}" Click="Connect_Click" Style="{StaticResource AccentButton}" />
+                                        <Button Content="{Binding ConnectButtonText}" Click="Connect_Click" Style="{StaticResource SignInButton}"
+                                                ToolTip="{Binding ConnectButtonToolTip}" />
                                         <Button Content="Sync now" Click="Sync_Click" Margin="0,8,0,0"
-                                                IsEnabled="{Binding CanSync}" />
+                                                IsEnabled="{Binding CanSync}" ToolTipService.ShowOnDisabled="True"
+                                                ToolTip="Sync every project from this site now (sign in first)"
+                                                Visibility="{Binding IsNotSyncing, Converter={StaticResource Visible}}" />
+                                        <Button Content="Stop" Click="Stop_Click" Margin="0,8,0,0"
+                                                ToolTip="Finish the project being synced and skip the rest"
+                                                Visibility="{Binding IsSyncing, Converter={StaticResource Visible}}" />
                                     </StackPanel>
                                     <StackPanel Margin="0,0,16,0">
-                                        <TextBlock Text="{Binding Label}" FontSize="16" FontWeight="SemiBold" />
-                                        <TextBlock Text="{Binding StatusText}" Margin="0,6,0,0" />
+                                        <StackPanel Orientation="Horizontal">
+                                            <TextBlock Text="{Binding Label}" FontSize="16" FontWeight="SemiBold" VerticalAlignment="Center" />
+                                            <Border Style="{StaticResource ConnectionBadge}" Margin="10,0,0,0">
+                                                <StackPanel Orientation="Horizontal">
+                                                    <TextBlock Style="{StaticResource ConnectionGlyph}" RenderTransformOrigin="0.5,0.55">
+                                                        <TextBlock.RenderTransform>
+                                                            <RotateTransform Angle="0" />
+                                                        </TextBlock.RenderTransform>
+                                                    </TextBlock>
+                                                    <TextBlock Text="{Binding StateText}" FontSize="12" FontWeight="SemiBold" />
+                                                </StackPanel>
+                                            </Border>
+                                        </StackPanel>
+                                        <TextBlock Text="{Binding StatusText}" Margin="0,6,0,0" TextWrapping="Wrap" />
                                         <TextBlock Text="{Binding LastSyncedText}" Foreground="{DynamicResource TextSecondary}" Margin="0,2,0,0" />
-                                        <TextBlock Text="{Binding ProjectsText}" Foreground="{DynamicResource TextSecondary}" Margin="0,2,0,0" />
+                                        <TextBlock Text="{Binding ProjectsText}" Foreground="{DynamicResource TextSecondary}" Margin="0,2,0,0" TextWrapping="Wrap" />
+                                        <!-- While it reads: how far along (sliding while it is still finding projects or waiting its turn). -->
+                                        <ProgressBar Value="{Binding ProgressValue, Mode=OneWay}" IsIndeterminate="{Binding IsProgressUnknown, Mode=OneWay}"
+                                                     Maximum="100" Height="4" Margin="0,10,0,0" BorderThickness="0"
+                                                     Background="{DynamicResource LineBrush}" Foreground="{DynamicResource AccentBrush}"
+                                                     AutomationProperties.Name="Sync progress"
+                                                     Visibility="{Binding IsBusy, Converter={StaticResource Visible}}" />
                                         <TextBlock Text="{Binding SyncMessage}" Foreground="{DynamicResource AccentBrush}" Margin="0,6,0,0"
                                                    TextWrapping="Wrap" Visibility="{Binding HasSyncMessage, Converter={StaticResource Visible}}" />
+                                        <TextBlock Text="{Binding FailedText}" Foreground="{DynamicResource WarningBrush}" Margin="0,6,0,0"
+                                                   TextWrapping="Wrap" Visibility="{Binding HasFailedText, Converter={StaticResource Visible}}" />
                                     </StackPanel>
                                 </DockPanel>
                             </Border>
@@ -170,35 +243,64 @@
                     </ItemsControl.ItemTemplate>
                 </ItemsControl>
 
+                <!-- The built-in browser's sign-ins -->
+                <Border Style="{StaticResource Card}" Margin="0,0,0,14">
+                    <DockPanel>
+                        <StackPanel DockPanel.Dock="Right" VerticalAlignment="Center" Margin="16,0,0,0">
+                            <Button Content="Sign out of Helix and Procore…" Click="ClearBrowser_Click"
+                                    IsEnabled="{Binding CanSignOutOfBrowser}"
+                                    ToolTip="Ends both sign-ins; your saved usernames and passwords are kept" />
+                            <Button Content="Sign out and forget saved passwords…" Click="ForgetBrowser_Click" Margin="0,8,0,0"
+                                    IsEnabled="{Binding CanSignOutOfBrowser}"
+                                    ToolTip="Ends both sign-ins and deletes the usernames and passwords saved in CA Tracker's browser" />
+                        </StackPanel>
+                        <StackPanel>
+                            <TextBlock Text="SIGN OUT" Style="{StaticResource SectionTitle}" />
+                            <TextBlock Style="{StaticResource Muted}" TextWrapping="Wrap"
+                                       Text="Signs CA Tracker's own browser out of both sites (your web browser isn't affected). Sign out keeps your saved usernames and passwords, so signing in again above fills them in; the second button forgets them too." />
+                            <TextBlock Text="You're not signed in to Helix or Procore, so there's nothing to sign out of."
+                                       Foreground="{DynamicResource TextSecondary}" Margin="0,6,0,0" TextWrapping="Wrap"
+                                       Visibility="{Binding IsSignedOutOfBrowser, Converter={StaticResource Visible}}" />
+                            <TextBlock x:Name="SignOutMessage" Foreground="{DynamicResource DangerBrush}" Margin="0,6,0,0" TextWrapping="Wrap" />
+                        </StackPanel>
+                    </DockPanel>
+                </Border>
+
                 <!-- Company server (optional) -->
                 <Border Style="{StaticResource Card}" Margin="0,0,0,14">
                     <StackPanel>
                         <TextBlock Text="COMPANY SERVER (OPTIONAL)" Style="{StaticResource SectionTitle}" />
                         <TextBlock Style="{StaticResource Muted}" TextWrapping="Wrap" Margin="0,0,0,10"
                                    Text="With your company's CA Tracker server, everyone shares what they read from Helix and Procore and the discipline choices made for each project. Your CA folder locations stay on this PC. Without it, everything stays on this PC." />
-                        <Grid Margin="0,0,0,8">
+                        <Grid Margin="0,0,0,8" MaxWidth="720" HorizontalAlignment="Left">
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="120" />
-                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="460" />
                             </Grid.ColumnDefinitions>
                             <Grid.RowDefinitions>
                                 <RowDefinition Height="Auto" />
                                 <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
                             </Grid.RowDefinitions>
                             <TextBlock Text="Server address" VerticalAlignment="Center" />
-                            <TextBox x:Name="CentralServerBox" Grid.Column="1" Margin="0,0,0,6"
-                                     ToolTip="For example https://workload.yourcompany.com" />
-                            <TextBlock Grid.Row="1" Text="Access token" VerticalAlignment="Center" />
-                            <PasswordBox x:Name="CentralTokenBox" Grid.Row="1" Grid.Column="1"
-                                         ToolTip="From the server's administrator. Leave empty to keep the token already saved. It is stored encrypted for your Windows user." />
+                            <TextBox x:Name="CentralServerBox" Grid.Column="1" AutomationProperties.Name="Server address" />
+                            <TextBlock Grid.Row="1" Grid.Column="1" Style="{StaticResource Muted}" FontSize="12" Margin="0,2,0,6"
+                                       Text="For example https://workload.yourcompany.com" />
+                            <TextBlock Grid.Row="2" Text="Access token" VerticalAlignment="Center" />
+                            <PasswordBox x:Name="CentralTokenBox" Grid.Row="2" Grid.Column="1" AutomationProperties.Name="Access token" />
+                            <TextBlock Grid.Row="3" Grid.Column="1" Style="{StaticResource Muted}" FontSize="12" Margin="0,2,0,0" TextWrapping="Wrap"
+                                       Text="From the server's administrator. Leave it empty to keep the token already saved; it is stored encrypted for your Windows user." />
                         </Grid>
                         <StackPanel Orientation="Horizontal">
                             <Button Content="Save and connect" Click="SaveCentral_Click" Margin="0,0,8,0" />
-                            <Button Content="Share now" Click="ShareCentral_Click" Margin="0,0,8,0" />
-                            <Button Content="Disconnect" Click="DisconnectCentral_Click" />
+                            <Button Content="Share now" Click="ShareCentral_Click" Margin="0,0,8,0" IsEnabled="{Binding IsCentralSetUp}" />
+                            <Button Content="Disconnect…" Click="DisconnectCentral_Click" IsEnabled="{Binding IsCentralSetUp}" />
                         </StackPanel>
-                        <TextBlock Text="{Binding CentralStatusText}" Margin="0,8,0,0" TextWrapping="Wrap" />
-                        <TextBlock x:Name="CentralMessage" Foreground="{DynamicResource AccentBrush}" Margin="0,4,0,0" TextWrapping="Wrap" />
+                        <!-- One status line: what just happened, or else how sharing stands. -->
+                        <TextBlock x:Name="CentralStatus" Text="{Binding CentralStatusText}" Margin="0,8,0,0" TextWrapping="Wrap" />
+                        <TextBlock x:Name="CentralMessage" Foreground="{DynamicResource AccentBrush}" Margin="0,8,0,0" TextWrapping="Wrap"
+                                   Visibility="Collapsed" />
                     </StackPanel>
                 </Border>
             </StackPanel>

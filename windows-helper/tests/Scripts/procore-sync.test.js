@@ -176,6 +176,22 @@ test("pages are asked for several at a time when Procore says how many rows ther
   assert.ok(most > 1, "pages were read in parallel");
 });
 
+test("a server that sends fewer rows per page than asked for is still read to the end", async () => {
+  // Asked for 100 per page, Procore sends 50 and says there are 250.
+  const all = Array.from({ length: 250 }, (_, index) => ({ id: index + 1 }));
+  const fetch = async (path) => {
+    const url = new URL(path, "https://app.procore.com");
+    const page = Number(url.searchParams.get("page"));
+    const body = url.pathname.endsWith("/rfis") ? all.slice((page - 1) * 50, page * 50) : [];
+    return { ok: true, status: 200, headers: { get: (name) => (name === "Total" ? String(url.pathname.endsWith("/rfis") ? all.length : 0) : "application/json") }, json: async () => body };
+  };
+
+  const result = await ProcoreSync.readProject(win, { projectId: "9" }, { fetch });
+
+  assert.equal(result.rfis.length, 250);
+  assert.deepEqual(result.rfis.map((row) => row.id), all.map((row) => row.id));
+});
+
 test("after the first read only changed items are asked for", async () => {
   const calls = [];
   const fetch = async (path) => {

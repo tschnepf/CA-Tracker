@@ -31,8 +31,8 @@ public partial class SignInWindow : Window
         this.paths = paths;
         this.store = store;
 
-        Title = $"Connect to {Label} — CA Tracker";
-        HeadingText.Text = $"Connect to {Label}";
+        Title = $"Sign in to {Label} — CA Tracker";
+        HeadingText.Text = $"Sign in to {Label}";
         SetStatus($"Opening {Label}…");
         Loaded += async (_, _) => await StartAsync();
         Closed += (_, _) => Browser.Dispose();
@@ -83,8 +83,8 @@ public partial class SignInWindow : Window
         core.Settings.AreDevToolsEnabled = false;
         core.Settings.IsStatusBarEnabled = false;
         // Saves your Helix/Procore password in this browser's profile, encrypted for your Windows user
-        // (Windows DPAPI), and fills it in on their sign-in pages. Settings → Sign out of the built-in
-        // browser deletes it.
+        // (Windows DPAPI), and fills it in on their sign-in pages. Signing out (Settings →
+        // Connections) keeps it.
         core.Settings.IsPasswordAutosaveEnabled = true;
         core.Settings.IsGeneralAutofillEnabled = true;
         core.NavigationCompleted += OnNavigationCompleted;
@@ -115,6 +115,7 @@ public partial class SignInWindow : Window
         {
             if (ProviderSites.IsProcore(provider))
             {
+                await Browser.CoreWebView2.ExecuteScriptAsync(ProviderScripts.ProcoreCore);
                 await Browser.CoreWebView2.ExecuteScriptAsync(ProviderScripts.ProcoreSignInCheck);
             }
             else
@@ -160,6 +161,9 @@ public partial class SignInWindow : Window
                     _ = FindProcoreProjectsAsync();
                     break;
                 case "unknown" when !SignedIn:
+                    // Signed in or not, the page didn't say who: log its shape (names only) to see why.
+                    AppLog.Warn(provider, $"Couldn't tell who is signed in to {Label}. Page shape: " +
+                        (root.TryGetProperty("shape", out var shape) ? shape.GetRawText() : "(none)"));
                     SetStatus($"If {Label} shows a sign-in page, sign in below. Otherwise you're connected and can close this window.");
                     break;
             }
@@ -197,14 +201,22 @@ public partial class SignInWindow : Window
         }
 
         var first = !SignedIn;
+        if (first && !ProviderSites.IsProcore(provider))
+        {
+            var listError = root.TryGetProperty("listError", out var errorElement) && errorElement.ValueKind == JsonValueKind.String
+                ? errorElement.GetString()
+                : null;
+            AppLog.Info(provider, $"Signed in to {Label}; {projectCount} assigned projects listed" + (listError is null ? "." : $" (listing failed: {listError})."));
+        }
+
         SignedIn = true;
         var who = string.IsNullOrWhiteSpace(name) ? "" : $" as {name}";
         var projects = ProviderSites.IsProcore(provider)
-            ? "CA Tracker is now finding your projects in every Procore company and syncing them (progress shows in Sync…)."
+            ? "CA Tracker is now finding your projects in every Procore company and syncing them (progress shows above the project list)."
             : projectCount > 0
-                ? $"Your {projectCount} Helix projects are listed in Connect…."
-                : "Refresh will use this sign-in.";
-        SetStatus($"Connected to {Label}{who}. {projects} You can close this window.");
+                ? $"Your {projectCount} Helix projects can now be linked to CA folders (Link… in the main window)."
+                : "Sync will use this sign-in.";
+        SetStatus($"Signed in to {Label}{who}. {projects} You can close this window.");
         DoneButton.Content = "Done";
         DoneButton.Style = (Style)FindResource("AccentButton");
         if (first)
@@ -230,7 +242,7 @@ public partial class SignInWindow : Window
         }
 
         procoreSearching = true;
-        SetStatus("Connected to Procore. Finding your projects in every Procore company you belong to…");
+        SetStatus("Signed in to Procore. Finding your projects in every Procore company you belong to…");
         AppLog.Info("procore", "Listing Procore companies and projects in the Connect to Procore window.");
         try
         {
@@ -261,8 +273,8 @@ public partial class SignInWindow : Window
         }
 
         SetStatus(discovery.ProjectCount > 0
-            ? $"Connected to Procore. {MainViewModelText(discovery)} Syncing them now (progress shows in Sync…). You can close this window."
-            : "Connected to Procore, but no projects were found. Check that you can see projects under View All Projects, or see the log in Settings.");
+            ? $"Signed in to Procore. {MainViewModelText(discovery)} Syncing them now (progress shows above the project list). You can close this window."
+            : "Signed in to Procore, but no projects were found. Check that you can see projects under View All Projects, or open the log folder (Settings → General → Troubleshooting).");
         ProcoreProjectsFound?.Invoke(discovery);
     }
 
@@ -278,7 +290,7 @@ public partial class SignInWindow : Window
         ProcoreSearchFinished = true;
         procoreSearching = false;
         AppLog.Warn("procore", $"Listing projects in the Connect window failed: {message}");
-        SetStatus($"Connected to Procore, but CA Tracker couldn't list your projects here ({message}). It will try in the background.");
+        SetStatus($"Signed in to Procore, but CA Tracker couldn't list your projects here ({message}). It will try in the background.");
         ProcoreDiscoveryFailed?.Invoke(message);
     }
 

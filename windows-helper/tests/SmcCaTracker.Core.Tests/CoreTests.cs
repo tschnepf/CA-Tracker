@@ -123,6 +123,35 @@ public class MatcherTests
     }
 
     [Fact]
+    public void ARevisedItemMatchesTheFolderNamedByItsNumber()
+    {
+        var revised = Build.Item("b", "P1");
+        revised.Revision = "2";
+        var match = Assert.Single(FolderMatcher.Match(new[] { Folder("P1 - Title") }, new[] { revised }));
+        Assert.Equal("b", match.Item!.ItemId);
+        Assert.Equal(MatchKind.Exact, match.Kind);
+    }
+
+    [Fact]
+    public void TheNewestRevisionDecidesAboutTheFolder()
+    {
+        // Procore keeps each revision as its own submittal with the same number. Rev 0 is closed (it would
+        // say "ready to return"); rev 2 is back with SMC, so the folder is open — and rev 0 isn't listed.
+        var old = Build.Item("a", "P1", ItemTypes.Submittal, closed: true);
+        old.Revision = "0";
+        var current = Build.Item("b", "P1", ItemTypes.Submittal, holders: Build.Holder("smc", "current"));
+        current.Revision = "2";
+        var scan = new TypeFolderScan { ItemType = ItemTypes.Submittal, TypeFolderExists = true, Folders = new[] { Folder("P1 - Title") } };
+
+        var result = ProjectComparer.CompareType(ItemTypes.Submittal, scan, Build.Snapshot(old, current),
+            new CompanyIdentity("smc", "SMC"), holdersReported: true, new ReturnedRule());
+
+        var row = Assert.Single(result.Rows);
+        Assert.Equal("b", row.Item!.ItemId);
+        Assert.Equal(RowStatus.Open, row.Status);
+    }
+
+    [Fact]
     public void ReportsAmbiguousAndUnmatchedFolders()
     {
         var items = new[] { Build.Item("a", "12"), Build.Item("b", "012") };
@@ -247,6 +276,46 @@ public class ComparisonAndOperationTests
         };
         settings.Projects.Add(mapping);
         return (temp, settings, mapping);
+    }
+
+    [Fact]
+    public void ProcoreBallInCourtWithCompaniesDecidesLikeHelix()
+    {
+        using var temp = new TempFolder();
+        var ca = temp.Make("Job", "CA");
+        temp.Make("Job", "CA", "RFIs", "~Returned", "12 - Slab edge");
+        var settings = new TrackerSettings();
+        var project = new TrackerProject
+        {
+            Name = "Job",
+            CaFolder = ca,
+            Connection = new ProviderConnection { Provider = Providers.Procore, ProjectId = "34", AccountId = "12" }
+        };
+        settings.Projects.Add(project);
+
+        // Back with SMC (Procore names the person and their company): the folder in ~Returned is back in court.
+        var snapshot = Build.Snapshot(Build.Item("901", "12", holders: Build.Holder("smc", "current")));
+        snapshot.Provider = Providers.Procore;
+        var row = Assert.Single(ProjectComparer.Compare(snapshot, project, settings).For(ItemTypes.Rfi).Rows);
+        Assert.Equal(RowStatus.Reopened, row.Status);
+        Assert.Equal(CourtState.InCourt, row.Court);
+
+        // Only names (Procore's list page): whose company can't be told, so it stays unknown as before.
+        var namesOnly = Build.Snapshot(Build.Item("901", "12", holders: new SnapshotHolder { Name = "Sam", State = "current" }));
+        namesOnly.Provider = Providers.Procore;
+        Assert.Equal(CourtState.Unknown, Assert.Single(ProjectComparer.Compare(namesOnly, project, settings).For(ItemTypes.Rfi).Rows).Court);
+
+        // A list-page read that updated one item of a background read: that item isn't taken as out of court.
+        temp.Make("Job", "CA", "RFIs", "13 - Door hardware");
+        var mixed = Build.Snapshot(
+            Build.Item("901", "12", holders: Build.Holder("smc", "current")),
+            Build.Item("902", "13", holders: new SnapshotHolder { Name = "Sam", State = "current" }));
+        mixed.Provider = Providers.Procore;
+        var rows = ProjectComparer.Compare(mixed, project, settings).For(ItemTypes.Rfi).Rows;
+        var listed = Assert.Single(rows, candidate => candidate.Item?.Number == "13");
+        Assert.Equal(CourtState.Unknown, listed.Court);
+        Assert.Equal(RowStatus.Open, listed.Status);
+        Assert.Equal(CourtState.InCourt, Assert.Single(rows, candidate => candidate.Item?.Number == "12").Court);
     }
 
     private static ProviderSnapshot Snapshot() => Build.Snapshot(
@@ -976,6 +1045,67 @@ public class NestedFolderTests
     }
 
     [Fact]
+    public void MarkingReturnedCreatesTheGroupFoldersMissingInsideReturned()
+    {
+        using var temp = new TempFolder();
+        var ca = temp.Make("CA");
+        var submittals = temp.Make("CA", "Submittals");
+        var doors = temp.Make("CA", "Submittals", "Elec", "BB", "P000210 - Doors");
+        temp.Make("CA", "Submittals", "~Returned");
+
+        // Only Submittals\~Returned exists: ~Returned\Elec\BB is created in one step, then the folder moves.
+        var comparison = ProjectComparer.Compare(null, new TrackerProject { Name = "P", CaFolder = ca }, new TrackerSettings());
+        var row = comparison.For(ItemTypes.Submittal).Rows.Single(candidate => candidate.Folder?.Name.StartsWith("P000210") == true);
+        var plan = OperationPlanner.PlanMarkReturned(new[] { row }, comparison);
+        var target = Path.Combine(submittals, "~Returned", "Elec", "BB");
+        Assert.Equal(2, plan.Operations.Count);
+        Assert.Equal(OperationKind.CreateFolder, plan.Operations[0].Kind);
+        Assert.Equal(target, plan.Operations[0].DestinationPath);
+        Assert.False(plan.Operations[0].IsBlocked);
+        Assert.Equal(Path.Combine(target, "P000210 - Doors"), plan.Operations[1].DestinationPath);
+        Assert.False(plan.Operations[1].IsBlocked);
+
+        var results = new OperationExecutor(new AppPaths(temp.Make("appdata"))).Execute(plan);
+        Assert.All(results, result => Assert.Equal(OperationOutcome.Done, result.Outcome));
+        Assert.True(Directory.Exists(Path.Combine(target, "P000210 - Doors")));
+        Assert.False(Directory.Exists(doors));
+    }
+
+    [Fact]
+    public void ABlockedMoveDoesNotCreateAnEmptyReturnedFolder()
+    {
+        using var temp = new TempFolder();
+        var ca = temp.Make("CA");
+        var doors = temp.Make("CA", "Submittals", "Elec", "BB", "P000210 - Doors");
+        temp.Make("CA", "Submittals", "~Returned");
+        var comparison = ProjectComparer.Compare(null, new TrackerProject { Name = "P", CaFolder = ca }, new TrackerSettings());
+        var row = comparison.For(ItemTypes.Submittal).Rows.Single(candidate => candidate.Folder?.Name.StartsWith("P000210") == true);
+        Directory.Delete(doors);
+
+        var operation = Assert.Single(OperationPlanner.PlanMarkReturned(new[] { row }, comparison).Operations);
+        Assert.Equal(OperationKind.MoveFolder, operation.Kind);
+        Assert.True(operation.IsBlocked);
+    }
+
+    [Fact]
+    public void ATenantFitOutFolderIsNotFiledInTheBaseBuildReturnedFolder()
+    {
+        using var temp = new TempFolder();
+        var ca = temp.Make("CA");
+        var submittals = temp.Make("CA", "Submittals");
+        temp.Make("CA", "Submittals", "TFO", "P000300 - Lights");
+        temp.Make("CA", "Submittals", "~Returned (Base Build)");
+
+        var comparison = ProjectComparer.Compare(null, new TrackerProject { Name = "P", CaFolder = ca }, new TrackerSettings());
+        var row = comparison.For(ItemTypes.Submittal).Rows.Single(candidate => candidate.Folder?.Name.StartsWith("P000300") == true);
+        var plan = OperationPlanner.PlanMarkReturned(new[] { row }, comparison);
+        Assert.Equal(OperationKind.CreateFolder, plan.Operations[0].Kind);
+        Assert.Equal(Path.Combine(submittals, "~Returned"), plan.Operations[0].DestinationPath);
+        Assert.False(plan.Operations[0].IsBlocked);
+        Assert.Equal(Path.Combine(submittals, "~Returned", "P000300 - Lights"), plan.Operations[1].DestinationPath);
+    }
+
+    [Fact]
     public void PartAndDisciplineComeFromTheFoldersAnItemSitsIn()
     {
         using var temp = new TempFolder();
@@ -1023,6 +1153,41 @@ public class RevisionTests
         temp.Make("P000210 - Doors", "R03");
         Assert.Equal(Path.Combine(item, "Rev 2"), DownloadNaming.RevisionFolder(item, 2));
         Assert.Equal(Path.Combine(item, "R03"), DownloadNaming.RevisionFolder(item, 3));
+    }
+
+    [Fact]
+    public void ARevisionGoesInASubfolderOnlyWhenTheItemAlreadyHasAFolder()
+    {
+        using var temp = new TempFolder();
+        var item = Path.Combine(temp.Root, "P000210 - Doors");
+        Assert.Equal((item, false), DownloadFolders.Destination(item, 2));
+        temp.Make("P000210 - Doors");
+        Assert.Equal((Path.Combine(item, "R2"), true), DownloadFolders.Destination(item, 2));
+        Assert.Equal((item, false), DownloadFolders.Destination(item, null));
+    }
+
+    [Fact]
+    public void ARevisionsFilesAreComparedOnlyWithItsRevisionFolder()
+    {
+        using var temp = new TempFolder();
+        var item = temp.Make("P000210 - Doors");
+        File.WriteAllText(Path.Combine(item, "Door schedule.pdf"), "rev 0");
+        File.WriteAllText(Path.Combine(temp.Make("P000210 - Doors", "R1"), "Hardware.pdf"), "rev 1");
+        var revision = temp.Make("P000210 - Doors", "R2");
+        var schedule = DownloadNaming.MatchKey("Door schedule.pdf");
+        var hardware = DownloadNaming.MatchKey("Hardware.pdf");
+
+        // The item itself: anything in its folder counts, revision subfolders included.
+        var itemKeys = DownloadFolders.ExistingFileKeys(item, item, inRevisionFolder: false);
+        Assert.Contains(schedule, itemKeys);
+        Assert.Contains(hardware, itemKeys);
+
+        // Revision 2: earlier revisions' files of the same name don't, so they are checked for download.
+        var revisionKeys = DownloadFolders.ExistingFileKeys(item, revision, inRevisionFolder: true);
+        Assert.DoesNotContain(schedule, revisionKeys);
+        Assert.DoesNotContain(hardware, revisionKeys);
+        File.WriteAllText(Path.Combine(revision, "2026-10-01 Door schedule.pdf"), "rev 2");
+        Assert.Contains(schedule, DownloadFolders.ExistingFileKeys(item, revision, inRevisionFolder: true));
     }
 }
 

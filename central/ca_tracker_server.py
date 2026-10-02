@@ -352,10 +352,9 @@ class Service:
             stored = 0
             unchanged = 0
             skipped = []
-            ordered = sorted((change for change in changes if isinstance(change, dict) and isinstance(change.get("seq"), int)),
-                             key=lambda change: change["seq"])
+            ordered = sorted((change for change in changes if _has_seq(change)), key=lambda change: change["seq"])
             skipped.extend({"seq": None, "reason": "not a change with a whole-number seq"}
-                           for change in changes if not (isinstance(change, dict) and isinstance(change.get("seq"), int)))
+                           for change in changes if not _has_seq(change))
             for change in ordered:
                 seq = change["seq"]
                 if seq <= last_client_seq:
@@ -397,6 +396,8 @@ class Service:
                 return "an item's key is provider|projectId|itemType|itemId"
         if operation != "delete" and not isinstance(change.get("payload"), dict):
             return "insert and update need the project or item as payload"
+        if entity == "item" and parse_time(change.get("changedAt")) is None:
+            return "an item change needs changedAt (when it was read)"
         return None
 
     def _store(self, tx, client, user, change, now):
@@ -410,10 +411,18 @@ class Service:
         current = tx.one("SELECT payload_hash, deleted, changed_at FROM ca_current WHERE entity = ? AND entity_key = ?", entity, key)
         if deleted and (current is None or truthy(current[1])):
             return False
-        if not deleted and current is not None and not truthy(current[1]) and current[0] == payload_hash:
-            return False
         if entity == "item" and current is not None and (parse_time(current[2]) or changed_at) > changed_at:
             return False  # read before the version already here (e.g. a PC sending everything it has again)
+        if not deleted and current is not None and not truthy(current[1]) and current[0] == payload_hash:
+            # The same version read again, later: not a new change, but the time it was last seen moves
+            # forward so an older read arriving afterwards can't overwrite it.
+            tx.run("UPDATE ca_current SET changed_at = ?, updated_at = ?, updated_by = ? WHERE entity = ? AND entity_key = ?",
+                   changed_at, now, user, entity, key)
+            if entity == "item":
+                provider, project_id, item_type, item_id = key.split("|", 3)
+                tx.run("UPDATE ca_items SET read_at = ?, read_by = ? WHERE provider = ? AND provider_project_id = ? "
+                       "AND item_type = ? AND item_id = ?", changed_at, user, provider.lower(), project_id, item_type.lower(), item_id)
+            return False
 
         tx.run("INSERT INTO ca_changes (client_id, client_seq, user_name, entity, entity_key, operation, changed_at, received_at, "
                "payload, payload_hash) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
@@ -533,6 +542,12 @@ class Service:
         return self.db.run(work)
 
 
+def _has_seq(change):
+    """A change whose seq is a whole number a client could really have produced (bool and absurd sizes excluded)."""
+    seq = change.get("seq") if isinstance(change, dict) else None
+    return isinstance(seq, int) and not isinstance(seq, bool) and 0 < seq < 2 ** 63
+
+
 def split_discipline_key(key):
     """"rfi|p000210 - doors" -> (rfi, folder, p000210 - doors); "item|rfi|abc" -> (rfi, item, abc). Same as the app."""
     if not isinstance(key, str):
@@ -550,6 +565,7 @@ def split_discipline_key(key):
 class Handler(BaseHTTPRequestHandler):
     server_version = "CATrackerServer/1"
     protocol_version = "HTTP/1.1"
+    timeout = 30  # a client that stops sending mid-request doesn't hold a thread forever
     service = None  # set by make_server
 
     def do_GET(self):  # noqa: N802
@@ -562,6 +578,7 @@ class Handler(BaseHTTPRequestHandler):
         log.info("%s %s", self.address_string(), format % args)
 
     def _route(self, method):
+        self._body_read = False
         try:
             url = urlparse(self.path)
             path = url.path.rstrip("/")
@@ -597,23 +614,40 @@ class Handler(BaseHTTPRequestHandler):
             log.exception("Request failed: %s %s", method, self.path)
             return self._reply(500, {"error": "The server had a problem; see its log."})
 
+    def _body_length(self):
+        try:
+            return int(self.headers.get("Content-Length") or 0)
+        except ValueError:
+            raise BadRequest("Content-Length must be a whole number.")
+
     def _json(self):
-        length = int(self.headers.get("Content-Length") or 0)
+        length = self._body_length()
         if length <= 0:
             raise BadRequest("The request has no body.")
         if length > MAX_BODY:
             raise BadRequest("The request is too large; send fewer changes at a time.")
+        self._body_read = True
         try:
             return json.loads(self.rfile.read(length).decode("utf-8"))
         except (UnicodeDecodeError, json.JSONDecodeError) as error:
             raise BadRequest(f"The body isn't JSON: {error}")
 
     def _reply(self, status, body):
+        # Answering before the body was read (401, 403, 400, ...) leaves it on the socket; a keep-alive client's
+        # next request would then be read from the middle of it. Close the connection instead.
+        try:
+            unread = not getattr(self, "_body_read", True) and self._body_length() > 0
+        except BadRequest:
+            unread = True
+        if unread:
+            self.close_connection = True
         data = json.dumps(body, ensure_ascii=False).encode("utf-8")
         self.send_response(status)
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Content-Length", str(len(data)))
         self.send_header("Cache-Control", "no-store")
+        if unread:
+            self.send_header("Connection", "close")
         self.end_headers()
         self.wfile.write(data)
 

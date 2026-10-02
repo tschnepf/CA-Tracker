@@ -48,7 +48,9 @@ public class ProcoreItemsTests
             }
             """);
         var item = ProcoreItems.ParseSubmittal(submittal, "999", "app.procore.com")!;
-        Assert.Equal("03 30 00-1 Rev 2", item.Number);
+        // The number stays as Procore writes it (so it matches the folder); the revision is kept apart.
+        Assert.Equal("03 30 00-1", item.Number);
+        Assert.Equal("2", item.Revision);
         Assert.Equal("Closed", item.Status);
         Assert.True(item.Closed);
         Assert.Empty(item.Holders);

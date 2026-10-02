@@ -12,6 +12,7 @@ the server's own SQL runs unchanged, with values written into it as SQL literals
 import csv
 import datetime as dt
 import io
+import http.client
 import json
 import os
 import shlex
@@ -22,6 +23,7 @@ import tempfile
 import threading
 import unittest
 import urllib.error
+import urllib.parse
 import urllib.request
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -216,6 +218,38 @@ class ServerTests:
         self.assertEqual(0, self.send("pc-a", change(2, "item", "helix|h1|rfi|a", None, changed_at="2026-09-30T12:30:00Z"))["stored"])
         self.assertEqual(1, self.send("pc-a", change(3, "item", "helix|h1|rfi|a", None, changed_at="2026-09-30T14:00:00Z"))["stored"])
 
+    def test_the_same_version_read_again_later_keeps_an_older_read_out(self):
+        # x reads it at 08:00 (Open); y reads the same at 18:00; z's read from 12:00 (Stale) arrives last.
+        self.send("pc-x", change(1, "item", "helix|h1|rfi|a", item(status="Open"), changed_at="2026-09-30T08:00:00Z"))
+        later = self.send("pc-y", change(1, "item", "helix|h1|rfi|a", item(status="Open"), changed_at="2026-09-30T18:00:00Z"),
+                          user="Person Y")
+        self.assertEqual((0, 1), (later["stored"], later["unchanged"]))
+        stale = self.send("pc-z", change(1, "item", "helix|h1|rfi|a", item(status="Stale"), changed_at="2026-09-30T12:00:00Z"))
+        self.assertEqual((0, 1), (stale["stored"], stale["unchanged"]))
+        status, read_at, read_by = self.rows("SELECT status, read_at, read_by FROM ca_items")[0]
+        self.assertEqual(("Open", "2026-09-30T18:00:00Z", "Person Y"), (status, server.iso(read_at), read_by))
+        self.assertEqual("2026-09-30T18:00:00Z", server.iso(self.rows("SELECT changed_at FROM ca_current")[0][0]))
+        # Only one change was recorded for the two identical reads.
+        self.assertEqual(1, len(self.service.read_changes(0, 500)["changes"]))
+
+    def test_an_item_change_without_changed_at_is_skipped(self):
+        missing = change(1, "item", "helix|h1|rfi|a", item())
+        del missing["changedAt"]
+        result = self.send("pc-a", missing, change(2, "item", "helix|h1|rfi|b", item("b", "RFI-002"), changed_at="not a time"),
+                           change(3, "item", "helix|h1|rfi|c", item("c", "RFI-003")))
+        self.assertEqual(1, result["stored"])
+        self.assertEqual([1, 2], sorted(entry["seq"] for entry in result["skipped"]))
+        self.assertIn("changedAt", result["skipped"][0]["reason"])
+        self.assertEqual([("c",)], [tuple(row) for row in self.rows("SELECT item_id FROM ca_items")])
+
+    def test_a_seq_must_be_a_real_whole_number(self):
+        result = self.send("pc-a", change(True, "item", "helix|h1|rfi|a", item()), change(2 ** 63, "item", "helix|h1|rfi|b", item("b")),
+                           change(0, "item", "helix|h1|rfi|c", item("c")), change(-4, "item", "helix|h1|rfi|d", item("d")),
+                           change(5, "item", "helix|h1|rfi|e", item("e")))
+        self.assertEqual(1, result["stored"])
+        self.assertEqual([None, None, None, None], [entry["seq"] for entry in result["skipped"]])
+        self.assertEqual([("e",)], [tuple(row) for row in self.rows("SELECT item_id FROM ca_items")])
+
     def test_item_removed_from_helix(self):
         self.send("pc-a", change(1, "item", "helix|h1|rfi|a", item()))
         self.send("pc-a", change(2, "item", "helix|h1|rfi|a", None))
@@ -345,6 +379,35 @@ class ServerTests:
             self.assertIsInstance(entry["payload"], dict)
         self.assertEqual(item(), page["changes"][1]["payload"])
         self.assertEqual(409, self.call(f"{base}/changes?after=99", reader)[0])
+
+    def test_an_answer_sent_before_the_body_was_read_does_not_break_the_next_request(self):
+        base = self.start_http()
+        host, port = urllib.parse.urlparse(base).hostname, urllib.parse.urlparse(base).port
+        _, reader = self.service.add_token("Viewer", can_write=False)
+        body = json.dumps({"client": "pc-v", "changes": [change(1, "item", "helix|h1|rfi|a", item())] * 50}).encode("utf-8")
+        connection = http.client.HTTPConnection(host, port, timeout=10)
+        self.addCleanup(connection.close)
+        # Refused before the body is read (403) ...
+        connection.request("POST", f"{server.API}/changes", body=body,
+                           headers={"Authorization": f"Bearer {reader}", "Content-Type": "application/json"})
+        response = connection.getresponse()
+        self.assertEqual(403, response.status)
+        self.assertIn("error", json.loads(response.read()))
+        # ... and the same keep-alive connection still gets a proper answer to the next request.
+        connection.request("GET", f"{server.API}/hello", headers={"Authorization": f"Bearer {reader}"})
+        response = connection.getresponse()
+        self.assertEqual(200, response.status)
+        self.assertEqual("Viewer", json.loads(response.read())["user"])
+        # The same after a 401, and a Content-Length that isn't a number is a 400, not a crash.
+        connection.request("POST", f"{server.API}/changes", body=body, headers={"Authorization": "Bearer cat_wrong"})
+        response = connection.getresponse()
+        self.assertEqual(401, response.status)
+        response.read()
+        connection.request("POST", f"{server.API}/changes", body=b"{}",
+                           headers={"Authorization": f"Bearer {self.token}", "Content-Length": "lots"})
+        response = connection.getresponse()
+        self.assertEqual(400, response.status)
+        self.assertIn("Content-Length", json.loads(response.read())["error"])
 
 
 class SqliteServerTests(ServerTests, unittest.TestCase):

@@ -15,23 +15,38 @@ public enum SettingsSection
 
 /// <summary>
 /// The Settings page inside the main window: a sidebar with General settings and Connections.
-/// General edits a copy of the settings and applies it only on Save. Connections shows each
-/// site's sign-in and last sync, with Connect and Sync buttons handled by the main window.
+/// General edits a copy of the settings and applies it on Save (the theme is saved as soon as it's
+/// picked); leaving with unsaved changes asks first. Connections shows each site's sign-in and last
+/// sync, with Sign in and Sync buttons handled by the main window.
 /// </summary>
 public partial class SettingsPage : UserControl
 {
     private Func<TrackerSettings>? settingsSource;
     private AppPaths? paths;
     private TrackerSettings? editing;
+    private string savedFields = "";
     private bool loading;
 
     public SettingsPage()
     {
         InitializeComponent();
+
+        // Every edit updates Save/Discard and checks the field at once, rather than only on Save.
+        foreach (var box in new[] { RfiFolderBox, SubmittalFolderBox, ReturnedFolderBox, AlwaysStatusesBox, NeverStatusesBox, SyncIntervalBox, TimeoutBox })
+        {
+            box.TextChanged += (_, _) => OnEdited();
+        }
+
+        foreach (var box in new[] { WhenNotHeldBox, WhenClosedBox, WhenComingUpBox, AutoSyncBox, CloseWindowBox })
+        {
+            box.Checked += (_, _) => OnEdited();
+            box.Unchecked += (_, _) => OnEdited();
+        }
     }
 
     public event EventHandler? BackRequested;
     public event Func<TrackerSettings, Task>? SaveRequested;
+    public event Func<ThemePreference, Task>? ThemeChosen;
     public event Action<string>? ConnectRequested;
     public event Action<string>? SyncRequested;
 
@@ -57,8 +72,10 @@ public partial class SettingsPage : UserControl
         ThemeDark.IsChecked = settings.Theme == ThemePreference.Dark;
 
         // Settings your company manages can't be changed here.
-        var foldersLocked = (DataContext as MainViewModel)?.AreFoldersLocked == true;
+        var model = DataContext as MainViewModel;
+        var foldersLocked = model?.AreFoldersLocked == true;
         RfiFolderBox.IsEnabled = SubmittalFolderBox.IsEnabled = ReturnedFolderBox.IsEnabled = !foldersLocked;
+        SyncIntervalBox.IsEnabled = model?.IsSyncLocked != true;
         RfiFolderBox.Text = settings.Folders.RfiFolder;
         SubmittalFolderBox.Text = settings.Folders.SubmittalFolder;
         ReturnedFolderBox.Text = settings.Folders.ReturnedFolder;
@@ -74,6 +91,107 @@ public partial class SettingsPage : UserControl
         SyncIntervalBox.Text = settings.Sync.IntervalMinutes.ToString();
         TimeoutBox.Text = settings.Browser.TimeoutSeconds.ToString();
         loading = false;
+
+        savedFields = CurrentFields();
+        OnEdited();
+        SavedText.Visibility = Visibility.Collapsed;
+    }
+
+    /// <summary>Everything General settings edits (but the theme, which saves itself), to tell whether it changed.</summary>
+    private string CurrentFields() => string.Join("\u001f",
+        RfiFolderBox.Text, SubmittalFolderBox.Text, ReturnedFolderBox.Text, AlwaysStatusesBox.Text, NeverStatusesBox.Text,
+        SyncIntervalBox.Text, TimeoutBox.Text, WhenNotHeldBox.IsChecked, WhenClosedBox.IsChecked, WhenComingUpBox.IsChecked,
+        AutoSyncBox.IsChecked, CloseWindowBox.IsChecked);
+
+    private bool IsDirty => !loading && editing is not null && CurrentFields() != savedFields;
+
+    private void OnEdited()
+    {
+        if (loading)
+        {
+            return;
+        }
+
+        var dirty = IsDirty;
+        SaveButton.IsEnabled = DiscardButton.IsEnabled = dirty;
+        UnsavedText.Visibility = dirty ? Visibility.Visible : Visibility.Collapsed;
+        if (dirty)
+        {
+            SavedText.Visibility = Visibility.Collapsed;
+        }
+
+        Validate();
+    }
+
+    /// <summary>Shows each field's problem under it. True when there are none.</summary>
+    private bool Validate()
+    {
+        static void Show(TextBlock target, string? problem)
+        {
+            target.Text = problem ?? "";
+            target.Visibility = problem is null ? Visibility.Collapsed : Visibility.Visible;
+        }
+
+        var folderProblems = Folders().Validate().ToList();
+        Show(FoldersError, folderProblems.Count == 0 ? null : string.Join(" ", folderProblems));
+        Show(IntervalError, int.TryParse(SyncIntervalBox.Text.Trim(), out var interval) && interval is >= 5 and <= 240
+            ? null
+            : "Enter 5 to 240 minutes.");
+        Show(TimeoutError, int.TryParse(TimeoutBox.Text.Trim(), out var timeout) && timeout is >= 30 and <= 1800
+            ? null
+            : "Enter 30 to 1800 seconds.");
+        var valid = FoldersError.Visibility != Visibility.Visible && IntervalError.Visibility != Visibility.Visible
+            && TimeoutError.Visibility != Visibility.Visible;
+        ErrorText.Text = valid ? "" : "Fix the fields marked in red to save.";
+        return valid;
+    }
+
+    private FolderLayout Folders() => new()
+    {
+        RfiFolder = RfiFolderBox.Text.Trim(),
+        SubmittalFolder = SubmittalFolderBox.Text.Trim(),
+        ReturnedFolder = ReturnedFolderBox.Text.Trim()
+    };
+
+    /// <summary>
+    /// Leaving General settings with unsaved changes asks whether to save them. False when you chose
+    /// to stay (or they couldn't be saved yet).
+    /// </summary>
+    public bool ConfirmLeave()
+    {
+        if (!IsDirty)
+        {
+            return true;
+        }
+
+        var answer = MessageBox.Show(
+            Window.GetWindow(this),
+            "Save your changes to General settings?",
+            "Unsaved changes",
+            MessageBoxButton.YesNoCancel,
+            MessageBoxImage.Question,
+            MessageBoxResult.Yes);
+        switch (answer)
+        {
+            case MessageBoxResult.Yes:
+                if (!Validate())
+                {
+                    ShowSectionFromOutside(SettingsSection.General);
+                    return false;
+                }
+
+                _ = SaveAsync();
+                return true;
+            case MessageBoxResult.No:
+                if (settingsSource is not null)
+                {
+                    Populate(settingsSource());
+                }
+
+                return true;
+            default:
+                return false;
+        }
     }
 
     /// <summary>Switches section without reloading the settings being edited.</summary>
@@ -98,20 +216,39 @@ public partial class SettingsPage : UserControl
             CentralServerBox.Text = model.CentralServerText;
             CentralServerBox.IsEnabled = !model.IsCentralServerLocked;
             CentralTokenBox.Clear();
-            CentralMessage.Text = "";
+            ShowCentralMessage(null);
+            SignOutMessage.Text = "";
         }
 
         GeneralPanel.Visibility = section == SettingsSection.General ? Visibility.Visible : Visibility.Collapsed;
         ConnectionsPanel.Visibility = section == SettingsSection.Connections ? Visibility.Visible : Visibility.Collapsed;
     }
 
-    private void Back_Click(object sender, RoutedEventArgs e) => BackRequested?.Invoke(this, EventArgs.Empty);
-
-    private void Theme_Checked(object sender, RoutedEventArgs e)
+    private void Back_Click(object sender, RoutedEventArgs e)
     {
-        if (!loading)
+        if (ConfirmLeave())
         {
-            ThemeManager.Apply(SelectedTheme());
+            BackRequested?.Invoke(this, EventArgs.Empty);
+        }
+    }
+
+    private async void Theme_Checked(object sender, RoutedEventArgs e)
+    {
+        if (loading)
+        {
+            return;
+        }
+
+        var theme = SelectedTheme();
+        ThemeManager.Apply(theme);
+        if (editing is not null)
+        {
+            editing.Theme = theme;
+        }
+
+        if (ThemeChosen is not null)
+        {
+            await ThemeChosen(theme);
         }
     }
 
@@ -122,14 +259,10 @@ public partial class SettingsPage : UserControl
 
     private void Discard_Click(object sender, RoutedEventArgs e)
     {
-        if (settingsSource is null)
+        if (settingsSource is not null)
         {
-            return;
+            Populate(settingsSource());
         }
-
-        var settings = settingsSource();
-        Populate(settings);
-        ThemeManager.Apply(settings.Theme);
     }
 
     private void OpenLogs_Click(object sender, RoutedEventArgs e)
@@ -175,90 +308,64 @@ public partial class SettingsPage : UserControl
         }
     }
 
-    private async void ClearBrowser_Click(object sender, RoutedEventArgs e)
+    private async void ClearBrowser_Click(object sender, RoutedEventArgs e) => await SignOutAsync(forgetPasswords: false);
+
+    private async void ForgetBrowser_Click(object sender, RoutedEventArgs e) => await SignOutAsync(forgetPasswords: true);
+
+    /// <summary>Signs out of Helix and Procore, keeping the saved usernames and passwords unless told to forget them.</summary>
+    private async Task SignOutAsync(bool forgetPasswords)
     {
-        if (paths is null)
+        if (paths is null || DataContext is not MainViewModel { CanSignOutOfBrowser: true } model)
         {
             return;
         }
 
         var owner = Window.GetWindow(this);
+        if (model.BrowserProfileInUse?.Invoke() is { } inUse)
+        {
+            SignOutMessage.Text = $"Close {inUse} first, then sign out.";
+            return;
+        }
+
         var answer = MessageBox.Show(
             owner,
-            "Sign out of Helix and Procore in the CA Tracker browser? You'll be asked to sign in on the next refresh.\n\nClose any open CA Tracker browser windows first.",
-            "Sign out",
+            forgetPasswords
+                ? "Sign CA Tracker's browser out of Helix and Procore and forget the usernames and passwords it saved? You'll type them again the next time you sign in.\n\nThe item panel closes."
+                : "Sign CA Tracker's browser out of Helix and Procore? Syncing stops until you sign in again here; your saved usernames and passwords are kept and fill in when you do.\n\nThe item panel closes.",
+            forgetPasswords ? "Sign out and forget saved passwords" : "Sign out",
             MessageBoxButton.YesNo,
-            MessageBoxImage.Question,
+            forgetPasswords ? MessageBoxImage.Warning : MessageBoxImage.Question,
             MessageBoxResult.No);
         if (answer != MessageBoxResult.Yes)
         {
             return;
         }
 
-        try
+        var problem = await model.SignOutOfBrowserAsync(forgetPasswords);
+        SignOutMessage.Text = problem is null ? "" : $"Could not sign out: {problem}";
+        if (problem is null)
         {
-            var model = DataContext as MainViewModel;
-            // The background Helix page uses the same sign-in; close it so its files can be removed.
-            model?.CloseBackgroundBrowser();
-            for (var attempt = 0; System.IO.Directory.Exists(paths.BrowserDataDirectory); attempt++)
-            {
-                try
-                {
-                    System.IO.Directory.Delete(paths.BrowserDataDirectory, recursive: true);
-                }
-                catch (Exception error) when ((error is System.IO.IOException or UnauthorizedAccessException) && attempt < 30)
-                {
-                    // The browser is still letting go of its files.
-                    await Task.Delay(300);
-                }
-            }
-
-            model?.Store.ClearAccounts();
-            ErrorText.Text = "";
-            model?.RefreshAccounts();
-
-            MessageBox.Show(owner, "Signed out of the built-in browser.", "CA Tracker", MessageBoxButton.OK, MessageBoxImage.Information);
-        }
-        catch (Exception error)
-        {
-            ErrorText.Text = $"Could not sign out: {error.Message} Close any CA Tracker browser windows and try again.";
+            MessageBox.Show(owner,
+                forgetPasswords
+                    ? "Signed out of Helix and Procore, and the saved passwords are forgotten."
+                    : "Signed out of Helix and Procore. Your saved usernames and passwords are kept.",
+                "CA Tracker", MessageBoxButton.OK, MessageBoxImage.Information);
         }
     }
 
-    private async void Save_Click(object sender, RoutedEventArgs e)
+    private async void Save_Click(object sender, RoutedEventArgs e) => await SaveAsync();
+
+    private async Task SaveAsync()
     {
-        if (editing is null)
+        if (editing is null || !Validate())
         {
             return;
         }
 
-        var folders = new FolderLayout
-        {
-            RfiFolder = RfiFolderBox.Text.Trim(),
-            SubmittalFolder = SubmittalFolderBox.Text.Trim(),
-            ReturnedFolder = ReturnedFolderBox.Text.Trim()
-        };
-        var problems = folders.Validate().ToList();
-
-        if (!int.TryParse(TimeoutBox.Text.Trim(), out var timeout) || timeout < 30 || timeout > 1800)
-        {
-            problems.Add("Wait between 30 and 1800 seconds.");
-        }
-
-        if (!int.TryParse(SyncIntervalBox.Text.Trim(), out var interval) || interval < 5 || interval > 240)
-        {
-            problems.Add("Update Helix every 5 to 240 minutes.");
-        }
-
-        if (problems.Count > 0)
-        {
-            SavedText.Visibility = Visibility.Collapsed;
-            ErrorText.Text = string.Join(" ", problems);
-            return;
-        }
-
+        int.TryParse(TimeoutBox.Text.Trim(), out var timeout);
+        int.TryParse(SyncIntervalBox.Text.Trim(), out var interval);
         editing.Theme = SelectedTheme();
-        editing.Folders = folders;
+        editing.Folders = Folders();
         editing.Returned.WhenNoCompanyHolder = WhenNotHeldBox.IsChecked == true;
         editing.Returned.WhenClosed = WhenClosedBox.IsChecked == true;
         editing.Returned.WhenOnlyComingUp = WhenComingUpBox.IsChecked == true;
@@ -283,8 +390,14 @@ public partial class SettingsPage : UserControl
             Populate(settingsSource());
         }
 
-        ErrorText.Text = "";
         SavedText.Visibility = Visibility.Visible;
+    }
+
+    private void ShowCentralMessage(string? message)
+    {
+        CentralMessage.Text = message ?? "";
+        CentralMessage.Visibility = message is null ? Visibility.Collapsed : Visibility.Visible;
+        CentralStatus.Visibility = message is null ? Visibility.Visible : Visibility.Collapsed;
     }
 
     private async void SaveCentral_Click(object sender, RoutedEventArgs e)
@@ -297,15 +410,15 @@ public partial class SettingsPage : UserControl
         var server = CentralServerBox.Text.Trim();
         if (!model.IsCentralServerLocked && server.Length > 0 && !MainViewModel.IsValidCentralServer(server))
         {
-            CentralMessage.Text = "Enter the server's full address, starting with https://";
+            ShowCentralMessage("Enter the server's full address, starting with https://");
             return;
         }
 
-        CentralMessage.Text = "Connecting…";
+        ShowCentralMessage("Connecting…");
         var problem = await model.ConnectCentralAsync(server, CentralTokenBox.Password);
         CentralTokenBox.Clear();
         CentralServerBox.Text = model.CentralServerText;
-        CentralMessage.Text = problem ?? "Connected: your data is shared every couple of minutes while CA Tracker is open.";
+        ShowCentralMessage(problem ?? "Connected: your data is shared every couple of minutes while CA Tracker is open.");
     }
 
     private async void ShareCentral_Click(object sender, RoutedEventArgs e)
@@ -315,25 +428,63 @@ public partial class SettingsPage : UserControl
             return;
         }
 
-        CentralMessage.Text = "Sharing…";
-        CentralMessage.Text = await model.ShareWithCentralAsync() ?? "Shared.";
+        ShowCentralMessage("Sharing…");
+        ShowCentralMessage(await model.ShareWithCentralAsync() ?? $"Shared. {model.CentralStatusText}");
     }
 
     private void DisconnectCentral_Click(object sender, RoutedEventArgs e)
     {
-        if (DataContext is MainViewModel model)
+        if (DataContext is not MainViewModel model)
+        {
+            return;
+        }
+
+        var answer = MessageBox.Show(
+            Window.GetWindow(this),
+            $"Stop sharing with {model.CentralServerText}? Your data stays on this PC, and you can connect again later.",
+            "Disconnect",
+            MessageBoxButton.YesNo,
+            MessageBoxImage.Question,
+            MessageBoxResult.No);
+        if (answer == MessageBoxResult.Yes)
         {
             model.DisconnectCentral();
-            CentralMessage.Text = "Disconnected. Everything stays on this PC until you connect again.";
+            ShowCentralMessage("Disconnected. Everything stays on this PC until you connect again.");
         }
     }
 
-    private void Connect_Click(object sender, RoutedEventArgs e)
+    /// <summary>A site's main button: Sign in, or Sign out of that site while signed in.</summary>
+    private async void Connect_Click(object sender, RoutedEventArgs e)
     {
-        if (sender is FrameworkElement { DataContext: ConnectionViewModel connection })
+        if (sender is not FrameworkElement { DataContext: ConnectionViewModel connection })
+        {
+            return;
+        }
+
+        if (!connection.IsSignedIn || DataContext is not MainViewModel model)
         {
             ConnectRequested?.Invoke(connection.Provider);
+            return;
         }
+
+        var helix = !ProviderSites.IsProcore(connection.Provider);
+        var answer = MessageBox.Show(
+            Window.GetWindow(this),
+            $"Sign out of {connection.Label}? Syncing {connection.Label} stops until you sign in again; your saved username and password are kept and fill in when you do." +
+            (helix ? "\n\nThe item panel closes." : ""),
+            $"Sign out of {connection.Label}",
+            MessageBoxButton.YesNo,
+            MessageBoxImage.Question,
+            MessageBoxResult.No);
+        if (answer != MessageBoxResult.Yes)
+        {
+            return;
+        }
+
+        var problem = await model.SignOutOfSiteAsync(connection.Provider);
+        connection.SyncMessage = problem is null
+            ? $"Signed out of {connection.Label}. Your saved username and password are kept."
+            : $"Could not sign out: {problem}";
     }
 
     private void Sync_Click(object sender, RoutedEventArgs e)
@@ -341,6 +492,15 @@ public partial class SettingsPage : UserControl
         if (sender is FrameworkElement { DataContext: ConnectionViewModel connection })
         {
             SyncRequested?.Invoke(connection.Provider);
+        }
+    }
+
+    private void Stop_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is FrameworkElement { DataContext: ConnectionViewModel connection })
+        {
+            connection.StopRequested = true;
+            connection.SyncMessage = "Stopping after the current project…";
         }
     }
 

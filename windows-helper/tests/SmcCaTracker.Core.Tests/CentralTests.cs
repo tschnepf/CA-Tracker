@@ -293,7 +293,8 @@ public class CentralSyncTests
         theirs.Name = "Their name";
         theirs.CaFolder = @"C:\Users\other\CA";
         theirs.Disciplines[Disciplines.Key(ItemTypes.Rfi, "RFI-001 - Doors")] = "Fire";
-        theirs.Scope = new PhaseScope { Phase = ProjectPhase.TenantFitOut, FilterItems = true };
+        // Same phase as here (whole project), so their scope details and folder names are taken too.
+        theirs.Scope = new PhaseScope { Phase = ProjectPhase.Whole, FilterItems = true };
         theirs.FoldersOverride = new FolderLayout { RfiFolder = "01 RFIs", SubmittalFolder = "02 Submittals", ReturnedFolder = "~Returned" };
 
         var applied = CentralSync.Apply(store, new[] { Remote(1, "project", "their-id", theirs, DateTimeOffset.Now) }, "me", new HashSet<string>());
@@ -307,11 +308,75 @@ public class CentralSyncTests
             [Disciplines.Key(ItemTypes.Submittal, "P000210 - Doors")] = "Electrical",
             [Disciplines.Key(ItemTypes.Rfi, "RFI-001 - Doors")] = "Fire"
         }, mine.Disciplines);
-        Assert.Equal(ProjectPhase.TenantFitOut, mine.Scope.Phase);
+        Assert.Equal(ProjectPhase.Whole, mine.Scope.Phase);
+        Assert.True(mine.Scope.FilterItems);
         Assert.Equal("01 RFIs", mine.FoldersOverride?.RfiFolder);
 
         // The same again changes nothing.
         Assert.Equal(0, CentralSync.Apply(store, new[] { Remote(2, "project", "their-id", theirs, DateTimeOffset.Now) }, "me", new HashSet<string>()));
+    }
+
+    [Fact]
+    public void ATwinOfAnotherPhaseSharesChoicesButKeepsItsOwnScopeAndFolders()
+    {
+        // Here: a Base Build and a Tenant Fit-Out entry for the same Helix project.
+        using var store = new TrackerStore(new InMemoryPersistence());
+        var baseBuild = Project("bb");
+        baseBuild.Name = "CMH04 BB";
+        baseBuild.Scope = new PhaseScope { Phase = ProjectPhase.BaseBuild, FilterFolders = true };
+        baseBuild.FoldersOverride = new FolderLayout { RfiFolder = "RFIs", SubmittalFolder = "Submittals", ReturnedFolder = "~Returned (Base Build)" };
+        var fitOut = Project("tfo");
+        fitOut.Name = "CMH04 TFO";
+        fitOut.CaFolder = @"Z:\Shared\CMH04\CA TFO";
+        fitOut.Scope = new PhaseScope { Phase = ProjectPhase.TenantFitOut, FilterFolders = true };
+        fitOut.FoldersOverride = new FolderLayout { RfiFolder = "RFIs", SubmittalFolder = "Submittals", ReturnedFolder = "~Returned (TFO)" };
+        store.SaveSettings(new TrackerSettings { Projects = { baseBuild, fitOut } });
+
+        // Someone else changes their Base Build entry: a new choice, item filtering on, a new returned folder.
+        var theirs = Project("their-bb");
+        theirs.Disciplines[DoorsKey] = "Electrical";
+        theirs.Scope = new PhaseScope { Phase = ProjectPhase.BaseBuild, FilterFolders = true, FilterItems = true };
+        theirs.FoldersOverride = new FolderLayout { RfiFolder = "RFIs", SubmittalFolder = "Submittals", ReturnedFolder = "~Returned BB" };
+
+        var applied = CentralSync.Apply(store, new[] { Remote(1, "project", "their-bb", theirs, DateTimeOffset.Now) }, "me", new HashSet<string>());
+
+        Assert.Equal(2, applied);
+        var mineBb = store.Settings.Projects.Single(project => project.Id == "bb");
+        var mineTfo = store.Settings.Projects.Single(project => project.Id == "tfo");
+        // The choice reaches both twins.
+        Assert.Equal("Electrical", mineBb.Disciplines[DoorsKey]);
+        Assert.Equal("Electrical", mineTfo.Disciplines[DoorsKey]);
+        // The Base Build twin follows their Base Build scope and folders...
+        Assert.Equal(ProjectPhase.BaseBuild, mineBb.Scope.Phase);
+        Assert.True(mineBb.Scope.FilterItems);
+        Assert.Equal("~Returned BB", mineBb.FoldersOverride?.ReturnedFolder);
+        // ...the Tenant Fit-Out twin stays Tenant Fit-Out with its own folders.
+        Assert.Equal(ProjectPhase.TenantFitOut, mineTfo.Scope.Phase);
+        Assert.False(mineTfo.Scope.FilterItems);
+        Assert.Equal("~Returned (TFO)", mineTfo.FoldersOverride?.ReturnedFolder);
+    }
+
+    [Theory]
+    [InlineData(@"Z:\Elsewhere\RFIs", "Submittals", "~Returned")]
+    [InlineData("RFIs", @"\\server\share\Submittals", "~Returned")]
+    [InlineData(@"..\RFIs", "Submittals", "~Returned")]
+    [InlineData("RFIs", "Submittals", @"..\..\Returned")]
+    [InlineData("Same", "Same", "~Returned")]
+    public void FolderNamesFromAnotherPcAreIgnoredUnlessTheyArePlainNames(string rfi, string submittal, string returned)
+    {
+        using var store = StoreWithProject();
+        var theirs = Project("their-id");
+        theirs.Disciplines[LightsKey] = "Electrical";
+        theirs.FoldersOverride = new FolderLayout { RfiFolder = rfi, SubmittalFolder = submittal, ReturnedFolder = returned };
+
+        var applied = CentralSync.Apply(store, new[] { Remote(1, "project", "their-id", theirs, DateTimeOffset.Now) }, "me", new HashSet<string>());
+
+        Assert.Equal(1, applied);
+        var mine = store.Settings.Projects.Single();
+        Assert.Equal("Electrical", mine.Disciplines[LightsKey]);
+        Assert.Null(mine.FoldersOverride);
+        Assert.False(CentralSync.IsSafeOverride(theirs.FoldersOverride));
+        Assert.True(CentralSync.IsSafeOverride(new FolderLayout { RfiFolder = "RFIs", SubmittalFolder = "Submittals", ReturnedFolder = @"\\server\share\Returned" }));
     }
 
     private static readonly string DoorsKey = Disciplines.Key(ItemTypes.Submittal, "P000210 - Doors");

@@ -57,6 +57,7 @@ public static class ProviderScripts
                   mode: result.mode,
                   itemCount: result.itemCount,
                   changedCount: result.changedCount,
+                  warnings: result.warnings,
                   user: result.user
                 });
               } catch (error) {
@@ -236,8 +237,9 @@ public static class ProviderScripts
           const post = (message) => window.chrome.webview.postMessage(message);
           const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
           const signInForm = () => Boolean(document.querySelector('input[type="password"]'));
-          const report = (user, projects) => post({
+          const report = (user, projects, listError) => post({
             type: "signedIn",
+            listError: listError || null,
             user: { fullName: user.fullName, company: user.company },
             catalog: {
               provider: "helix",
@@ -256,24 +258,63 @@ public static class ProviderScripts
                 report(user, (await HelixBridgeCore.listAssignedProjects(window)).projects);
                 return;
               } catch (error) {
-                if (!/not ready|still loading/i.test(String(error && error.message || ""))) { report(user, []); return; }
+                const message = String(error && error.message || error);
+                if (!/not ready|still loading/i.test(message)) { report(user, [], message); return; }
               }
             }
             await sleep(1000);
           }
           if (user) report(user, []);
-          else post({ type: signInForm() ? "signedOut" : "unknown" });
+          else if (signInForm()) post({ type: "signedOut" });
+          else {
+            // Couldn't find the signed-in user: report where Helix keeps things, as names and types only
+            // (no values), so the log shows what changed.
+            const shape = (value, depth) => {
+              if (value === null || value === undefined) return String(value);
+              if (typeof value !== "object") return typeof value;
+              if (depth <= 0) return Array.isArray(value) ? "array" : "object";
+              const out = {};
+              for (const key of Object.keys(value).slice(0, 40)) {
+                try { out[key] = shape(value[key], depth - 1); } catch (error) { out[key] = "?"; }
+              }
+              return out;
+            };
+            let globals = [];
+            try { globals = Object.keys(window).filter((key) => /user|login|contact|directory|identity|session|account/i.test(key)).slice(0, 40); } catch (error) { }
+            post({
+              type: "unknown",
+              shape: { path: location.pathname, UserInfo: shape(window.UserInfo, 2), loginObject: shape(window.loginObject, 2), globals }
+            });
+          }
         })();
         """;
 
-    /// <summary>Run after each Procore page loads in the Connect to Procore window.</summary>
+    /// <summary>
+    /// Run after each Procore page loads in the Connect to Procore window. For up to 20 s (like the Helix
+    /// check): "signedIn" with your name once Procore says who is signed in (the same read its own pages
+    /// make), "signedOut" when it says nobody is or a sign-in form shows (email or password box, a
+    /// "Log in"/"Sign in" button), "unknown" if it still can't tell.
+    /// </summary>
     public static string ProcoreSignInCheck => """
         (async () => {
           const post = (message) => window.chrome.webview.postMessage(message);
-          await new Promise((resolve) => setTimeout(resolve, 1500));
-          post({ type: document.querySelector('input[type="password"]') ? "signedOut" : "signedIn" });
+          const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+          if (typeof CaTrackerProcoreCore === "undefined") { post({ type: "unknown", shape: { path: location.pathname, library: "missing" } }); return; }
+          const deadline = Date.now() + 20000;
+          while (Date.now() < deadline) {
+            const result = await CaTrackerProcoreCore.signInState(window, window.fetch.bind(window));
+            if (result.state !== "pending") {
+              post(Object.assign({ type: result.state }, result.user ? { user: result.user } : {}));
+              return;
+            }
+            await sleep(1000);
+          }
+          post({ type: "unknown", shape: { path: location.pathname, title: document.title.slice(0, 80) } });
         })();
         """;
+
+    /// <summary>The Procore page library needed by <see cref="ProcoreSignInCheck"/>.</summary>
+    public static string ProcoreCore => Load("procore-core.js");
 
     /// <summary>
     /// Lists a Helix item's Details report and current attachments (names, upload dates and

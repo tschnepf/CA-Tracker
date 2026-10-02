@@ -54,7 +54,8 @@ public sealed class ProviderSyncResult
 /// </summary>
 public sealed class HelixSyncService : IDisposable
 {
-    private const string SignInMessage = "Sign in to Helix: Settings → Connections → Connect to Helix.";
+    private const string SignInMessage = "Helix needs you to sign in: Settings → Connections → Sign in to Helix.";
+    private const string PageStopped = "The hidden Helix page stopped working.";
 
     private readonly AppPaths paths;
     private readonly TrackerStore store;
@@ -67,6 +68,9 @@ public sealed class HelixSyncService : IDisposable
     private bool catalogRead;
     private bool cancelRequested;
     private bool pageDead;
+
+    // Cancelled by Cancel(), so every wait of the run in progress ends at once. A new one per run.
+    private CancellationTokenSource stopping = new();
 
     // Projects whose last read on this page was saved. The page remembers what it read; if a read was
     // thrown away (stopped, timed out, not saved), the next read of that project must be a full one.
@@ -87,26 +91,33 @@ public sealed class HelixSyncService : IDisposable
     /// <summary>
     /// Reads each project in turn and saves its items. <paramref name="starting"/> is told which project
     /// is next; <paramref name="stop"/> is checked between projects. <paramref name="full"/> reads every
-    /// item even when only changes are due.
+    /// item even when only changes are due. <paramref name="run"/> names this run, so <see cref="Cancel(object)"/>
+    /// can stop it and nothing else.
     /// </summary>
     public async Task<ProviderSyncResult> SyncAsync(
         IReadOnlyList<ProviderSyncTarget> targets,
         Action<int, ProviderSyncTarget>? starting = null,
         Func<bool>? stop = null,
-        bool full = false)
+        bool full = false,
+        object? run = null)
     {
         if (targets.Count == 0 || disposed)
         {
             return new ProviderSyncResult();
         }
 
-        if (DateTimeOffset.Now < pausedUntil)
+        // Signing out deletes the browser's files: wait until that is over rather than failing the read.
+        var pause = pausedUntil - DateTimeOffset.Now;
+        if (pause > TimeSpan.Zero)
         {
-            return Problem("Helix reads are paused for a moment while the browser signs out.");
+            AppLog.Info("helix", $"Waiting {pause.TotalSeconds:0} s for the browser to finish signing out.");
+            await Task.Delay(pause);
         }
 
         await gate.WaitAsync();
         cancelRequested = false;
+        stopping = new CancellationTokenSource();
+        activeRun = run;
         try
         {
             return await SyncCoreAsync(targets, starting, stop, full);
@@ -124,6 +135,7 @@ public sealed class HelixSyncService : IDisposable
         }
         finally
         {
+            activeRun = null;
             gate.Release();
         }
     }
@@ -144,6 +156,7 @@ public sealed class HelixSyncService : IDisposable
         }
 
         await gate.WaitAsync();
+        stopping = new CancellationTokenSource();
         try
         {
             var answer = await RequestAsync(id => ProviderScripts.HelixExportSample(id, target.ProjectId), TimeSpan.FromSeconds(60));
@@ -160,9 +173,28 @@ public sealed class HelixSyncService : IDisposable
         {
             return (null, "Stopped.");
         }
+        catch (PageCrashedException error)
+        {
+            CloseBrowser();
+            return (null, error.Message);
+        }
         finally
         {
             gate.Release();
+        }
+    }
+
+    private object? activeRun;
+
+    /// <summary>
+    /// Stops one run (the header's Cancel) if it is the one reading now: its current project's read is
+    /// abandoned. A run still waiting its turn stops through its own stop check; other runs carry on.
+    /// </summary>
+    public void Cancel(object run)
+    {
+        if (ReferenceEquals(activeRun, run))
+        {
+            Cancel();
         }
     }
 
@@ -170,6 +202,7 @@ public sealed class HelixSyncService : IDisposable
     public void Cancel()
     {
         cancelRequested = true;
+        stopping.Cancel();
         ResolvePending(canceled: true);
         navigated?.TrySetCanceled();
     }
@@ -284,7 +317,7 @@ public sealed class HelixSyncService : IDisposable
         {
             var waiting = navigated = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
             core!.Navigate(ProviderSites.HomeUrl(Providers.Helix));
-            var opened = await Task.WhenAny(waiting.Task, Task.Delay(TimeSpan.FromSeconds(60)));
+            var opened = await Task.WhenAny(waiting.Task, Task.Delay(TimeSpan.FromSeconds(60), stopping.Token));
             ThrowIfStopped(started);
             if (opened != waiting.Task)
             {
@@ -298,6 +331,10 @@ public sealed class HelixSyncService : IDisposable
         }
 
         var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(60);
+        // Signed out in CA Tracker (or the sign-in expired): Helix's home page shows its sign-in without
+        // ever loading a user, so a page with no user after a few seconds is that, not a slow load.
+        var expectSignedOut = store.Account(Providers.Helix) is null or { NeedsSignIn: true };
+        var signedOutDeadline = DateTime.UtcNow + TimeSpan.FromSeconds(10);
         string? lastSeen = null;
         while (true)
         {
@@ -306,7 +343,7 @@ public sealed class HelixSyncService : IDisposable
             {
                 // Say what the page was showing, so a stuck page can be told from a sign-in problem.
                 AppLog.Warn("helix", $"The background Helix page never became ready. Last seen: {lastSeen ?? "no answer"} (at {core?.Source}).");
-                return Problem("Helix is taking too long to load. Try again in a minute.");
+                return Problem("Helix is taking too long to load. Try again in a minute; if it keeps happening, sign in again in Settings → Connections.");
             }
 
             if (!OnHelix())
@@ -319,7 +356,7 @@ public sealed class HelixSyncService : IDisposable
             var type = TypeOf(answer);
             if (type == "page-crashed")
             {
-                throw new PageCrashedException();
+                throw new PageCrashedException(PageStopped);
             }
 
             if (type is "sync-missing" or "page-changed")
@@ -351,7 +388,16 @@ public sealed class HelixSyncService : IDisposable
                 return null;
             }
 
-            await Task.Delay(1000);
+            var reason = answer is { } reasoned && reasoned.TryGetProperty("reason", out var reasonElement) && reasonElement.ValueKind == JsonValueKind.String
+                ? reasonElement.GetString()
+                : null;
+            if (expectSignedOut && reason is "no-user-details" or "no-user-info" && DateTime.UtcNow > signedOutDeadline)
+            {
+                AppLog.Info("helix", $"No Helix user after 10 s and no saved sign-in: treating the page as signed out. Last seen: {lastSeen}.");
+                return Problem(SignInMessage, needsSignIn: true);
+            }
+
+            await Task.Delay(1000, stopping.Token);
         }
     }
 
@@ -360,7 +406,7 @@ public sealed class HelixSyncService : IDisposable
         try
         {
             Directory.CreateDirectory(paths.BrowserDataDirectory);
-            var environment = await CoreWebView2Environment.CreateAsync(null, paths.BrowserDataDirectory);
+            var environment = await PageWaits.WithTimeout(CoreWebView2Environment.CreateAsync(null, paths.BrowserDataDirectory), PageWaits.Start, "creating the browser");
             host = new Window
             {
                 Width = 1,
@@ -371,7 +417,7 @@ public sealed class HelixSyncService : IDisposable
                 Title = "CA Tracker background sync"
             };
             var handle = new WindowInteropHelper(host).EnsureHandle();
-            controller = await environment.CreateCoreWebView2ControllerAsync(handle);
+            controller = await PageWaits.WithTimeout(environment.CreateCoreWebView2ControllerAsync(handle), PageWaits.Start, "opening the page");
             controller.IsVisible = false;
             core = controller.CoreWebView2;
             core.Settings.AreDevToolsEnabled = false;
@@ -421,8 +467,11 @@ public sealed class HelixSyncService : IDisposable
 
     private void OnProcessFailed(object? sender, CoreWebView2ProcessFailedEventArgs e)
     {
-        // Only a browser or page process that exited leaves the page unusable; others recover by themselves.
-        if (e.ProcessFailedKind is not (CoreWebView2ProcessFailedKind.BrowserProcessExited or CoreWebView2ProcessFailedKind.RenderProcessExited))
+        // A browser or page process that exited, or a page that stopped responding, leaves the page
+        // unusable; others (e.g. a GPU or utility process) recover by themselves.
+        if (e.ProcessFailedKind is not (CoreWebView2ProcessFailedKind.BrowserProcessExited
+            or CoreWebView2ProcessFailedKind.RenderProcessExited
+            or CoreWebView2ProcessFailedKind.RenderProcessUnresponsive))
         {
             AppLog.Info("helix", $"The hidden Helix page reported {e.ProcessFailedKind}.");
             return;
@@ -440,7 +489,7 @@ public sealed class HelixSyncService : IDisposable
         var waiting = navigated;
         if (waiting is not null && !waiting.Task.IsCompleted)
         {
-            await Task.WhenAny(waiting.Task, Task.Delay(TimeSpan.FromSeconds(60)));
+            await Task.WhenAny(waiting.Task, Task.Delay(TimeSpan.FromSeconds(60), stopping.Token));
         }
     }
 
@@ -459,7 +508,25 @@ public sealed class HelixSyncService : IDisposable
                 return;
             }
 
-            await core.ExecuteScriptAsync(library);
+            await RunScriptAsync(library);
+        }
+    }
+
+    /// <summary>
+    /// Runs a script in the page. A page that doesn't take it within <see cref="PageWaits.Script"/> has
+    /// stopped responding: it is marked dead and the read ends, rather than waiting on it.
+    /// </summary>
+    private async Task RunScriptAsync(string script)
+    {
+        try
+        {
+            await PageWaits.WithTimeout(core!.ExecuteScriptAsync(script), PageWaits.Script, "running a script", stopping.Token);
+        }
+        catch (TimeoutException)
+        {
+            AppLog.Warn("helix", "The hidden Helix page stopped responding.");
+            pageDead = true;
+            throw new PageCrashedException("The hidden Helix page stopped responding.");
         }
     }
 
@@ -498,6 +565,10 @@ public sealed class HelixSyncService : IDisposable
 
     // ---- One project --------------------------------------------------------------------------
 
+    /// <summary>Helix errors that mean "not signed in all the way yet" rather than "no".</summary>
+    private static readonly System.Text.RegularExpressions.Regex StillSigningIn =
+        new(@"not ready|still loading|getIdToken", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+
     /// <summary>Reads one project and saves its items. Returns how many changed, or null if it failed.</summary>
     private async Task<int?> SyncOneAsync(ProviderSyncTarget target, bool full, int started)
     {
@@ -505,7 +576,7 @@ public sealed class HelixSyncService : IDisposable
         var fullAfterMs = store.Settings.Sync.FullReadHours * 3_600_000.0;
         try
         {
-            for (var attempt = 0; attempt < 3; attempt++)
+            for (var attempt = 0; attempt < 6; attempt++)
             {
                 JsonElement? answer;
                 using (AppLog.Time("helix.sync", target.DisplayName, 20_000))
@@ -521,7 +592,7 @@ public sealed class HelixSyncService : IDisposable
                 var type = TypeOf(answer);
                 if (type == "page-crashed")
                 {
-                    throw new PageCrashedException();
+                    throw new PageCrashedException(PageStopped);
                 }
 
                 if (type is "sync-missing" or "page-changed")
@@ -544,9 +615,11 @@ public sealed class HelixSyncService : IDisposable
                 if (type == "sync-error")
                 {
                     run.Error = answer!.Value.TryGetProperty("message", out var message) ? message.GetString() : "Helix returned an error.";
-                    if (attempt == 0 && run.Error is not null && run.Error.Contains("not ready", StringComparison.OrdinalIgnoreCase))
+                    if (attempt < 5 && run.Error is not null && StillSigningIn.IsMatch(run.Error))
                     {
-                        await Task.Delay(2000);
+                        // A page that has just opened shows you before Helix has its sign-in token (its own
+                        // reads fail on "getIdToken" for a second or so): wait and try again.
+                        await Task.Delay(2000, stopping.Token);
                         continue;
                     }
 
@@ -582,6 +655,14 @@ public sealed class HelixSyncService : IDisposable
                 confirmed.Add(target.ProjectId);
                 run.Status = "complete";
                 AppLog.Info("helix", $"{target.DisplayName}: {run.Mode} read, {run.ItemCount} items, {run.ChangedCount} changed.");
+                if (answer.Value.TryGetProperty("warnings", out var warnings) && warnings.ValueKind == JsonValueKind.Array)
+                {
+                    // Reads that failed without failing the sync (tried again next time).
+                    foreach (var warning in warnings.EnumerateArray().Where(warning => warning.ValueKind == JsonValueKind.String))
+                    {
+                        AppLog.Warn("helix", $"{target.DisplayName}: {warning.GetString()}");
+                    }
+                }
                 return run.ChangedCount;
             }
         }
@@ -590,14 +671,21 @@ public sealed class HelixSyncService : IDisposable
         {
             run.Error = error.Message;
         }
+        catch (PageCrashedException error)
+        {
+            // Ends the run (the page is closed and opened afresh next time); this project failed.
+            run.Error = error.Message;
+            throw;
+        }
         finally
         {
             run.FinishedAt = DateTimeOffset.Now;
             if (run.Status != "complete")
             {
                 confirmed.Remove(target.ProjectId);
-                run.Status = "failed";
-                run.Error ??= "The read did not finish.";
+                // Stopped on purpose (Cancel) isn't a failure: the project isn't marked "last sync failed".
+                run.Status = cancelRequested && run.Error is null ? "stopped" : "failed";
+                run.Error ??= cancelRequested ? "Stopped." : "The read did not finish.";
                 AppLog.Warn("helix", $"{target.DisplayName}: {run.Error}");
             }
 
@@ -653,8 +741,9 @@ public sealed class HelixSyncService : IDisposable
         pending[id] = completion;
         try
         {
-            await core.ExecuteScriptAsync(script(id));
-            var finished = await Task.WhenAny(completion.Task, Task.Delay(timeout));
+            await RunScriptAsync(script(id));
+            var finished = await Task.WhenAny(completion.Task, Task.Delay(timeout, stopping.Token));
+            stopping.Token.ThrowIfCancellationRequested();
             return finished == completion.Task ? await completion.Task : null;
         }
         finally
@@ -729,14 +818,5 @@ public sealed class HelixSyncService : IDisposable
 
         disposed = true;
         CloseBrowser();
-    }
-
-    /// <summary>The hidden page's browser process stopped; the sync starts it afresh.</summary>
-    private sealed class PageCrashedException : Exception
-    {
-        public PageCrashedException()
-            : base("The hidden Helix page stopped working.")
-        {
-        }
     }
 }

@@ -56,9 +56,10 @@
   }
 
   // Reads a whole list. When Procore says how many rows there are (its "Total" header), the remaining
-  // pages are asked for several at a time; otherwise page by page. Some Procore lists ignore paging and
-  // send everything on every page, so a page that brings nothing new ends the read, and rows are kept
-  // once each.
+  // pages are asked for several at a time, counted by how many rows it actually sends per page (it may
+  // send fewer than asked for); otherwise page by page until a short page. Some Procore lists ignore
+  // paging and send everything on every page, so a page that brings nothing new ends the read, and rows
+  // are kept once each.
   async function list(fetchImpl, path, companyId) {
     const rows = [];
     const seen = new Set();
@@ -78,10 +79,11 @@
 
     const first = await getPage(fetchImpl, withPage(path, 1), companyId);
     const firstAdded = keep(first.body);
-    if (first.body.length < PAGE_SIZE || firstAdded === 0) return rows;
+    if (first.body.length === 0 || firstAdded === 0) return rows;
 
-    if (first.total !== null && first.total > first.body.length) {
-      const pages = Math.min(MAX_PAGES, Math.ceil(first.total / PAGE_SIZE));
+    if (first.total !== null) {
+      if (first.total <= first.body.length) return rows;
+      const pages = Math.min(MAX_PAGES, Math.ceil(first.total / first.body.length));
       for (let start = 2; start <= pages; start += PARALLEL_PAGES) {
         const numbers = [];
         for (let page = start; page < start + PARALLEL_PAGES && page <= pages; page += 1) numbers.push(page);
@@ -93,6 +95,7 @@
       return rows;
     }
 
+    if (first.body.length < PAGE_SIZE) return rows;
     for (let page = 2; page <= MAX_PAGES; page += 1) {
       const batch = await getJson(fetchImpl, withPage(path, page), companyId);
       const added = keep(batch);

@@ -259,19 +259,37 @@
   }
 
   // Who is signed in, read from any Helix page (not only a project page). Null until Helix has
-  // loaded the user.
+  // loaded the user. Your entry in a project's directory (UserInfo.directoryInfo) is used when the
+  // page has one; Helix's home page leaves it empty (since Helix 5.1.90), and then the signed-in
+  // contact (loginObject.contact) says who you are.
   function currentUser(windowObject) {
     const directoryInfo = windowObject && windowObject.UserInfo && windowObject.UserInfo.directoryInfo;
     const userId = getIdentityId(directoryInfo);
     const fullName = getIdentityName(directoryInfo);
-    if (!directoryInfo || !userId || !fullName) return null;
-    const contactId = directoryInfo.refContact && directoryInfo.refContact._id;
-    const companyId = getIdentityCompanyId(directoryInfo);
-    const company = getIdentityCompanyName(directoryInfo);
+    if (directoryInfo && userId && fullName) {
+      const contactId = directoryInfo.refContact && directoryInfo.refContact._id;
+      const companyId = getIdentityCompanyId(directoryInfo);
+      const company = getIdentityCompanyName(directoryInfo);
+      return {
+        id: String(userId),
+        contactId: contactId ? String(contactId) : null,
+        fullName: String(fullName),
+        companyId: companyId ? String(companyId) : null,
+        company: company ? String(company) : null
+      };
+    }
+
+    const contact = windowObject && windowObject.loginObject && windowObject.loginObject.contact;
+    const contactId = contact && contact._id;
+    const contactName = getIdentityName(contact)
+      || (contact && [contact.nameFirst, contact.nameLast].filter(Boolean).join(" "));
+    if (!contactId || !contactName) return null;
+    const companyId = getIdentityCompanyId(contact);
+    const company = getIdentityCompanyName(contact);
     return {
-      id: String(userId),
-      contactId: contactId ? String(contactId) : null,
-      fullName: String(fullName),
+      id: String(contactId),
+      contactId: String(contactId),
+      fullName: String(contactName),
       companyId: companyId ? String(companyId) : null,
       company: company ? String(company) : null
     };

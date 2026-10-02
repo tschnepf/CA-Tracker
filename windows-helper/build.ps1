@@ -54,7 +54,9 @@ try {
         if ($LASTEXITCODE -ne 0) { throw 'Building the installer failed.' }
 
         $installerName = "SMC-CA-Tracker-Setup-$version.exe"
-        $latest = [ordered]@{ version = $version; installer = $installerName; notes = "SMC CA Tracker $version" }
+        # The app refuses to run an installer whose SHA-256 differs from the one published here.
+        $sha256 = (Get-FileHash -Algorithm SHA256 (Join-Path $PSScriptRoot "installer\output\$installerName")).Hash.ToLowerInvariant()
+        $latest = [ordered]@{ version = $version; installer = $installerName; sha256 = $sha256; notes = "SMC CA Tracker $version" }
         $latest | ConvertTo-Json | Set-Content -Encoding UTF8 (Join-Path $PSScriptRoot 'installer\output\latest.json')
         Write-Host "Installer: installer\output\$installerName (copy it and latest.json to the company's update location)"
     }

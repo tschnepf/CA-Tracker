@@ -20,10 +20,12 @@
             <RadioButton GroupName="Discipline" Content="Detect from the folder name" Tag="" Margin="0,0,0,8" />
         </StackPanel>
         <TextBlock Style="{StaticResource Muted}" FontSize="12" Margin="0,4,0,16"
-                   Text="This is saved in the tracker only. Folder names are not changed." />
+                   Text="Saved in CA Tracker (and shared with your team when the company server is on). Folder names don't change." />
         <DockPanel LastChildFill="False">
-            <Button DockPanel.Dock="Right" Content="Save" Style="{StaticResource AccentButton}" IsDefault="True" Click="Save_Click" />
-            <Button DockPanel.Dock="Right" Content="Cancel" IsCancel="True" Margin="0,0,8,0" />
+            <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
+                <Button Content="Cancel" IsCancel="True" Margin="0,0,8,0" />
+                <Button Content="_Save" Style="{StaticResource AccentButton}" IsDefault="True" Click="Save_Click" />
+            </StackPanel>
         </DockPanel>
     </StackPanel>
 </Window>

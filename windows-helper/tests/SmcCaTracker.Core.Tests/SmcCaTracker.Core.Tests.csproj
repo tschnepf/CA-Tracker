@@ -16,4 +16,9 @@
     <ProjectReference Include="..\..\src\SmcCaTracker.Core\SmcCaTracker.Core.csproj" />
     <ProjectReference Include="..\..\src\SmcCaTracker.Data\SmcCaTracker.Data.csproj" />
   </ItemGroup>
+  <ItemGroup>
+    <!-- App code without WPF, tested here. -->
+    <Compile Include="..\..\src\SmcCaTracker.App\Services\ProviderSites.cs" Link="App\ProviderSites.cs" />
+    <Compile Include="..\..\src\SmcCaTracker.App\Services\PageWaits.cs" Link="App\PageWaits.cs" />
+  </ItemGroup>
 </Project>

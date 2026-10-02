@@ -27,7 +27,7 @@ public partial class ProjectWindow : Window
         this.viewModel = viewModel;
 
         Title = isNew ? "New project" : $"Edit project — {project.Name}";
-        SaveButton.Content = isNew ? "Create project" : "Save";
+        SaveButton.Content = isNew ? "_Create project" : "_Save";
         RemoveButton.Visibility = isNew ? Visibility.Collapsed : Visibility.Visible;
         NameBox.Text = project.Name;
         FolderBox.Text = project.CaFolder;
@@ -58,7 +58,7 @@ public partial class ProjectWindow : Window
 
     private void ShowConnection()
     {
-        ConnectionText.Text = project.Connection?.Label ?? "Not connected to Helix or Procore.";
+        ConnectionText.Text = project.Connection?.Label ?? "Not linked to a Helix or Procore project.";
         DisconnectButton.Visibility = project.Connection is null ? Visibility.Collapsed : Visibility.Visible;
     }
 
@@ -73,31 +73,43 @@ public partial class ProjectWindow : Window
                 ? $"My company from the {provider} login"
                 : $"My company from the {provider} login ({loginCompany})")
         };
-        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        foreach (var holder in snapshot?.Items.SelectMany(item => item.Holders) ?? Enumerable.Empty<SnapshotHolder>())
+        // Helix sometimes gives a company's id without its name: name it by the people in it instead.
+        var companies = (snapshot?.Items.SelectMany(item => item.Holders) ?? Enumerable.Empty<SnapshotHolder>())
+            .Where(holder => !string.IsNullOrWhiteSpace(holder.CompanyId ?? holder.Company))
+            .GroupBy(holder => holder.CompanyId ?? holder.Company!, StringComparer.OrdinalIgnoreCase);
+        foreach (var company in companies)
         {
-            var key = holder.CompanyId ?? holder.Company;
-            if (string.IsNullOrWhiteSpace(key) || !seen.Add(key))
-            {
-                continue;
-            }
-
-            options.Add(new CompanyOption(holder.CompanyId, holder.Company, holder.Company ?? holder.CompanyId!));
+            var name = company.Select(holder => holder.Company).FirstOrDefault(value => !string.IsNullOrWhiteSpace(value));
+            var people = company.Select(holder => holder.Name.Trim()).Where(person => person.Length > 0)
+                .Distinct(StringComparer.OrdinalIgnoreCase).OrderBy(person => person, StringComparer.CurrentCultureIgnoreCase).ToList();
+            options.Add(new CompanyOption(company.First().CompanyId, name, name ?? UnnamedLabel(people)));
         }
 
-        if ((project.CompanyId is not null || project.CompanyName is not null)
-            && !options.Any(option => option.Id == project.CompanyId && option.Name == project.CompanyName))
+        if ((project.CompanyId is not null || project.CompanyName is not null) && !options.Any(IsSaved))
         {
-            options.Add(new CompanyOption(project.CompanyId, project.CompanyName, project.CompanyName ?? project.CompanyId!));
+            options.Add(new CompanyOption(project.CompanyId, project.CompanyName,
+                project.CompanyName ?? "Unnamed company (not seen in the latest sync)"));
         }
 
         var ordered = options.Take(1)
-            .Concat(options.Skip(1).OrderBy(option => option.Label, StringComparer.CurrentCultureIgnoreCase))
+            .Concat(options.Skip(1).OrderBy(option => option.Name is null).ThenBy(option => option.Label, StringComparer.CurrentCultureIgnoreCase))
             .ToList();
         CompanyList.ItemsSource = ordered;
-        CompanyList.SelectedItem = ordered.FirstOrDefault(option =>
-            option.Id == project.CompanyId && option.Name == project.CompanyName) ?? ordered[0];
+        CompanyList.SelectedItem = ordered.Skip(1).FirstOrDefault(IsSaved) ?? ordered[0];
+        CompanyNote.Visibility = ordered.Count > 1 ? Visibility.Collapsed : Visibility.Visible;
     }
+
+    /// <summary>The company saved for this project (by id when there is one: its name may have been unknown then).</summary>
+    private bool IsSaved(CompanyOption option) => option.Id is not null
+        ? string.Equals(option.Id, project.CompanyId, StringComparison.OrdinalIgnoreCase)
+        : project.CompanyId is null && string.Equals(option.Name, project.CompanyName, StringComparison.OrdinalIgnoreCase);
+
+    private static string UnnamedLabel(IReadOnlyList<string> people) => people.Count switch
+    {
+        0 => "Unnamed company",
+        <= 3 => $"Unnamed company: {string.Join(", ", people)}",
+        _ => $"Unnamed company: {string.Join(", ", people.Take(3))} and {people.Count - 3} more"
+    };
 
     private void BrowseFolder_Click(object sender, RoutedEventArgs e)
     {
@@ -278,7 +290,7 @@ public partial class ProjectWindow : Window
                 && string.Equals(other.Connection.Provider, project.Connection.Provider, StringComparison.OrdinalIgnoreCase)
                 && string.Equals(other.Connection.ProjectId, project.Connection.ProjectId, StringComparison.Ordinal)))
         {
-            problems.Add($"Another project is already connected to {project.Connection.Label}. If they are the Base Build and Tenant Fit Out parts of one job, set each project's part below.");
+            problems.Add($"Another project is already linked to {project.Connection.Label}. If they are the Base Build and Tenant Fit Out parts of one job, set each project's part below.");
         }
 
         FolderLayout? folders = null;
