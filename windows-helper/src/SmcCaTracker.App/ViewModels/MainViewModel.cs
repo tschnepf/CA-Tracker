@@ -145,7 +145,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         badgeTimer.Tick += async (_, _) =>
         {
             badgeTimer.Stop();
-            await UpdateBadgesAsync();
+            await RunTimerAsync("badge", UpdateBadgesAsync);
         };
 
         // Changes to the data (a sync finished, folders changed, settings saved) are gathered for a
@@ -154,7 +154,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         storeDebounce.Tick += async (_, _) =>
         {
             storeDebounce.Stop();
-            await OnStoreChangedAsync();
+            await RunTimerAsync("data change", OnStoreChangedAsync);
         };
         store.Changed += OnStoreChanged;
         store.SaveFailed += OnSaveFailed;
@@ -178,23 +178,39 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         };
 
         ticker = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
-        ticker.Tick += async (_, _) => await OnTickAsync();
+        ticker.Tick += async (_, _) => await RunTimerAsync("clock", OnTickAsync);
         ticker.Start();
 
         // CA folders: their dates are checked every 20 seconds and a folder is listed again only if
         // something in it changed.
         folderTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(20) };
-        folderTimer.Tick += async (_, _) => await CheckFoldersAsync();
+        folderTimer.Tick += async (_, _) => await RunTimerAsync("folder check", CheckFoldersAsync);
         folderTimer.Start();
 
         // Helix: tracked projects are read in the background every few minutes (changes only).
         autoSyncTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(30) };
-        autoSyncTimer.Tick += async (_, _) => await AutoSyncAsync();
+        autoSyncTimer.Tick += async (_, _) => await RunTimerAsync("automatic sync", AutoSyncAsync);
         autoSyncTimer.Start();
         lastAutoSync = DateTimeOffset.Now - TimeSpan.FromMinutes(Settings.Sync.IntervalMinutes) + TimeSpan.FromSeconds(20);
 
         LoadProjects();
         RefreshAccounts();
+    }
+
+    /// <summary>
+    /// Runs a timer's work. An error escaping a timer's handler would close the app, so it is logged
+    /// instead and the timer carries on next time.
+    /// </summary>
+    private static async Task RunTimerAsync(string name, Func<Task> work)
+    {
+        try
+        {
+            await work();
+        }
+        catch (Exception error)
+        {
+            AppLog.Error("timer", $"The {name} timer failed", error);
+        }
     }
 
     /// <summary>The app's data (settings, items, folder index, sign-ins), for the windows that need it.</summary>
@@ -2794,7 +2810,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
             timer.Interval = TimeSpan.FromMinutes(2);
             if (service.IsConfigured)
             {
-                await ShareWithCentralAsync();
+                await RunTimerAsync("sharing", ShareWithCentralAsync);
             }
         };
         timer.Start();
@@ -2919,7 +2935,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         updateTimer.Tick += async (_, _) =>
         {
             updateTimer.Interval = TimeSpan.FromHours(6);
-            await CheckForUpdateAsync();
+            await RunTimerAsync("update check", CheckForUpdateAsync);
         };
         updateTimer.Start();
     }

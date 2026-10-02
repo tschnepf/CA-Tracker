@@ -57,7 +57,18 @@ public partial class ItemPanel : UserControl
     {
         InitializeComponent();
         BrowserHost.Child = Browser;
-        watchTimer.Tick += async (_, _) => await CheckCourtAsync();
+        watchTimer.Tick += async (_, _) =>
+        {
+            // An error escaping a timer's handler would close the app: log it, check again next tick.
+            try
+            {
+                await CheckCourtAsync();
+            }
+            catch (Exception error)
+            {
+                AppLog.Error("panel", "Checking the open item failed", error);
+            }
+        };
     }
 
     /// <summary>Raised when the Close button has finished (the main window then hides the panel).</summary>
