@@ -117,6 +117,20 @@ public sealed class ProcoreSyncService : IDisposable
     /// <summary>The page way didn't work for this sign-in (Procore refused it); the window way is used instead.</summary>
     public bool PageReadingUnavailable { get; private set; }
 
+    private object? activeRun;
+
+    /// <summary>
+    /// Stops one run (the header's Cancel) if it is the one reading now. A run still waiting its turn
+    /// stops through its own stop check; other runs carry on.
+    /// </summary>
+    public void Cancel(object run)
+    {
+        if (ReferenceEquals(activeRun, run))
+        {
+            Cancel();
+        }
+    }
+
     public void Cancel()
     {
         cancelRequested = true;
@@ -348,7 +362,8 @@ public sealed class ProcoreSyncService : IDisposable
     public async Task<ProviderSyncResult> SyncAsync(
         IReadOnlyList<ProviderSyncTarget> targets,
         Action<int, ProviderSyncTarget>? starting = null,
-        Func<bool>? stop = null)
+        Func<bool>? stop = null,
+        object? run = null)
     {
         if (targets.Count == 0 || disposed)
         {
@@ -357,6 +372,7 @@ public sealed class ProcoreSyncService : IDisposable
 
         await gate.WaitAsync();
         cancelRequested = false;
+        activeRun = run;
         try
         {
             return await SyncThroughPageAsync(targets, starting, stop);
@@ -373,6 +389,7 @@ public sealed class ProcoreSyncService : IDisposable
         }
         finally
         {
+            activeRun = null;
             gate.Release();
         }
     }
@@ -529,8 +546,9 @@ public sealed class ProcoreSyncService : IDisposable
                 run.FinishedAt = DateTimeOffset.Now;
                 if (run.Status != "complete")
                 {
-                    run.Status = "failed";
-                    run.Error ??= "The read did not finish.";
+                    // Stopped on purpose (Cancel) isn't a failure: the project isn't marked "last sync failed".
+                    run.Status = cancelRequested && run.Error is null ? "stopped" : "failed";
+                    run.Error ??= cancelRequested ? "Stopped." : "The read did not finish.";
                     AppLog.Warn("procore", $"{target.DisplayName}: {run.Error}");
                 }
 

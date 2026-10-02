@@ -1177,6 +1177,8 @@ public sealed class MainViewModel : ObservableObject, IDisposable
             project.IsQueued = true;
         }
 
+        OnHeaderChanged();
+
         void Finish(ProjectViewModel project)
         {
             project.EndSync();
@@ -1227,6 +1229,8 @@ public sealed class MainViewModel : ObservableObject, IDisposable
                     }
 
                     starting?.Invoke(index, groups[index][0]);
+                    // The header shows the selected project syncing (and the one before it done).
+                    OnHeaderChanged();
                 });
             return result;
         }
@@ -1361,14 +1365,26 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         IReadOnlyList<ProjectViewModel> projects,
         Action<int, ProjectViewModel>? starting,
         Func<bool>? stop,
-        bool full = false) =>
-        SyncInBackgroundAsync(projects, HelixTarget, (targets, next) => helixSync.SyncAsync(targets, next, stop, full), starting);
+        bool full = false,
+        HeaderRun? run = null) =>
+        SyncInBackgroundAsync(projects, HelixTarget, (targets, next) => helixSync.SyncAsync(targets, next, stop, full, run), starting);
 
     private Task<ProviderSyncResult> SyncProcoreAsync(
         IReadOnlyList<ProjectViewModel> projects,
         Action<int, ProjectViewModel>? starting,
-        Func<bool>? stop) =>
-        SyncInBackgroundAsync(projects, ProcoreTarget, (targets, next) => procoreSync.SyncAsync(targets, next, stop), starting);
+        Func<bool>? stop,
+        HeaderRun? run = null) =>
+        SyncInBackgroundAsync(projects, ProcoreTarget, (targets, next) => procoreSync.SyncAsync(targets, next, stop, run), starting);
+
+    /// <summary>A sync started with the header's Sync button: its Cancel stops this run and no other.</summary>
+    private sealed class HeaderRun
+    {
+        public bool Stopped;
+    }
+
+    // Header syncs running now, by project (a multi-project sync uses manyRun).
+    private readonly Dictionary<ProjectViewModel, HeaderRun> headerRuns = new();
+    private HeaderRun? manyRun;
 
     /// <summary>
     /// Refreshes projects: Helix ones in the background, all on one hidden page; Procore ones one after
@@ -1377,14 +1393,15 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     private async Task<SequenceResult> RefreshSequentiallyAsync(
         IReadOnlyList<ProjectViewModel> targets,
         Action<int, ProjectViewModel> starting,
-        Func<bool> stop)
+        Func<bool> stop,
+        HeaderRun? run = null)
     {
         var done = 0;
         var failed = new List<string>();
         var helix = targets.Where(IsHelix).ToList();
         if (helix.Count > 0)
         {
-            var result = await SyncHelixAsync(helix, (index, project) => starting(index, project), stop);
+            var result = await SyncHelixAsync(helix, (index, project) => starting(index, project), stop, run: run);
             foreach (var project in helix)
             {
                 if (project.Project.Connection?.ProjectId is { } projectId && result.SyncedProjectIds.Contains(projectId))
@@ -1406,7 +1423,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         var others = targets.Where(project => !IsHelix(project)).ToList();
         if (others.Count > 0)
         {
-            var result = await SyncProcoreAsync(others, (index, project) => starting(helix.Count + index, project), stop);
+            var result = await SyncProcoreAsync(others, (index, project) => starting(helix.Count + index, project), stop, run);
             if (!result.FallbackToWindow)
             {
                 foreach (var project in others)
@@ -1472,7 +1489,13 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     public bool HasCaFolder => !string.IsNullOrWhiteSpace(SelectedProject?.Project.CaFolder);
     public bool IsConnected => SelectedProject?.IsConnected == true;
     public bool IsNotConnected => HasProject && !IsConnected;
-    public bool IsRefreshing => refreshingMany || SelectedProject?.IsRefreshing == true;
+    /// <summary>The header's project is syncing, waiting its turn, or starting a sync from the header.</summary>
+    public bool IsRefreshing => refreshingMany || SelectedProject is { } project
+        && (project.IsRefreshing || project.IsQueued || headerRuns.ContainsKey(project));
+
+    /// <summary>Cancel shows only for a sync started here (a background sync finishes by itself).</summary>
+    public bool CanCancelRefresh => refreshingMany || SelectedProject is { } project
+        && (headerRuns.ContainsKey(project) || project.ActiveRefresh is { IsFinished: false });
     public bool CanRefresh => HasProject && !IsRefreshing && !refreshStarting;
     public string ProjectTitle => IsMultiProject
         ? $"{selectedProjects.Count} projects selected"
@@ -2081,19 +2104,22 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         var targets = selectedProjects.Where(project => project.IsConnected).ToList();
         refreshingMany = true;
         stopMany = false;
+        var run = manyRun = new HeaderRun();
         OnHeaderChanged();
         try
         {
             var result = await RefreshSequentiallyAsync(
                 targets,
                 (index, project) => SetRefreshMessage($"Syncing {project.Name} ({index + 1} of {targets.Count})…", false),
-                () => stopMany);
+                () => stopMany || run.Stopped,
+                run);
             SetRefreshMessage(result.Summary(targets.Count, "Synced"), result.Failed.Count > 0);
             await RecheckFoldersAsync();
         }
         finally
         {
             refreshingMany = false;
+            manyRun = null;
             OnHeaderChanged();
         }
     }
@@ -2101,7 +2127,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     /// <summary>Starts a refresh of any project (the selected one, or one being synced).</summary>
     public async Task StartRefreshAsync(ProjectViewModel? project)
     {
-        if (project is null || project.IsRefreshing)
+        if (project is null || project.IsRefreshing || project.IsQueued || headerRuns.ContainsKey(project))
         {
             return;
         }
@@ -2109,9 +2135,21 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         if (IsHelix(project) || (IsProcore(project) && !procoreSync.PageReadingUnavailable))
         {
             // Read in the background; other refreshes can start meanwhile. (A Procore read that has to
-            // fall back to the browser window starts that window from here too.)
-            await StartRefreshCoreAsync(project);
+            // fall back to the browser window starts that window from here too.) The header says
+            // "Syncing…" from the click on, also while the folders are rescanned and the read waits its turn.
+            var run = new HeaderRun();
+            headerRuns[project] = run;
             OnHeaderChanged();
+            try
+            {
+                await StartRefreshCoreAsync(project, run);
+            }
+            finally
+            {
+                headerRuns.Remove(project);
+                OnHeaderChanged();
+            }
+
             return;
         }
 
@@ -2133,7 +2171,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         }
     }
 
-    private async Task StartRefreshCoreAsync(ProjectViewModel project)
+    private async Task StartRefreshCoreAsync(ProjectViewModel project, HeaderRun? run = null)
     {
         var selected = project == SelectedProject;
         if (selected)
@@ -2160,8 +2198,12 @@ public sealed class MainViewModel : ObservableObject, IDisposable
             }
 
             // An explicit Refresh reads everything, to be sure.
-            var result = await SyncHelixAsync(new[] { project }, null, null, full: true);
-            if (selected)
+            var result = await SyncHelixAsync(new[] { project }, null, run is null ? null : () => run.Stopped, full: true, run);
+            if (selected && (result.Stopped || run?.Stopped == true))
+            {
+                SetRefreshMessage("Sync stopped.", false);
+            }
+            else if (selected)
             {
                 SetRefreshMessage(
                     result.Problem ?? (result.Done > 0
@@ -2180,10 +2222,14 @@ public sealed class MainViewModel : ObservableObject, IDisposable
                 SetRefreshMessage($"Reading {project.Name} from Procore…", false);
             }
 
-            var procore = await SyncProcoreAsync(new[] { project }, null, null);
+            var procore = await SyncProcoreAsync(new[] { project }, null, run is null ? null : () => run.Stopped, run);
             if (!procore.FallbackToWindow)
             {
-                if (selected)
+                if (selected && (procore.Stopped || run?.Stopped == true))
+                {
+                    SetRefreshMessage("Sync stopped.", false);
+                }
+                else if (selected)
                 {
                     SetRefreshMessage(
                         procore.Problem ?? (procore.Done > 0
@@ -2222,28 +2268,32 @@ public sealed class MainViewModel : ObservableObject, IDisposable
 
     public void CancelRefresh()
     {
-        if (helixSync.IsBusy)
+        // A sync started here stops; a background sync (or Sync now in Connections) carries on.
+        if (SelectedProject is { } current && headerRuns.TryGetValue(current, out var run))
         {
-            helixSync.Cancel();
-            SetRefreshMessage("Stopped reading Helix.", false);
-        }
-
-        if (procoreSync.IsBusy)
-        {
-            procoreSync.Cancel();
-            SetRefreshMessage("Stopped reading Procore.", false);
+            run.Stopped = true;
+            helixSync.Cancel(run);
+            procoreSync.Cancel(run);
+            SetRefreshMessage("Sync stopped.", false);
         }
 
         // Several projects being refreshed from here: skip the rest and cancel the one in progress.
         if (refreshingMany)
         {
             stopMany = true;
+            if (manyRun is { } many)
+            {
+                many.Stopped = true;
+                helixSync.Cancel(many);
+                procoreSync.Cancel(many);
+            }
+
             foreach (var other in selectedProjects.Where(project => project != SelectedProject && project.ActiveRefresh is { IsFinished: false }))
             {
                 other.ActiveRefresh = refreshStore.Cancel(other.ActiveRefresh!.Id, DateTimeOffset.Now);
             }
 
-            SetRefreshMessage("Stopping after the current project…", false);
+            SetRefreshMessage("Sync stopped.", false);
             OnHeaderChanged();
         }
 
@@ -3236,7 +3286,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     {
         foreach (var name in new[]
                  {
-                     nameof(HasProject), nameof(HasCaFolder), nameof(IsConnected), nameof(IsNotConnected), nameof(IsRefreshing), nameof(CanRefresh),
+                     nameof(HasProject), nameof(HasCaFolder), nameof(IsConnected), nameof(IsNotConnected), nameof(IsRefreshing), nameof(CanRefresh), nameof(CanCancelRefresh),
                      nameof(ProjectTitle), nameof(CaFolderText), nameof(ConnectionText), nameof(RefreshButtonText),
                      nameof(DataTimestampText), nameof(FolderTimestampText), nameof(TimestampText), nameof(ProjectSubtitle), nameof(HasProjectSubtitle),
                      nameof(CompanyText), nameof(FolderWarning), nameof(HasFolderWarning), nameof(CanCreateTypeFolders),

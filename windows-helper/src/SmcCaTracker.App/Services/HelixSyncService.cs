@@ -87,13 +87,15 @@ public sealed class HelixSyncService : IDisposable
     /// <summary>
     /// Reads each project in turn and saves its items. <paramref name="starting"/> is told which project
     /// is next; <paramref name="stop"/> is checked between projects. <paramref name="full"/> reads every
-    /// item even when only changes are due.
+    /// item even when only changes are due. <paramref name="run"/> names this run, so <see cref="Cancel(object)"/>
+    /// can stop it and nothing else.
     /// </summary>
     public async Task<ProviderSyncResult> SyncAsync(
         IReadOnlyList<ProviderSyncTarget> targets,
         Action<int, ProviderSyncTarget>? starting = null,
         Func<bool>? stop = null,
-        bool full = false)
+        bool full = false,
+        object? run = null)
     {
         if (targets.Count == 0 || disposed)
         {
@@ -110,6 +112,7 @@ public sealed class HelixSyncService : IDisposable
 
         await gate.WaitAsync();
         cancelRequested = false;
+        activeRun = run;
         try
         {
             return await SyncCoreAsync(targets, starting, stop, full);
@@ -127,6 +130,7 @@ public sealed class HelixSyncService : IDisposable
         }
         finally
         {
+            activeRun = null;
             gate.Release();
         }
     }
@@ -166,6 +170,20 @@ public sealed class HelixSyncService : IDisposable
         finally
         {
             gate.Release();
+        }
+    }
+
+    private object? activeRun;
+
+    /// <summary>
+    /// Stops one run (the header's Cancel) if it is the one reading now: its current project's read is
+    /// abandoned. A run still waiting its turn stops through its own stop check; other runs carry on.
+    /// </summary>
+    public void Cancel(object run)
+    {
+        if (ReferenceEquals(activeRun, run))
+        {
+            Cancel();
         }
     }
 
@@ -612,8 +630,9 @@ public sealed class HelixSyncService : IDisposable
             if (run.Status != "complete")
             {
                 confirmed.Remove(target.ProjectId);
-                run.Status = "failed";
-                run.Error ??= "The read did not finish.";
+                // Stopped on purpose (Cancel) isn't a failure: the project isn't marked "last sync failed".
+                run.Status = cancelRequested && run.Error is null ? "stopped" : "failed";
+                run.Error ??= cancelRequested ? "Stopped." : "The read did not finish.";
                 AppLog.Warn("helix", $"{target.DisplayName}: {run.Error}");
             }
 

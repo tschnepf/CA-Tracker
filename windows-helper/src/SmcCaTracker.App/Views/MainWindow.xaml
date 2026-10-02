@@ -318,7 +318,8 @@
                                         IsEnabled="{Binding CanRefresh}" MinWidth="150"
                                         ToolTip="Reads every RFI and Submittal again and rescans the CA folder (F5)" />
                                 <Button Content="Cancel" Click="CancelRefresh_Click" Margin="8,0,0,0"
-                                        Visibility="{Binding IsRefreshing, Converter={StaticResource Visible}}" />
+                                        ToolTip="Stops this sync (a background sync finishes by itself)"
+                                        Visibility="{Binding CanCancelRefresh, Converter={StaticResource Visible}}" />
                                 <Button Content="{Binding EditButtonText}" Click="EditProject_Click" Margin="8,0,0,0" IsEnabled="{Binding HasProject}" />
                                 <Button x:Name="ProjectMenuButton" Content="⋯" Click="ProjectMenu_Click" Margin="4,0,0,0" Padding="10,6"
                                         IsEnabled="{Binding HasProject}" AutomationProperties.Name="More project actions"
