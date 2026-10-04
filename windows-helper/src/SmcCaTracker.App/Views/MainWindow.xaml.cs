@@ -381,8 +381,7 @@ public partial class MainWindow : Window
         (StatusColumn, nameof(StatusColumn), "Item status"),
         (CourtColumn, nameof(CourtColumn), "Ball in court"),
         (DaysInCourtColumn, nameof(DaysInCourtColumn), "Days in court"),
-        (DueColumn, nameof(DueColumn), "Due date"),
-        (DaysTillDueColumn, nameof(DaysTillDueColumn), "Days till due"),
+        (DaysTillDueColumn, nameof(DaysTillDueColumn), "Due"),
         (FolderColumn, nameof(FolderColumn), "Folder"),
         (DisciplineColumn, nameof(DisciplineColumn), "Discipline"),
         (ResultColumn, nameof(ResultColumn), "Folder status")

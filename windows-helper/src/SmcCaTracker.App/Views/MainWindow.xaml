@@ -521,7 +521,7 @@
                             <ComboBoxItem Content="Number" Tag="number" IsSelected="True" />
                             <ComboBoxItem Content="Ball in court (A–Z)" Tag="person" />
                             <ComboBoxItem Content="Days in court (longest)" Tag="court" />
-                            <ComboBoxItem Content="Days till due (soonest)" Tag="due" />
+                            <ComboBoxItem Content="Due (soonest)" Tag="due" />
                             <!-- Shown after a column heading is clicked: "Title ↑". -->
                             <ComboBoxItem x:Name="SortByColumnItem" Content="By column heading" Tag="column" Visibility="Collapsed" />
                         </ComboBox>
@@ -626,12 +626,12 @@
                             </DataGridTextColumn>
                             <DataGridTextColumn x:Name="DaysInCourtColumn" Header="Days in court" Binding="{Binding DaysInCourtText}" Width="95" IsReadOnly="True"
                                                 SortMemberPath="DaysInCourt" />
-                            <DataGridTextColumn x:Name="DueColumn" Header="Due" Binding="{Binding DueDateText}" Width="100" IsReadOnly="True"
-                                                SortMemberPath="DaysTillDue" />
-                            <DataGridTemplateColumn x:Name="DaysTillDueColumn" Header="Days till due" Width="120" SortMemberPath="DaysTillDue">
+                            <!-- The date and how far off it is: "Sep 7 · 26 days overdue". (Named for the column it
+                                 replaced, so a choice to hide it is kept.) -->
+                            <DataGridTemplateColumn x:Name="DaysTillDueColumn" Header="Due" Width="160" SortMemberPath="DaysTillDue">
                                 <DataGridTemplateColumn.CellTemplate>
                                     <DataTemplate>
-                                        <TextBlock Text="{Binding DaysTillDueText}" VerticalAlignment="Center" ToolTip="{Binding DueToolTip}">
+                                        <TextBlock Text="{Binding DueText}" VerticalAlignment="Center" ToolTip="{Binding DueToolTip}">
                                             <TextBlock.Style>
                                                 <Style TargetType="TextBlock">
                                                     <Style.Triggers>

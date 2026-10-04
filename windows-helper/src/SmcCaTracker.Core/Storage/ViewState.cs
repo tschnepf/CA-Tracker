@@ -48,10 +48,10 @@ public sealed class ViewState
     public double ProjectsPaneWidth { get; set; } = 290;
 
     /// <summary>
-    /// Item-list columns you turned off (right-click a column heading), by the column's name. The due
-    /// date starts hidden: "Days till due" shows it on hover.
+    /// Item-list columns you turned off (right-click a column heading), by the column's name. Names of
+    /// columns that no longer exist ("DueColumn", merged into Due) are ignored.
     /// </summary>
-    public List<string> HiddenColumns { get; set; } = new() { "DueColumn" };
+    public List<string> HiddenColumns { get; set; } = new();
 }
 
 /// <summary>Who the Ball in court filter starts with: you, once your Helix or Procore name is known.</summary>

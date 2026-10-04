@@ -1,3 +1,4 @@
+using System.Globalization;
 using SmcCaTracker.Core.Models;
 
 namespace SmcCaTracker.Core.Comparison;
@@ -36,6 +37,30 @@ public static class ItemTiming
             .Where(value => value is not null)
             .Min();
         return since is null ? null : Math.Max(0, (today.Date - since.Value.ToLocalTime().Date).Days);
+    }
+
+    /// <summary>
+    /// The Due column: the date and how far off it is ("Sep 7 · 26 days overdue", "Oct 3 · today",
+    /// "Oct 7 · in 4 days"). The year shows only when it isn't this year; closed items show just the date.
+    /// </summary>
+    public static string DueText(SnapshotItem? item, DateTime today, IFormatProvider? culture = null)
+    {
+        if (item?.DueAt is not { } dueAt)
+        {
+            return "";
+        }
+
+        var due = dueAt.ToLocalTime().Date;
+        var date = due.ToString(due.Year == today.Year ? "MMM d" : "MMM d, yyyy", culture ?? CultureInfo.CurrentCulture);
+        return DaysTillDue(item, today) switch
+        {
+            null => date,
+            < -1 and var days => $"{date} \u00b7 {-days} days overdue",
+            -1 => $"{date} \u00b7 1 day overdue",
+            0 => $"{date} \u00b7 today",
+            1 => $"{date} \u00b7 tomorrow",
+            var days => $"{date} \u00b7 in {days} days"
+        };
     }
 
     public static bool MatchesDue(SnapshotItem? item, DueFilter filter, int withinDays, DateTime today)

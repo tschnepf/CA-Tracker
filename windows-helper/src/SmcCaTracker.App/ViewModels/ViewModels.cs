@@ -443,6 +443,7 @@ public sealed class RowViewModel : ObservableObject
         HolderNames = Holders.Select(holder => holder.Name.Trim()).ToList();
         DaysInCourt = ItemTiming.DaysInCourt(row.Item, today);
         DaysTillDue = ItemTiming.DaysTillDue(row.Item, today);
+        DueText = ItemTiming.DueText(row.Item, today);
         // Where the folder sits, e.g. "Submittals\Elec\BB" or "Submittals\Elec\~Returned".
         var typeName = FolderLayout.DisplayName(folders.TypeFolder(row.ItemType));
         LocationText = row.Folder is null ? ""
@@ -479,20 +480,11 @@ public sealed class RowViewModel : ObservableObject
     public string DaysInCourtText => DaysInCourt is { } days ? days == 1 ? "1 day" : $"{days} days" : "";
 
     public int? DaysTillDue { get; }
-    public string DueDateText => Row.Item?.DueAt is { } due ? due.ToLocalTime().ToString("MMM d, yyyy") : "";
+    /// <summary>The Due column: date and countdown, "Sep 7 · 26 days overdue".</summary>
+    public string DueText { get; }
 
-    public string DaysTillDueText => DaysTillDue switch
-    {
-        null => "",
-        < -1 => $"{-DaysTillDue} days overdue",
-        -1 => "1 day overdue",
-        0 => "Due today",
-        1 => "Tomorrow",
-        _ => $"In {DaysTillDue} days"
-    };
-
-    /// <summary>Hover text for "Days till due" (the date column starts hidden).</summary>
-    public string DueToolTip => DueDateText.Length == 0 ? "No due date" : $"Due {DueDateText}";
+    /// <summary>Hover text for the Due column: the full date with its weekday.</summary>
+    public string DueToolTip => Row.Item?.DueAt is { } due ? $"Due {due.ToLocalTime():dddd, MMMM d, yyyy}" : "No due date";
 
     public bool IsOverdue => DaysTillDue < 0;
     public bool IsDueToday => DaysTillDue == 0;

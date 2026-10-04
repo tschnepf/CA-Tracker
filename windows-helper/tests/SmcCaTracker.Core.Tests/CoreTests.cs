@@ -949,6 +949,21 @@ public class ItemTimingTests
         Assert.Null(ItemTiming.DaysInCourt(Item(null, false, new SnapshotHolder { Name = "Pat", State = "current" }), Today));
         Assert.Empty(ItemTiming.CurrentHolders(Item(null, closed: true, new SnapshotHolder { Name = "Pat", State = "current" })));
     }
+
+    [Fact]
+    public void DueTextShowsTheDateAndHowFarOffItIs()
+    {
+        var us = System.Globalization.CultureInfo.GetCultureInfo("en-US");
+        Assert.Equal("Sep 3 \u00b7 26 days overdue", ItemTiming.DueText(Item(Local(9, 3)), Today, us));
+        Assert.Equal("Sep 28 \u00b7 1 day overdue", ItemTiming.DueText(Item(Local(9, 28)), Today, us));
+        Assert.Equal("Sep 29 \u00b7 today", ItemTiming.DueText(Item(Local(9, 29)), Today, us));
+        Assert.Equal("Sep 30 \u00b7 tomorrow", ItemTiming.DueText(Item(Local(9, 30)), Today, us));
+        Assert.Equal("Oct 3 \u00b7 in 4 days", ItemTiming.DueText(Item(Local(10, 3)), Today, us));
+        // Closed: just the date. Another year: with the year. No date: nothing.
+        Assert.Equal("Sep 1", ItemTiming.DueText(Item(Local(9, 1), closed: true), Today, us));
+        Assert.Equal("Jan 5, 2027 \u00b7 in 98 days", ItemTiming.DueText(Item(new DateTimeOffset(new DateTime(2027, 1, 5, 12, 0, 0, DateTimeKind.Local))), Today, us));
+        Assert.Equal("", ItemTiming.DueText(Item(null), Today, us));
+    }
 }
 
 public class DefaultPeopleTests
