@@ -559,8 +559,6 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         .Distinct(StringComparer.OrdinalIgnoreCase)
         .ToList();
 
-    private bool IsYou(string name) => YourNames().Contains(name, StringComparer.OrdinalIgnoreCase);
-
     /// <summary>
     /// The first time your name is known, Ball in court starts as you (unless someone is already
     /// checked). Only once, so choosing Everyone afterwards sticks.
@@ -1879,7 +1877,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
                      nameof(CheckedCount), nameof(HasChecks), nameof(SelectionText), nameof(AllShownChecked),
                      nameof(CanMarkReturned), nameof(MarkReturnedText), nameof(CanMoveBack), nameof(MoveBackText),
                      nameof(CanSetDiscipline), nameof(SetDisciplineText), nameof(CanDownloadChecked), nameof(DownloadCheckedText),
-                     nameof(VerifyCheckedText), nameof(MarkReturnedNeedsConfirm), nameof(MarkReturnedToolTip), nameof(ShowActionBar)
+                     nameof(VerifyCheckedText), nameof(MarkReturnedToolTip), nameof(ShowActionBar)
                  })
         {
             OnPropertyChanged(name);
@@ -1910,8 +1908,6 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     /// Move to Returned moves the checked folders that are ready to return. Only when none of them is
     /// does it offer the other checked folders, and then it asks first.
     /// </summary>
-    public bool MarkReturnedNeedsConfirm => checks.Ready == 0 && checks.Returnable > 0;
-
     public string MarkReturnedText => checks.Returnable == 0 ? "Move to Returned…"
         : checks.Ready == 0 ? $"Move {checks.Returnable} to Returned anyway…"
         : checks.Ready < checks.Returnable ? $"Move {checks.Ready} ready to Returned…"
