@@ -558,6 +558,8 @@ public partial class MainWindow : Window
 
     private void ClearPeople_Click(object sender, RoutedEventArgs e) => viewModel.ClearPeople();
 
+    private void ShowOnlyYou_Click(object sender, RoutedEventArgs e) => viewModel.ShowOnlyYou();
+
     private void Due_Changed(object sender, SelectionChangedEventArgs e)
     {
         if (DataContext is MainViewModel model && DueBox.SelectedItem is ComboBoxItem { Tag: string tag }

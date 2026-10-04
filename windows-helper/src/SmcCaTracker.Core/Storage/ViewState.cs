@@ -14,6 +14,12 @@ public sealed class ViewState
     public string Filter { get; set; } = "open";
     public List<string> People { get; set; } = new();
     public bool AnyoneAtCompany { get; set; }
+
+    /// <summary>
+    /// Ball in court was set to you once, when your name first became known, so choosing Everyone
+    /// afterwards sticks. False in files from before this was added: those get it once too.
+    /// </summary>
+    public bool PeopleDefaulted { get; set; }
     public string Due { get; set; } = "Any";
     public int DueWithinDays { get; set; } = 7;
     public string Discipline { get; set; } = "";
@@ -46,6 +52,22 @@ public sealed class ViewState
     /// date starts hidden: "Days till due" shows it on hover.
     /// </summary>
     public List<string> HiddenColumns { get; set; } = new() { "DueColumn" };
+}
+
+/// <summary>Who the Ball in court filter starts with: you, once your Helix or Procore name is known.</summary>
+public static class DefaultPeople
+{
+    /// <summary>
+    /// Your names to check (Helix and Procore may spell them differently), or none when someone, or
+    /// anyone at your company, is already checked.
+    /// </summary>
+    public static IReadOnlyList<string> ToCheck(IReadOnlyCollection<string> checkedPeople, bool anyoneAtCompany, IEnumerable<string?> yourNames) =>
+        checkedPeople.Count > 0 || anyoneAtCompany
+            ? Array.Empty<string>()
+            : yourNames.Where(name => !string.IsNullOrWhiteSpace(name))
+                .Select(name => name!.Trim())
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
 }
 
 public sealed class ViewStateStore

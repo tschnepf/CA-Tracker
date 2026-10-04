@@ -75,6 +75,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     private readonly DispatcherTimer viewStateTimer;
     private readonly HashSet<string> rememberedPeople = new(StringComparer.OrdinalIgnoreCase);
     private bool rememberCompany;
+    private bool peopleDefaulted;
     private bool viewStateReady;
     private readonly Dictionary<string, ProjectComparison> comparisons = new(StringComparer.Ordinal);
     private List<RowViewModel> allRows = new();
@@ -546,6 +547,63 @@ public sealed class MainViewModel : ObservableObject, IDisposable
 
     private bool suppressPersonEvents;
 
+    /// <summary>The names you're signed in to Helix and Procore as (the same form as the ball-in-court names).</summary>
+    private List<string> YourNames() => new[] { store.Account(Providers.Helix)?.UserName, store.Account(Providers.Procore)?.UserName }
+        .Where(name => !string.IsNullOrWhiteSpace(name))
+        .Select(name => name!.Trim())
+        .Distinct(StringComparer.OrdinalIgnoreCase)
+        .ToList();
+
+    private bool IsYou(string name) => YourNames().Contains(name, StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// The first time your name is known, Ball in court starts as you (unless someone is already
+    /// checked). Only once, so choosing Everyone afterwards sticks.
+    /// </summary>
+    private void DefaultPeopleToYou()
+    {
+        if (peopleDefaulted || !viewStateReady)
+        {
+            return;
+        }
+
+        var names = YourNames();
+        if (names.Count == 0)
+        {
+            return;
+        }
+
+        peopleDefaulted = true;
+        var add = DefaultPeople.ToCheck(rememberedPeople, rememberCompany, names);
+        if (add.Count > 0)
+        {
+            AppLog.Info("view", $"Ball in court starts as you ({string.Join(", ", add)}).");
+            rememberedPeople.UnionWith(add);
+            RebuildPersonOptions();
+            RebuildRows();
+        }
+
+        ScheduleViewStateSave();
+    }
+
+    /// <summary>"Just you" in the Ball in court list: only your own names checked.</summary>
+    public bool CanShowOnlyYou => YourNames().Count > 0;
+
+    public void ShowOnlyYou()
+    {
+        var names = YourNames();
+        if (names.Count == 0)
+        {
+            return;
+        }
+
+        rememberedPeople.Clear();
+        rememberedPeople.UnionWith(names);
+        rememberCompany = false;
+        RebuildPersonOptions();
+        RebuildRows();
+    }
+
     /// <summary>Back to the default view: open items, everyone, any date, every discipline.</summary>
     public void ClearFilters()
     {
@@ -936,6 +994,8 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         OnPropertyChanged(nameof(SignInBannerText));
         OnPropertyChanged(nameof(CanSignOutOfBrowser));
         OnPropertyChanged(nameof(IsSignedOutOfBrowser));
+        OnPropertyChanged(nameof(CanShowOnlyYou));
+        DefaultPeopleToYou();
     }
 
     /// <summary>Signed in to Helix or Procore (or the sign-in has expired): the sign-out buttons apply.</summary>
@@ -3308,12 +3368,15 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         }
 
         var holding = allRows.SelectMany(row => row.HolderNames).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var you = YourNames().ToHashSet(StringComparer.OrdinalIgnoreCase);
         // People checked earlier who hold nothing here stay listed (greyed), so the list shows what filters.
+        // You come first among the names.
         choices.AddRange(holding.Concat(rememberedPeople)
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .OrderBy(name => !holding.Contains(name))
+            .ThenBy(name => !you.Contains(name))
             .ThenBy(name => name, StringComparer.CurrentCultureIgnoreCase)
-            .Select(name => new PersonChoiceViewModel(name, isCompany: false) { IsAbsent = !holding.Contains(name) }));
+            .Select(name => new PersonChoiceViewModel(name, isCompany: false) { IsAbsent = !holding.Contains(name), IsYou = you.Contains(name) }));
 
         foreach (var old in PersonChoices)
         {
@@ -3509,10 +3572,15 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         rememberedPeople.Clear();
         rememberedPeople.UnionWith(view.People);
         rememberCompany = view.AnyoneAtCompany;
+        peopleDefaulted = view.PeopleDefaulted;
     }
 
     /// <summary>Called by the window once it has restored the saved view; changes are saved from then on.</summary>
-    public void ViewStateRestored() => viewStateReady = true;
+    public void ViewStateRestored()
+    {
+        viewStateReady = true;
+        DefaultPeopleToYou();
+    }
 
     private void ScheduleViewStateSave()
     {
@@ -3541,6 +3609,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
             Filter = filter,
             People = rememberedPeople.OrderBy(name => name, StringComparer.CurrentCultureIgnoreCase).ToList(),
             AnyoneAtCompany = rememberCompany,
+            PeopleDefaulted = peopleDefaulted,
             Due = dueFilter.ToString(),
             DueWithinDays = dueWithinDays,
             Discipline = disciplineFilter,

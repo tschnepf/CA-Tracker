@@ -868,7 +868,13 @@ public sealed class PersonChoiceViewModel : ObservableObject
     /// <summary>Checked earlier but holding nothing in the shown projects (listed greyed, still filtering).</summary>
     public bool IsAbsent { get; init; }
 
-    public string Label => IsAbsent ? $"{Name} (nothing here)" : Name;
+    /// <summary>You: the name you're signed in to Helix or Procore as.</summary>
+    public bool IsYou { get; init; }
+
+    public string Label => IsYou && IsAbsent ? $"{Name} (you, nothing here)"
+        : IsYou ? $"{Name} (you)"
+        : IsAbsent ? $"{Name} (nothing here)"
+        : Name;
 
     public bool IsChecked
     {

@@ -951,6 +951,34 @@ public class ItemTimingTests
     }
 }
 
+public class DefaultPeopleTests
+{
+    [Fact]
+    public void BallInCourtStartsAsYouWhenNobodyIsChecked()
+    {
+        Assert.Equal(new[] { "Tim Smith" }, DefaultPeople.ToCheck(Array.Empty<string>(), false, new[] { " Tim Smith ", null, "tim smith" }));
+        // Helix and Procore may spell your name differently: both are checked.
+        Assert.Equal(new[] { "Tim Smith", "Timothy Smith" }, DefaultPeople.ToCheck(Array.Empty<string>(), false, new[] { "Tim Smith", "Timothy Smith" }));
+        Assert.Empty(DefaultPeople.ToCheck(Array.Empty<string>(), false, new string?[] { null, " " }));
+    }
+
+    [Fact]
+    public void AnEarlierChoiceIsKept()
+    {
+        Assert.Empty(DefaultPeople.ToCheck(new[] { "Pat Lee" }, false, new[] { "Tim Smith" }));
+        Assert.Empty(DefaultPeople.ToCheck(Array.Empty<string>(), anyoneAtCompany: true, new[] { "Tim Smith" }));
+    }
+
+    [Fact]
+    public void ViewFilesFromBeforeGetTheDefaultOnce()
+    {
+        var old = System.Text.Json.JsonSerializer.Deserialize<ViewState>("{\"people\":[]}", TrackerJson.Options)!;
+        Assert.False(old.PeopleDefaulted);
+        var saved = System.Text.Json.JsonSerializer.Serialize(new ViewState { PeopleDefaulted = true }, TrackerJson.Options);
+        Assert.True(System.Text.Json.JsonSerializer.Deserialize<ViewState>(saved, TrackerJson.Options)!.PeopleDefaulted);
+    }
+}
+
 public class DownloadNamingTests
 {
     [Theory]
