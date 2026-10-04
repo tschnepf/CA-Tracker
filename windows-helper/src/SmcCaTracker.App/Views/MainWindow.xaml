@@ -541,7 +541,7 @@
                     </Grid.RowDefinitions>
 
                     <DataGrid x:Name="ItemsGrid" ItemsSource="{Binding Rows}" IsReadOnly="True"
-                              MouseDoubleClick="Grid_MouseDoubleClick" Sorting="ItemsGrid_Sorting"
+                              MouseDoubleClick="Grid_MouseDoubleClick" PreviewKeyDown="ItemsGrid_PreviewKeyDown" Sorting="ItemsGrid_Sorting"
                               VirtualizingPanel.IsVirtualizingWhenGrouping="True" VirtualizingPanel.VirtualizationMode="Recycling"
                               HorizontalScrollBarVisibility="Auto" SizeChanged="ItemsGrid_SizeChanged" FrozenColumnCount="2"
                               AutomationProperties.Name="Items">
@@ -599,7 +599,7 @@
                                         <CheckBox IsChecked="{Binding IsChecked, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
                                                   IsEnabled="{Binding CanSelect}" HorizontalAlignment="Center"
                                                   AutomationProperties.Name="{Binding Number, StringFormat=Check {0}}"
-                                                  ToolTip="Check to set its discipline, download it, or include its folder in a move" />
+                                                  ToolTip="Check to download it, set its discipline, or include its folder in a move. Space checks the selected rows." />
                                     </DataTemplate>
                                 </DataGridTemplateColumn.CellTemplate>
                             </DataGridTemplateColumn>

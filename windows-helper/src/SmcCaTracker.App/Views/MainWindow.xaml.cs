@@ -1107,6 +1107,41 @@ public partial class MainWindow : Window
             return;
         }
 
+        await OpenRowAsync(row);
+    }
+
+    /// <summary>
+    /// Enter opens the selected row, as a double-click does; Space checks (or unchecks) the selected rows.
+    /// On a row's link or check box the keys are that control's own.
+    /// </summary>
+    private async void ItemsGrid_PreviewKeyDown(object sender, KeyEventArgs e)
+    {
+        if (Keyboard.Modifiers != ModifierKeys.None
+            || e.OriginalSource is TextBox or System.Windows.Controls.Primitives.ButtonBase
+            || ItemsGrid.SelectedItems.OfType<RowViewModel>().ToList() is not { Count: > 0 } rows)
+        {
+            return;
+        }
+
+        if (e.Key == Key.Enter)
+        {
+            e.Handled = true;
+            await OpenRowAsync(ItemsGrid.CurrentItem as RowViewModel ?? rows[0]);
+        }
+        else if (e.Key == Key.Space)
+        {
+            e.Handled = true;
+            var check = !rows.Where(row => row.CanSelect).All(row => row.IsChecked);
+            foreach (var row in rows.Where(row => row.CanSelect))
+            {
+                row.IsChecked = check;
+            }
+        }
+    }
+
+    /// <summary>Opens a row's folder, or its item when it has no folder yet.</summary>
+    private async Task OpenRowAsync(RowViewModel row)
+    {
         if (row.HasFolder)
         {
             OpenInExplorer(row.Row.Folder!.FullPath);

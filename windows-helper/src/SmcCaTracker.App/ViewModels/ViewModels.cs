@@ -531,7 +531,7 @@ public sealed class RowViewModel : ObservableObject
     /// <summary>Hover text for the Title column: the title and where its folder is (the Folder column starts hidden).</summary>
     public string TitleToolTip => Row.Folder is null ? Title
         : Row.Item is null ? $"A folder with no Helix or Procore item: {LocationText}\\{Row.Folder.Name}"
-        : $"{Title}\nFolder: {LocationText}\\{Row.Folder.Name}\nDouble-click the row to open the folder.";
+        : $"{Title}\nFolder: {LocationText}\\{Row.Folder.Name}\nDouble-click the row (or press Enter) to open the folder.";
     public string ProviderStatus => Row.Item?.Status ?? "";
     public string CourtText { get; }
     public string FolderName => Row.Folder?.Name ?? "—";
