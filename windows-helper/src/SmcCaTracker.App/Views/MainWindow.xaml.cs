@@ -1259,14 +1259,12 @@ public partial class MainWindow : Window
 
         ProjectsPage.Visibility = Visibility.Collapsed;
         SettingsView.Visibility = Visibility.Visible;
-        SettingsButton.Content = "← _Projects";
     }
 
     private void ShowProjects()
     {
         SettingsView.Visibility = Visibility.Collapsed;
         ProjectsPage.Visibility = Visibility.Visible;
-        SettingsButton.Content = "Se_ttings";
     }
 
     /// <summary>Sync all (or Stop while it runs). With nothing signed in, Connections opens instead.</summary>
