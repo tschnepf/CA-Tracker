@@ -15,6 +15,13 @@ public sealed class RefreshStep
 public static partial class ProviderLinks
 {
     public const string HelixHost = "project.helixteam.com";
+
+    /// <summary>
+    /// Helix's new web app. Helix sends some projects' RFI or Submittals pages there; CA Tracker's page
+    /// library works on <see cref="HelixHost"/> only, so it reads those projects from there instead.
+    /// </summary>
+    public const string HelixNewAppHost = "app.helixteam.com";
+
     public const string DefaultProcoreHost = "app.procore.com";
 
     [GeneratedRegex(@"^/Projects/([^/]+)(?:/|$)", RegexOptions.IgnoreCase)]

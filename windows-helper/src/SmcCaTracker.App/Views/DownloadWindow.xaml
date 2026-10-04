@@ -2,10 +2,55 @@
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:wv2="clr-namespace:Microsoft.Web.WebView2.Wpf;assembly=Microsoft.Web.WebView2.Wpf"
+        xmlns:vm="clr-namespace:SmcCaTracker.App.ViewModels"
         Title="Download — CA Tracker"
-        Width="900" Height="640" MinWidth="620" MinHeight="420"
+        Width="1000" Height="700" MinWidth="680" MinHeight="460"
         WindowStartupLocation="CenterOwner"
         Style="{StaticResource AppWindow}">
+    <Window.Resources>
+        <BooleanToVisibilityConverter x:Key="Visible" />
+
+        <!-- An item's status ("3 new files", "Up to date", "Saved 3 files"…), coloured by what it means. -->
+        <Style x:Key="Chip" TargetType="Border">
+            <Setter Property="CornerRadius" Value="10" />
+            <Setter Property="Padding" Value="8,2" />
+            <Setter Property="VerticalAlignment" Value="Center" />
+            <Setter Property="Background" Value="{DynamicResource NeutralSoftBrush}" />
+            <Setter Property="TextElement.Foreground" Value="{DynamicResource TextSecondary}" />
+            <Style.Triggers>
+                <DataTrigger Binding="{Binding Chip}" Value="Accent">
+                    <Setter Property="Background" Value="{DynamicResource AccentSoftBrush}" />
+                    <Setter Property="TextElement.Foreground" Value="{DynamicResource TextPrimary}" />
+                </DataTrigger>
+                <DataTrigger Binding="{Binding Chip}" Value="Success">
+                    <Setter Property="Background" Value="{DynamicResource SuccessSoftBrush}" />
+                    <Setter Property="TextElement.Foreground" Value="{DynamicResource SuccessBrush}" />
+                </DataTrigger>
+                <DataTrigger Binding="{Binding Chip}" Value="Warning">
+                    <Setter Property="Background" Value="{DynamicResource WarningSoftBrush}" />
+                    <Setter Property="TextElement.Foreground" Value="{DynamicResource WarningBrush}" />
+                </DataTrigger>
+            </Style.Triggers>
+        </Style>
+
+        <!-- An item's heading: a flat toggle that shows or folds away its files. -->
+        <Style x:Key="FoldButton" TargetType="ToggleButton">
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="Foreground" Value="{DynamicResource TextPrimary}" />
+            <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+            <Setter Property="Cursor" Value="Hand" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ToggleButton">
+                        <Border Background="{TemplateBinding Background}" Padding="2,4">
+                            <ContentPresenter VerticalAlignment="Center" />
+                        </Border>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+    </Window.Resources>
+
     <Grid Margin="16">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto" />
@@ -15,56 +60,131 @@
             <RowDefinition Height="Auto" />
         </Grid.RowDefinitions>
 
-        <StackPanel Grid.Row="0" Margin="0,0,0,12">
-            <TextBlock x:Name="HeadingText" FontSize="18" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
+        <StackPanel Grid.Row="0" Margin="0,0,0,10">
+            <DockPanel>
+                <TextBlock x:Name="ReadingText" DockPanel.Dock="Right" Foreground="{DynamicResource TextSecondary}"
+                           VerticalAlignment="Bottom" Margin="12,0,0,2" />
+                <TextBlock x:Name="HeadingText" FontSize="18" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
+            </DockPanel>
             <TextBlock x:Name="StatusText" Foreground="{DynamicResource TextSecondary}" TextWrapping="Wrap" Margin="0,4,0,0" />
         </StackPanel>
 
-        <Border Grid.Row="1" Style="{StaticResource Card}" Padding="12,10" Margin="0,0,0,12">
-            <DockPanel>
-                <Button x:Name="ChangeButton" DockPanel.Dock="Right" Content="Change…" Click="Change_Click" VerticalAlignment="Center" />
-                <StackPanel Margin="0,0,12,0">
-                    <TextBlock Text="SAVE TO" Style="{StaticResource SectionTitle}" />
-                    <TextBlock x:Name="DestinationText" TextWrapping="Wrap" />
-                    <TextBlock x:Name="DestinationNote" Style="{StaticResource Muted}" FontSize="12" Margin="0,2,0,0" />
-                </StackPanel>
-            </DockPanel>
-        </Border>
+        <!-- Buttons are declared in the order Tab visits them. -->
+        <DockPanel Grid.Row="1" Margin="0,0,0,10" LastChildFill="False">
+            <Button x:Name="NewOnlyButton" Content="New files only" Click="NewOnly_Click" Margin="0,0,6,0"
+                    ToolTip="Check only the files not in each item's folder yet, as when the window opened" />
+            <Button x:Name="AllButton" Content="Check all" Click="All_Click" Margin="0,0,6,0" />
+            <Button x:Name="NoneButton" Content="Uncheck all" Click="None_Click" />
+            <TextBlock x:Name="CheckedText" DockPanel.Dock="Right" VerticalAlignment="Center" Foreground="{DynamicResource TextSecondary}" />
+        </DockPanel>
 
-        <DataGrid x:Name="FilesGrid" Grid.Row="2" IsReadOnly="True">
-            <DataGrid.Columns>
-                <DataGridTemplateColumn Width="40" CanUserSort="False">
-                    <DataGridTemplateColumn.CellTemplate>
-                        <DataTemplate>
-                            <CheckBox IsChecked="{Binding IsChecked, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
-                                      IsEnabled="{Binding CanChange}" HorizontalAlignment="Center"
-                                      AutomationProperties.Name="{Binding Name, StringFormat=Download {0}}" />
-                        </DataTemplate>
-                    </DataGridTemplateColumn.CellTemplate>
-                </DataGridTemplateColumn>
-                <DataGridTextColumn Header="File" Binding="{Binding Name}" Width="2*" />
-                <DataGridTextColumn Header="Uploaded" Binding="{Binding UploadedText}" Width="150" SortMemberPath="UploadedAt" />
-                <DataGridTextColumn Header="Saved as" Binding="{Binding TargetName}" Width="2*" />
-                <DataGridTextColumn Header="Note" Binding="{Binding StatusText}" Width="1.3*" />
-            </DataGrid.Columns>
-        </DataGrid>
+        <ScrollViewer Grid.Row="2" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Focusable="False">
+            <ItemsControl x:Name="ItemsList" Focusable="False">
+                <ItemsControl.ItemTemplate>
+                    <DataTemplate DataType="{x:Type vm:DownloadItemViewModel}">
+                        <Border BorderThickness="1" CornerRadius="6" Margin="0,0,4,8" Padding="10,6">
+                            <Border.Style>
+                                <Style TargetType="Border">
+                                    <Setter Property="BorderBrush" Value="{DynamicResource LineBrush}" />
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding Chip}" Value="Warning">
+                                            <Setter Property="BorderBrush" Value="{DynamicResource WarningBrush}" />
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </Border.Style>
+                            <StackPanel>
+                                <DockPanel>
+                                    <CheckBox DockPanel.Dock="Left" IsChecked="{Binding IsIncluded, Mode=TwoWay}" IsEnabled="{Binding CanChangeFiles}"
+                                              VerticalAlignment="Center" Margin="0,0,8,0" ToolTip="Check or uncheck all of its files"
+                                              AutomationProperties.Name="{Binding Heading, StringFormat=Download the files of {0}}" />
+                                    <Button DockPanel.Dock="Right" Style="{StaticResource LinkButton}" Content="Try again" Click="Retry_Click"
+                                            Margin="6,0,0,0" Visibility="{Binding CanRetry, Converter={StaticResource Visible}}" />
+                                    <Border DockPanel.Dock="Right" Style="{StaticResource Chip}" Margin="8,0,0,0">
+                                        <TextBlock Text="{Binding StatusText}" FontSize="12" />
+                                    </Border>
+                                    <ToggleButton Style="{StaticResource FoldButton}" IsChecked="{Binding IsExpanded, Mode=TwoWay}"
+                                                  ToolTip="Show or hide its files" AutomationProperties.Name="{Binding Heading}">
+                                        <DockPanel>
+                                            <TextBlock DockPanel.Dock="Left" Width="16" FontSize="11" VerticalAlignment="Center"
+                                                       Foreground="{DynamicResource TextSecondary}">
+                                                <TextBlock.Style>
+                                                    <Style TargetType="TextBlock">
+                                                        <Setter Property="Text" Value="▸" />
+                                                        <Style.Triggers>
+                                                            <DataTrigger Binding="{Binding IsExpanded}" Value="True">
+                                                                <Setter Property="Text" Value="▾" />
+                                                            </DataTrigger>
+                                                        </Style.Triggers>
+                                                    </Style>
+                                                </TextBlock.Style>
+                                            </TextBlock>
+                                            <TextBlock Text="{Binding Heading}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" ToolTip="{Binding Heading}" />
+                                        </DockPanel>
+                                    </ToggleButton>
+                                </DockPanel>
 
-        <!-- Only shown when Helix asks you to sign in. -->
-        <wv2:WebView2 x:Name="Browser" Grid.Row="3" />
+                                <TextBlock Text="{Binding Message}" TextWrapping="Wrap" Foreground="{DynamicResource WarningBrush}" Margin="24,2,0,2"
+                                           Visibility="{Binding HasMessage, Converter={StaticResource Visible}}" />
+
+                                <StackPanel Margin="24,4,0,4" Visibility="{Binding IsExpanded, Converter={StaticResource Visible}}">
+                                    <DockPanel Margin="0,0,0,6">
+                                        <Button DockPanel.Dock="Right" Style="{StaticResource LinkButton}" Content="Open folder" Click="OpenItemFolder_Click"
+                                                Visibility="{Binding HasSaved, Converter={StaticResource Visible}}" />
+                                        <Button DockPanel.Dock="Right" Style="{StaticResource LinkButton}" Content="Change…" Click="Change_Click"
+                                                IsEnabled="{Binding CanChangeFolder}" ToolTip="Choose where its files go" />
+                                        <StackPanel>
+                                            <TextBlock Text="{Binding DestinationText}" TextTrimming="CharacterEllipsis" ToolTip="{Binding DestinationText}" />
+                                            <TextBlock Text="{Binding DestinationNote}" Style="{StaticResource Muted}" FontSize="12" />
+                                        </StackPanel>
+                                    </DockPanel>
+                                    <ItemsControl ItemsSource="{Binding Files}" Focusable="False">
+                                        <ItemsControl.ItemTemplate>
+                                            <DataTemplate DataType="{x:Type vm:DownloadFileViewModel}">
+                                                <Grid Margin="0,2">
+                                                    <Grid.ColumnDefinitions>
+                                                        <ColumnDefinition Width="28" />
+                                                        <ColumnDefinition Width="*" />
+                                                        <ColumnDefinition Width="170" />
+                                                        <ColumnDefinition Width="260" />
+                                                    </Grid.ColumnDefinitions>
+                                                    <CheckBox IsChecked="{Binding IsChecked, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                                              IsEnabled="{Binding CanChange}" VerticalAlignment="Center"
+                                                              AutomationProperties.Name="{Binding Name, StringFormat=Download {0}}" />
+                                                    <TextBlock Grid.Column="1" Text="{Binding Name}" TextTrimming="CharacterEllipsis"
+                                                               VerticalAlignment="Center" Margin="0,0,12,0" ToolTip="{Binding NameToolTip}" />
+                                                    <TextBlock Grid.Column="2" Text="{Binding UploadedText}" Foreground="{DynamicResource TextSecondary}"
+                                                               VerticalAlignment="Center" />
+                                                    <TextBlock Grid.Column="3" Text="{Binding StatusText}" Foreground="{DynamicResource TextSecondary}"
+                                                               TextTrimming="CharacterEllipsis" VerticalAlignment="Center" ToolTip="{Binding StatusText}" />
+                                                </Grid>
+                                            </DataTemplate>
+                                        </ItemsControl.ItemTemplate>
+                                    </ItemsControl>
+                                </StackPanel>
+                            </StackPanel>
+                        </Border>
+                    </DataTemplate>
+                </ItemsControl.ItemTemplate>
+            </ItemsControl>
+        </ScrollViewer>
+
+        <!-- Only shown when Helix asks you to sign in. Otherwise it keeps a 1-pixel row (so it starts and runs)
+             but is hidden: a browser is drawn over the window, so even that row showed a sliver of the page. -->
+        <wv2:WebView2 x:Name="Browser" Grid.Row="3" Visibility="Hidden" />
 
         <!-- Buttons are declared in the order Tab visits them; the main one is last, on the right. -->
-        <DockPanel Grid.Row="4" Margin="0,12,0,0" LastChildFill="False">
-            <Button x:Name="AllButton" DockPanel.Dock="Left" Content="Check all" Click="All_Click" Margin="0,0,6,0" />
-            <Button x:Name="NoneButton" DockPanel.Dock="Left" Content="Uncheck all" Click="None_Click" />
-            <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
-                <Button x:Name="OpenFolderButton" Content="Open folder" Click="OpenFolder_Click"
-                        Margin="0,0,8,0" Visibility="Collapsed" />
-                <!-- Downloading several checked items: stops before the rest. -->
-                <Button x:Name="StopBatchButton" Content="Stop after this item" Click="StopBatch_Click" Margin="0,0,8,0"
-                        Visibility="Collapsed" ToolTip="Don't go on to the remaining checked items" />
+        <DockPanel Grid.Row="4" Margin="0,12,0,0">
+            <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
+                <Button x:Name="StopButton" Content="Stop" Click="Stop_Click" Margin="0,0,8,0" Visibility="Collapsed"
+                        ToolTip="Stop after the file being saved" />
                 <Button x:Name="CloseButton" Content="Cancel" Click="Close_Click" IsCancel="True" Margin="0,0,8,0" />
                 <Button x:Name="DownloadButton" Content="_Download" Style="{StaticResource AccentButton}"
                         Click="Download_Click" IsEnabled="False" />
+            </StackPanel>
+            <StackPanel x:Name="ProgressPanel" VerticalAlignment="Center" Margin="0,0,16,0" Visibility="Collapsed">
+                <TextBlock x:Name="ProgressText" Foreground="{DynamicResource TextSecondary}" TextTrimming="CharacterEllipsis" />
+                <ProgressBar x:Name="Progress" Height="6" Margin="0,4,0,0" Maximum="1" />
             </StackPanel>
         </DockPanel>
     </Grid>

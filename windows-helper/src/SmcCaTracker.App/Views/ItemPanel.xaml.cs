@@ -107,6 +107,7 @@ public partial class ItemPanel : UserControl
         opening = false;
         courtBaseline = null;
         checkStartedAt = null;
+        newAppShown = false;
         // An update of the last item still running would keep this one from being checked.
         updateStartedAt = null;
         updateDone?.TrySetResult();
@@ -137,7 +138,7 @@ public partial class ItemPanel : UserControl
     private async Task WatchOpenAsync(int attempt, bool retried = false)
     {
         await Task.Delay(TimeSpan.FromSeconds(60));
-        if (attempt != openAttempt || opened || RetryButton.Visibility == Visibility.Visible || IsSignInShown)
+        if (attempt != openAttempt || opened || RetryButton.Visibility == Visibility.Visible || IsSignInShown || newAppShown)
         {
             return;
         }
@@ -157,6 +158,9 @@ public partial class ItemPanel : UserControl
     }
 
     private bool IsSignInShown => StatusText.Text.StartsWith("Sign in to Helix", StringComparison.Ordinal);
+
+    // Helix showed the item's list in its new app: you find the item there, so nothing is retried.
+    private bool newAppShown;
 
     /// <summary>Runs a script in the Helix page, giving up if the page has stopped responding.</summary>
     private async Task RunScriptAsync(string script)
@@ -301,6 +305,15 @@ public partial class ItemPanel : UserControl
     {
         if (opened || opening || !Uri.TryCreate(Browser.CoreWebView2.Source, UriKind.Absolute, out var current))
         {
+            return;
+        }
+
+        if (ProviderSites.IsHelixNewApp(current))
+        {
+            // Helix shows this project's list in its new app, where CA Tracker can't open the item for you.
+            AppLog.Info("panel", $"Helix opened its new app for {itemType} {itemId}.");
+            newAppShown = true;
+            SetStatus($"Helix shows this project's {(itemType == ItemTypes.Submittal ? "Submittals" : "RFIs")} in its new app (below). Find the item there: CA Tracker can't open items in the new app yet.");
             return;
         }
 

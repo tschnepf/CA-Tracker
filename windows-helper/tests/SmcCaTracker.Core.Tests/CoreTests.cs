@@ -1189,6 +1189,69 @@ public class RevisionTests
         File.WriteAllText(Path.Combine(revision, "2026-10-01 Door schedule.pdf"), "rev 2");
         Assert.Contains(schedule, DownloadFolders.ExistingFileKeys(item, revision, inRevisionFolder: true));
     }
+
+    private static readonly DownloadFileFacts[] HelixFiles =
+    {
+        new("Details (Details PDF)", "Details.pdf", IsReport: true),
+        new("Shop drawings.pdf", "2026-09-29 Shop drawings.pdf", IsReport: false),
+        new("Product data.pdf", "2026-08-12 Product data.pdf", IsReport: false),
+        new("Model.rvt", "2026-08-12 Model.rvt", IsReport: false)
+    };
+
+    [Fact]
+    public void AnItemWithoutAFolderStartsWithEveryFileChecked()
+    {
+        var choices = DownloadChoices.Choose(HelixFiles, new HashSet<string>(), null, folderExists: false);
+        Assert.All(choices, choice => Assert.True(choice.Checked));
+        Assert.Equal("New folder · 4 files", DownloadChoices.Summary(choices, folderExists: false));
+    }
+
+    [Fact]
+    public void AnExistingFolderStartsWithOnlyItsMissingPdfsChecked()
+    {
+        using var temp = new TempFolder();
+        var folder = temp.Make("P000210 - Doors");
+        File.WriteAllText(Path.Combine(folder, "2026-08-12 Product data.pdf"), "");
+        var keys = DownloadFolders.ExistingFileKeys(folder, folder, inRevisionFolder: false);
+
+        var choices = DownloadChoices.Choose(HelixFiles, keys, folder, folderExists: true);
+        Assert.Equal(new[] { false, true, false, false }, choices.Select(choice => choice.Checked));
+        Assert.Equal(new[] { false, false, true, false }, choices.Select(choice => choice.AlreadySaved));
+        Assert.Equal("1 new file", DownloadChoices.Summary(choices, folderExists: true));
+
+        // Once that PDF is saved too, only the fresh Details PDF and the model are new, and neither starts checked.
+        File.WriteAllText(Path.Combine(folder, "2026-09-29 Shop drawings.pdf"), "");
+        keys = DownloadFolders.ExistingFileKeys(folder, folder, inRevisionFolder: false);
+        var upToDate = DownloadChoices.Choose(HelixFiles, keys, folder, folderExists: true);
+        Assert.DoesNotContain(upToDate, choice => choice.Checked);
+        Assert.Equal("Up to date · 2 other new files", DownloadChoices.Summary(upToDate, folderExists: true));
+        Assert.Equal("No files in Helix", DownloadChoices.Summary(Array.Empty<DownloadFileChoice>(), folderExists: true));
+    }
+
+    [Fact]
+    public void VerifyingAFolderChecksEveryFileMissingFromIt()
+    {
+        using var temp = new TempFolder();
+        var folder = temp.Make("P000210 - Doors");
+        // Saved earlier: one PDF with its date in front, and a copy of the model.
+        File.WriteAllText(Path.Combine(folder, "2026-09-29 Shop drawings.pdf"), "");
+        File.WriteAllText(Path.Combine(folder, "2026-08-12 Model (2).rvt"), "");
+        var keys = DownloadFolders.ExistingFileKeys(folder, folder, inRevisionFolder: false);
+
+        var choices = DownloadChoices.ChooseMissing(HelixFiles, keys, folder);
+        // The Details PDF and the product data are missing, whatever their kind; both start checked.
+        Assert.Equal(new[] { true, false, true, false }, choices.Select(choice => choice.Checked));
+        Assert.Equal("Missing from the folder", choices[0].Note);
+        Assert.Equal("In the folder", choices[1].Note);
+        Assert.Equal("2 of 4 missing", DownloadChoices.MissingSummary(choices, folderExists: true));
+
+        File.WriteAllText(Path.Combine(folder, "Details.pdf"), "");
+        File.WriteAllText(Path.Combine(folder, "Product data.pdf"), "");
+        var complete = DownloadChoices.ChooseMissing(HelixFiles, DownloadFolders.ExistingFileKeys(folder, folder, inRevisionFolder: false), folder);
+        Assert.DoesNotContain(complete, choice => choice.Checked);
+        Assert.Equal("All 4 files in folder", DownloadChoices.MissingSummary(complete, folderExists: true));
+        Assert.Equal("No folder yet · 4 files", DownloadChoices.MissingSummary(choices, folderExists: false));
+    }
 }
 
 public class ReturnedWithNoteTests

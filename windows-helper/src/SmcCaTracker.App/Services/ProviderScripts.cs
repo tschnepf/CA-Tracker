@@ -333,7 +333,7 @@ public static class ProviderScripts
                 while (Date.now() < deadline) {
                   try {
                     const result = await HelixBridgeCore.prepareItemDownload(window, request.itemId, request.itemType, request.projectId);
-                    post({ type: "prepared", report: result.report, reportError: result.reportError || null, attachments: result.attachments });
+                    post({ type: "prepared", itemId: request.itemId, report: result.report, reportError: result.reportError || null, attachments: result.attachments });
                     return;
                   } catch (error) {
                     lastError = error;
@@ -346,7 +346,7 @@ public static class ProviderScripts
                 }
                 throw lastError || new Error("Helix did not finish loading.");
               } catch (error) {
-                post({ type: "error", message: String(error && error.message || error) });
+                post({ type: "error", itemId: request.itemId, message: String(error && error.message || error) });
               }
             })(
             """ + request + ");";

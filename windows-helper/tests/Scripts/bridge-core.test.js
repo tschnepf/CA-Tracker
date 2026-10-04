@@ -675,6 +675,32 @@ test("prepareItemDownload still lists attachments when Helix offers no Details r
   assert.deepEqual(result.attachments.map((attachment) => attachment.filename), ["Drawings - R2.pdf"]);
 });
 
+test("prepareItemDownload works from the Helix home page when told the item's project and type", async () => {
+  // Helix sends some projects' Submittals to its new app (app.helixteam.com), so CA Tracker reads
+  // their files from the home page of the old one, where the background sync reads everything.
+  const page = mockWindow({
+    HelixProjectAttachments: [{ _id: "a1", idItem: "s1", filename: "Drawings.pdf", isActive: true, isCurrent: true, _kmd: { ect: "2026-09-25T15:00:00Z" } }],
+    HelixProjectReports: []
+  }, "submittal");
+  page.location.href = "https://project.helixteam.com/";
+  // Helix 5.1.90's home page: the user only in loginObject.
+  page.UserInfo = { directoryInfo: null };
+  page.loginObject = { contact: { _id: "contact-current", fullName: "Current User" } };
+  page.Master.readFromCollection = (original => async (collection, query) => {
+    if (collection === "HelixProjectSubmittalPackages") return [{ _id: "s1", refProject: { _id: projectId }, number: "000641" }];
+    return original(collection, query);
+  })(page.Master.readFromCollection);
+  page.Master.callCustomEndpoint = async () => ({ downloadURL: "https://files.example/a1" });
+
+  const result = await Bridge.prepareItemDownload(page, "s1", "submittal", projectId);
+  assert.deepEqual(result.attachments.map((attachment) => attachment.filename), ["Drawings.pdf"]);
+  const reports = page.calls.find((call) => call.collection === "HelixProjectReports");
+  assert.ok(JSON.stringify(reports.query.filter).includes("contact-current"), "reports you may see are found by your contact");
+
+  // Without the type and project, a page that isn't a project page still isn't enough.
+  await assert.rejects(() => Bridge.prepareItemDownload(page, "s1", undefined, undefined), /supported Helix activity page/);
+});
+
 test("scanProjectItems reads only the page's project items, with court dates, in scan's shape", async () => {
   Bridge._test.resetCache();
   const windowObject = mockWindow({

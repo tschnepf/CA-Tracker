@@ -121,7 +121,7 @@ public partial class MainWindow
             needed[fit.Column] = Math.Ceiling(Math.Min(fit.Max, Math.Max(header, content + fit.Extra + CellPadding)));
         }
 
-        // Room left for the measured columns once the check box, the ⋯ column and scroll bar are counted.
+        // Room left for the measured columns once the check box, the row links and scroll bar are counted.
         var available = ItemsGrid.ActualWidth - CheckColumn.ActualWidth - ActionsColumn.Width.Value
                         - SystemParameters.VerticalScrollBarWidth - 4;
 

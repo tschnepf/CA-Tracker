@@ -9,13 +9,16 @@
     <Window.Resources>
         <BooleanToVisibilityConverter x:Key="Visible" />
 
-        <!-- An item row's actions: its ⋯ button and right-click. The row is the menu's DataContext. -->
+        <!-- An item row's right-click menu: the same actions as its links, and Set discipline. The row is
+             the menu's DataContext. -->
         <ContextMenu x:Key="RowMenu">
             <MenuItem Header="Open folder" Click="OpenRowFolder_Click" IsEnabled="{Binding HasFolder}" />
-            <MenuItem Header="Open item" Click="OpenRowLink_Click" IsEnabled="{Binding HasItem}"
+            <MenuItem Header="Open Online" Click="OpenRowLink_Click" IsEnabled="{Binding HasItem}"
                       ToolTip="Helix items open in the panel on the right; Procore items open in your web browser" />
             <MenuItem Header="Download…" Click="DownloadRow_Click" IsEnabled="{Binding CanDownload}"
                       ToolTip="{Binding DownloadToolTip}" ToolTipService.ShowOnDisabled="True" />
+            <MenuItem Header="Verify folder…" Click="VerifyRow_Click" IsEnabled="{Binding CanDownload}"
+                      ToolTip="Check that the item's folder has every file Helix has for it" />
             <Separator />
             <MenuItem Header="Set discipline…" Click="SetRowDiscipline_Click" IsEnabled="{Binding CanSelect}" />
         </ContextMenu>
@@ -567,13 +570,29 @@
                                     </DataTemplate>
                                 </DataGridTemplateColumn.CellTemplate>
                             </DataGridTemplateColumn>
-                            <!-- Row actions (also on right-click), beside the box so they never scroll out of sight. -->
-                            <DataGridTemplateColumn x:Name="ActionsColumn" Width="44" CanUserSort="False" CanUserResize="False">
+                            <!-- Row actions, always shown (also on right-click), beside the box so they never scroll
+                                 out of sight. Ones that don't apply to the row are greyed out. -->
+                            <DataGridTemplateColumn x:Name="ActionsColumn" Width="268" CanUserSort="False" CanUserResize="False">
                                 <DataGridTemplateColumn.CellTemplate>
                                     <DataTemplate>
-                                        <Button Style="{StaticResource LinkButton}" Content="⋯" Click="RowMenu_Click" Padding="2,0" FontSize="15" FontWeight="Bold"
-                                                AutomationProperties.Name="{Binding Number, StringFormat=Actions for {0}}"
-                                                ToolTip="Open the folder or the item, download it, set its discipline" />
+                                        <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                                            <Button Style="{StaticResource LinkButton}" Content="Folder" Click="OpenRowFolder_Click"
+                                                    IsEnabled="{Binding HasFolder}"
+                                                    AutomationProperties.Name="{Binding Number, StringFormat=Open the folder of {0}}"
+                                                    ToolTip="Open this item's folder in Explorer" />
+                                            <Button Style="{StaticResource LinkButton}" Content="Open Online" Click="OpenRowLink_Click"
+                                                    IsEnabled="{Binding HasItem}"
+                                                    AutomationProperties.Name="{Binding Number, StringFormat=Open {0} online}"
+                                                    ToolTip="Helix items open in the panel on the right; Procore items open in your web browser" />
+                                            <Button Style="{StaticResource LinkButton}" Content="Download" Click="DownloadRow_Click"
+                                                    IsEnabled="{Binding CanDownload}"
+                                                    AutomationProperties.Name="{Binding Number, StringFormat=Download {0}}"
+                                                    ToolTip="{Binding DownloadToolTip}" ToolTipService.ShowOnDisabled="True" />
+                                            <Button Style="{StaticResource LinkButton}" Content="Verify" Click="VerifyRow_Click"
+                                                    IsEnabled="{Binding CanDownload}"
+                                                    AutomationProperties.Name="{Binding Number, StringFormat=Verify the folder of {0}}"
+                                                    ToolTip="Check that this item's folder has every file Helix has for it (missing ones can then be downloaded)" />
+                                        </StackPanel>
                                     </DataTemplate>
                                 </DataGridTemplateColumn.CellTemplate>
                             </DataGridTemplateColumn>
@@ -705,7 +724,10 @@
                                         ToolTip="Set the discipline of the checked items. Items with no folder yet download into that discipline's folder." />
                                 <Button Content="{Binding DownloadCheckedText}" Click="DownloadChecked_Click" Margin="0,2,6,2"
                                         IsEnabled="{Binding CanDownloadChecked}" ToolTipService.ShowOnDisabled="True"
-                                        ToolTip="Download the checked Helix items one after another: for each, choose the files and where they go" />
+                                        ToolTip="Download the checked Helix items: one window lists them all with their files and where they go" />
+                                <Button Content="{Binding VerifyCheckedText}" Click="VerifyChecked_Click" Margin="0,2,6,2"
+                                        IsEnabled="{Binding CanDownloadChecked}" ToolTipService.ShowOnDisabled="True"
+                                        ToolTip="Check that each checked Helix item's folder has every file Helix has for it; missing files can then be downloaded" />
                                 <Button Content="{Binding MoveBackText}" Click="MoveBack_Click" Margin="0,2,6,2"
                                         IsEnabled="{Binding CanMoveBack}" ToolTipService.ShowOnDisabled="True"
                                         ToolTip="Moves checked folders that are in Returned back to the active folder. A preview shows every move first." />
