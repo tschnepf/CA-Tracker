@@ -9,7 +9,7 @@ namespace SmcCaTracker.Core.Storage;
 public sealed class ViewState
 {
     /// <summary>The layout of the saved view. Older ones are brought up to date once by <see cref="Upgrade"/>.</summary>
-    public const int CurrentVersion = 1;
+    public const int CurrentVersion = 2;
 
     /// <summary>0 in views saved before versions were kept.</summary>
     public int Version { get; set; }
@@ -54,20 +54,27 @@ public sealed class ViewState
     public double ProjectsPaneWidth { get; set; } = 290;
 
     /// <summary>
-    /// Item-list columns you turned off (right-click a column heading), by the column's name. Names of
+    /// Item-list columns you turned off (right-click a column heading), by the column's name. The Folder
+    /// column starts hidden: the title says the same, and hovering it shows where the folder is. Names of
     /// columns that no longer exist ("DueColumn", merged into Due) are ignored.
     /// </summary>
-    public List<string> HiddenColumns { get; set; } = new();
+    public List<string> HiddenColumns { get; set; } = new() { "FolderColumn" };
 
     /// <summary>
     /// Brings a view saved by an older version up to date, once. Version 1: a list still grouped the old
-    /// default way (project, then type) is grouped by when items are due.
+    /// default way (project, then type) is grouped by when items are due. Version 2: the Folder column
+    /// is hidden (right-click a heading to show it again).
     /// </summary>
     public void Upgrade()
     {
         if (Version < 1 && GroupBy == "project-type")
         {
             GroupBy = "urgency";
+        }
+
+        if (Version < 2 && !HiddenColumns.Contains("FolderColumn"))
+        {
+            HiddenColumns.Add("FolderColumn");
         }
 
         Version = CurrentVersion;

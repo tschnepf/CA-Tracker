@@ -1001,7 +1001,26 @@ public class ViewStateTests
     }
 
     [Fact]
-    public void ANewViewIsGroupedByWhenItsDue() => Assert.Equal("urgency", new ViewState().GroupBy);
+    public void ANewViewIsGroupedByWhenItsDueWithoutTheFolderColumn()
+    {
+        Assert.Equal("urgency", new ViewState().GroupBy);
+        Assert.Equal(new[] { "FolderColumn" }, new ViewState().HiddenColumns);
+    }
+
+    [Fact]
+    public void AnOldViewHidesTheFolderColumnOnce()
+    {
+        var old = new ViewState { Version = 1 };
+        old.HiddenColumns.Clear();
+        old.HiddenColumns.Add("DueColumn");
+        old.Upgrade();
+        Assert.Equal(new[] { "DueColumn", "FolderColumn" }, old.HiddenColumns);
+
+        // Shown again afterwards: it stays shown.
+        old.HiddenColumns.Remove("FolderColumn");
+        old.Upgrade();
+        Assert.DoesNotContain("FolderColumn", old.HiddenColumns);
+    }
 }
 
 public class DefaultPeopleTests

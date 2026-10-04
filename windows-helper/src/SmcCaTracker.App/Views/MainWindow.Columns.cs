@@ -37,7 +37,7 @@ public partial class MainWindow
         new ColumnFit(ProjectColumn, row => row.ProjectName, 140, 420),
         new ColumnFit(TypeColumn, row => row.TypeSingular, 0, 160),
         new ColumnFit(NumberColumn, row => row.Number, 0, 240),
-        new ColumnFit(TitleColumn, row => row.Title, 220, 900),
+        new ColumnFit(TitleColumn, row => row.TitleText, 220, 900),
         new ColumnFit(StatusColumn, row => row.ProviderStatus, 0, 220),
         new ColumnFit(CourtColumn, row => row.HolderText, 150, 600),
         new ColumnFit(DaysInCourtColumn, row => row.DaysInCourtText, 0, 160),

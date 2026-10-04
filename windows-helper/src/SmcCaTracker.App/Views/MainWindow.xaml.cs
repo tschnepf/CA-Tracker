@@ -90,6 +90,9 @@ public partial class MainWindow : Window
                 case nameof(MainViewModel.SortDescending):
                     UpdateSortArrows();
                     break;
+                case nameof(MainViewModel.PersonFilterText):
+                    UpdateColumns();
+                    break;
             }
         };
         SettingsView.BackRequested += (_, _) => ShowProjects();
@@ -372,6 +375,12 @@ public partial class MainWindow : Window
             column.Visibility = viewModel.IsColumnHidden(name) ? Visibility.Collapsed : Visibility.Visible;
         }
 
+        // One person checked: every row is theirs, so the column would only repeat the name.
+        if (viewModel.IsOnePersonFilter)
+        {
+            CourtColumn.Visibility = Visibility.Collapsed;
+        }
+
         ScheduleColumnFit();
     }
 
@@ -391,9 +400,15 @@ public partial class MainWindow : Window
     private void InitColumnsMenu()
     {
         columnsMenu.Items.Add(new MenuItem { Header = "Show these columns:", IsEnabled = false });
+        MenuItem? courtItem = null;
         foreach (var (_, name, label) in OptionalColumns())
         {
             var item = new MenuItem { Header = label, IsCheckable = true, StaysOpenOnClick = true, Tag = name };
+            if (name == nameof(CourtColumn))
+            {
+                courtItem = item;
+            }
+
             item.Click += (_, _) =>
             {
                 viewModel.SetColumnHidden(name, !item.IsChecked);
@@ -407,6 +422,11 @@ public partial class MainWindow : Window
             foreach (var item in columnsMenu.Items.OfType<MenuItem>().Where(item => item.Tag is string))
             {
                 item.IsChecked = !viewModel.IsColumnHidden((string)item.Tag);
+            }
+
+            if (courtItem is not null)
+            {
+                courtItem.Header = viewModel.IsOnePersonFilter ? "Ball in court (hidden while one person is checked)" : "Ball in court";
             }
         };
 

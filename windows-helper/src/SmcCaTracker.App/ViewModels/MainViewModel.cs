@@ -525,6 +525,9 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     // list only has people holding something in the shown projects, and a check must keep filtering
     // when you switch to a project where that person holds nothing.
     public bool HasPersonFilter => rememberCompany || rememberedPeople.Count > 0;
+
+    /// <summary>Exactly one person checked: every row is theirs, so the Ball in court column is hidden.</summary>
+    public bool IsOnePersonFilter => !rememberCompany && rememberedPeople.Count == 1;
     public bool HasNoPersonChoices => PersonChoices.Count == 0;
 
     /// <summary>What the Ball in court button shows: Everyone, one or two names, or a count.</summary>
@@ -3355,7 +3358,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     {
         nameof(RowViewModel.ProjectName) => row.ProjectName,
         nameof(RowViewModel.TypeLabel) => row.TypeLabel,
-        nameof(RowViewModel.Title) => row.Title,
+        nameof(RowViewModel.Title) => row.TitleText,
         nameof(RowViewModel.ProviderStatus) => row.ProviderStatus,
         nameof(RowViewModel.PersonSortKey) or nameof(RowViewModel.HolderText) => row.PersonSortKey,
         nameof(RowViewModel.FolderName) => row.HasFolder ? row.FolderName : "",

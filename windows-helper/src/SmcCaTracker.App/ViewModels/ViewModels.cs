@@ -509,6 +509,14 @@ public sealed class RowViewModel : ObservableObject
         : string.IsNullOrWhiteSpace(item.Revision) || item.Revision == "0" ? item.Number
         : $"{item.Number} Rev {item.Revision}";
     public string Title => Row.Item?.Title ?? "";
+
+    /// <summary>The Title column: the item's title, or the folder's name for a folder with no item.</summary>
+    public string TitleText => Row.Item?.Title ?? Row.Folder?.Name ?? "";
+
+    /// <summary>Hover text for the Title column: the title and where its folder is (the Folder column starts hidden).</summary>
+    public string TitleToolTip => Row.Folder is null ? Title
+        : Row.Item is null ? $"A folder with no Helix or Procore item: {LocationText}\\{Row.Folder.Name}"
+        : $"{Title}\nFolder: {LocationText}\\{Row.Folder.Name}\nDouble-click the row to open the folder.";
     public string ProviderStatus => Row.Item?.Status ?? "";
     public string CourtText { get; }
     public string FolderName => Row.Folder?.Name ?? "—";

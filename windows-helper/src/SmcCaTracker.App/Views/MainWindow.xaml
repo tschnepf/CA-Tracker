@@ -54,6 +54,10 @@
                     <Setter Property="Background" Value="{DynamicResource SuccessSoftBrush}" />
                     <Setter Property="TextElement.Foreground" Value="{DynamicResource SuccessBrush}" />
                 </DataTrigger>
+                <!-- An open item with its folder where it belongs: nothing to point out. -->
+                <DataTrigger Binding="{Binding Status}" Value="Open">
+                    <Setter Property="Visibility" Value="Collapsed" />
+                </DataTrigger>
             </Style.Triggers>
         </Style>
     </Window.Resources>
@@ -630,12 +634,19 @@
                             <DataGridTextColumn x:Name="TypeColumn" Header="Type" Binding="{Binding TypeSingular}" Width="85"
                                                 IsReadOnly="True" SortMemberPath="TypeLabel" />
                             <DataGridTextColumn x:Name="NumberColumn" Header="Number" Binding="{Binding Number}" Width="110" IsReadOnly="True" SortMemberPath="Number" />
-                            <DataGridTextColumn x:Name="TitleColumn" Header="Title" Binding="{Binding Title}" Width="300" IsReadOnly="True" SortMemberPath="Title">
+                            <!-- The item's title, or (grey italic) the folder's name when there's no item. -->
+                            <DataGridTextColumn x:Name="TitleColumn" Header="Title" Binding="{Binding TitleText}" Width="300" IsReadOnly="True" SortMemberPath="Title">
                                 <DataGridTextColumn.ElementStyle>
                                     <Style TargetType="TextBlock">
-                                        <Setter Property="ToolTip" Value="{Binding Title}" />
+                                        <Setter Property="ToolTip" Value="{Binding TitleToolTip}" />
                                         <Setter Property="TextTrimming" Value="CharacterEllipsis" />
                                         <Setter Property="VerticalAlignment" Value="Center" />
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding HasItem}" Value="False">
+                                                <Setter Property="FontStyle" Value="Italic" />
+                                                <Setter Property="Foreground" Value="{DynamicResource TextSecondary}" />
+                                            </DataTrigger>
+                                        </Style.Triggers>
                                     </Style>
                                 </DataGridTextColumn.ElementStyle>
                             </DataGridTextColumn>
