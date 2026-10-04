@@ -700,8 +700,11 @@
                                 Visibility="{Binding HasActiveFilters, Converter={StaticResource Visible}}" />
                     </StackPanel>
 
-                    <!-- Actions on the checked items. Moves open a preview first; buttons say how many they act on. -->
-                    <Border Grid.Row="1" Style="{StaticResource Card}" Margin="0,10,0,0" Padding="12,8">
+                    <!-- Actions on the checked items, shown while something is checked (or ready to return). Only
+                         the actions that apply appear; Download is the main one. Moves open a preview first; buttons
+                         say how many they act on. -->
+                    <Border Grid.Row="1" Style="{StaticResource Card}" Margin="0,10,0,0" Padding="12,8"
+                            Visibility="{Binding ShowActionBar, Converter={StaticResource Visible}}">
                         <Border.Resources>
                             <Style TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
                                 <Setter Property="Padding" Value="10,5" />
@@ -715,25 +718,27 @@
                             <WrapPanel VerticalAlignment="Center">
                                 <TextBlock Text="{Binding SelectionText}" VerticalAlignment="Center" Margin="4,0,14,0"
                                            Foreground="{DynamicResource TextSecondary}" />
-                                <Button Content="Check all ready to return" Click="SelectReady_Click" Margin="0,2,6,2"
+                                <Button Content="{Binding CheckReadyText}" Click="SelectReady_Click" Margin="0,2,6,2"
+                                        Visibility="{Binding HasReadyShown, Converter={StaticResource Visible}}"
                                         ToolTip="Checks the shown folders that are ready to move to Returned" />
                                 <Button Content="Clear checks" Click="ClearTicks_Click" Margin="0,2,6,2"
                                         Visibility="{Binding HasChecks, Converter={StaticResource Visible}}" />
                                 <Button Content="{Binding SetDisciplineText}" Click="SetTickedDiscipline_Click" Margin="0,2,6,2"
-                                        IsEnabled="{Binding CanSetDiscipline}" ToolTipService.ShowOnDisabled="True"
+                                        Visibility="{Binding CanSetDiscipline, Converter={StaticResource Visible}}"
                                         ToolTip="Set the discipline of the checked items. Items with no folder yet download into that discipline's folder." />
-                                <Button Content="{Binding DownloadCheckedText}" Click="DownloadChecked_Click" Margin="0,2,6,2"
-                                        IsEnabled="{Binding CanDownloadChecked}" ToolTipService.ShowOnDisabled="True"
-                                        ToolTip="Download the checked Helix items: one window lists them all with their files and where they go" />
                                 <Button Content="{Binding VerifyCheckedText}" Click="VerifyChecked_Click" Margin="0,2,6,2"
-                                        IsEnabled="{Binding CanDownloadChecked}" ToolTipService.ShowOnDisabled="True"
+                                        Visibility="{Binding CanDownloadChecked, Converter={StaticResource Visible}}"
                                         ToolTip="Check that each checked Helix item's folder has every file Helix has for it; missing files can then be downloaded" />
                                 <Button Content="{Binding MoveBackText}" Click="MoveBack_Click" Margin="0,2,6,2"
-                                        IsEnabled="{Binding CanMoveBack}" ToolTipService.ShowOnDisabled="True"
+                                        Visibility="{Binding CanMoveBack, Converter={StaticResource Visible}}"
                                         ToolTip="Moves checked folders that are in Returned back to the active folder. A preview shows every move first." />
+                                <Button Content="{Binding MarkReturnedText}" Click="MarkReturned_Click" Margin="0,2,6,2"
+                                        Visibility="{Binding CanMarkReturned, Converter={StaticResource Visible}}"
+                                        ToolTip="{Binding MarkReturnedToolTip}" />
                             </WrapPanel>
-                            <Button Grid.Column="1" Style="{StaticResource AccentButton}" Content="{Binding MarkReturnedText}" Click="MarkReturned_Click"
-                                    IsEnabled="{Binding CanMarkReturned}" ToolTip="{Binding MarkReturnedToolTip}" ToolTipService.ShowOnDisabled="True"
+                            <Button Grid.Column="1" Style="{StaticResource AccentButton}" Content="{Binding DownloadCheckedText}" Click="DownloadChecked_Click"
+                                    Visibility="{Binding CanDownloadChecked, Converter={StaticResource Visible}}"
+                                    ToolTip="Download the checked Helix items: one window lists them all with their files and where they go"
                                     VerticalAlignment="Center" Margin="8,0,0,0" />
                         </Grid>
                     </Border>

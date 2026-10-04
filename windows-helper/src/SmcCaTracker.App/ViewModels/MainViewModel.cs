@@ -1716,9 +1716,20 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     }
 
     /// <summary>Hover text for Move to Returned: what "returned" means for this project.</summary>
-    public string MarkReturnedToolTip => CompanyText.Length > 0
-        ? $"{CompanyText} A preview shows every move before anything changes."
-        : "Moves the checked folders into the Returned folder. A preview shows every move before anything changes.";
+    public string MarkReturnedToolTip
+    {
+        get
+        {
+            var rule = CompanyText.Length > 0 ? CompanyText : "Moves the checked folders that are ready to return into the Returned folder.";
+            var others = checks.Returnable - checks.Ready;
+            var note = checks.Returnable == 0 ? ""
+                : checks.Ready == 0 ? " None of the checked folders is ready to return, so you're asked first."
+                : others == 1 ? " 1 checked folder isn't ready to return and stays where it is."
+                : others > 1 ? $" {others} checked folders aren't ready to return and stay where they are."
+                : "";
+            return $"{rule}{note} A preview shows every move before anything changes.";
+        }
+    }
 
     /// <summary>The selected project is a Helix/Procore project with no CA folder chosen yet.</summary>
     public bool IsPlaceholder => SelectedProject?.IsPlaceholder == true;
@@ -1748,9 +1759,9 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     public bool HasActiveFilters => Filter != Filters.Open || HasPersonFilter || DueFilter != DueFilter.Any || DisciplineFilter.Length > 0;
 
     /// <summary>What is checked, worked out once per change (checking every shown row is one change).</summary>
-    private sealed record CheckSummary(int Checked, int Hidden, int Returnable, int MoveBack, int Discipline, int Download)
+    private sealed record CheckSummary(int Checked, int Hidden, int Returnable, int Ready, int MoveBack, int Discipline, int Download)
     {
-        public static readonly CheckSummary None = new(0, 0, 0, 0, 0, 0);
+        public static readonly CheckSummary None = new(0, 0, 0, 0, 0, 0, 0);
     }
 
     private CheckSummary checks = CheckSummary.None;
@@ -1771,6 +1782,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
             checkedRows.Count,
             checkedRows.Count - Rows.Count(row => row.IsChecked),
             Folders(checkedRows.Where(row => row.Row.CanMarkReturned)),
+            Folders(checkedRows.Where(row => row.Row.CanMarkReturned && row.Status == RowStatus.ReadyToReturn)),
             Folders(checkedRows.Where(row => row.Row.CanMoveBack)),
             checkedRows.Count(row => row.CanSelect),
             checkedRows.Where(row => row.CanDownload)
@@ -1802,7 +1814,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
                      nameof(CheckedCount), nameof(HasChecks), nameof(SelectionText), nameof(AllShownChecked),
                      nameof(CanMarkReturned), nameof(MarkReturnedText), nameof(CanMoveBack), nameof(MoveBackText),
                      nameof(CanSetDiscipline), nameof(SetDisciplineText), nameof(CanDownloadChecked), nameof(DownloadCheckedText),
-                     nameof(VerifyCheckedText)
+                     nameof(VerifyCheckedText), nameof(MarkReturnedNeedsConfirm), nameof(MarkReturnedToolTip), nameof(ShowActionBar)
                  })
         {
             OnPropertyChanged(name);
@@ -1812,12 +1824,33 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     public int CheckedCount => checks.Checked;
     public bool HasChecks => checks.Checked > 0;
 
+    private int readyShown;
+
+    /// <summary>Shown rows that are ready to return, for "Check all ready to return".</summary>
+    public int ReadyShownCount => readyShown;
+    public bool HasReadyShown => readyShown > 0;
+    public string CheckReadyText => readyShown == 1 ? "Check the 1 ready to return" : $"Check all {readyShown} ready to return";
+
+    /// <summary>The action bar shows only while something is checked or something shown is ready to return.</summary>
+    public bool ShowActionBar => HasChecks || HasReadyShown;
+
     public string SelectionText => checks.Checked == 0 ? "Nothing checked"
         : checks.Hidden > 0 ? $"{checks.Checked} checked ({checks.Hidden} hidden by filters)"
         : $"{checks.Checked} checked";
 
+    /// <summary>Some checked folders are in the active folder, ready to return or not.</summary>
     public bool CanMarkReturned => checks.Returnable > 0;
-    public string MarkReturnedText => checks.Returnable == 0 ? "Move to Returned…" : $"Move {checks.Returnable} to Returned…";
+
+    /// <summary>
+    /// Move to Returned moves the checked folders that are ready to return. Only when none of them is
+    /// does it offer the other checked folders, and then it asks first.
+    /// </summary>
+    public bool MarkReturnedNeedsConfirm => checks.Ready == 0 && checks.Returnable > 0;
+
+    public string MarkReturnedText => checks.Returnable == 0 ? "Move to Returned…"
+        : checks.Ready == 0 ? $"Move {checks.Returnable} to Returned anyway…"
+        : checks.Ready < checks.Returnable ? $"Move {checks.Ready} ready to Returned…"
+        : $"Move {checks.Ready} to Returned…";
     public bool CanMoveBack => checks.MoveBack > 0;
     public string MoveBackText => checks.MoveBack == 0 ? "Move back to active…" : $"Move {checks.MoveBack} back to active…";
     public bool CanSetDiscipline => checks.Discipline > 0;
@@ -3021,8 +3054,12 @@ public sealed class MainViewModel : ObservableObject, IDisposable
             .OrderBy(row => row, Comparer<RowViewModel>.Create(CompareRows))
             .ToList();
         Rows.ReplaceAll(visible);
+        readyShown = visible.Count(row => row.Status == RowStatus.ReadyToReturn && row.CanSelect);
 
         OnPropertyChanged(nameof(EmptyText));
+        OnPropertyChanged(nameof(ReadyShownCount));
+        OnPropertyChanged(nameof(HasReadyShown));
+        OnPropertyChanged(nameof(CheckReadyText));
         OnPropertyChanged(nameof(HasEmptyText));
         OnPropertyChanged(nameof(HasActiveFilters));
         RaiseChecks();

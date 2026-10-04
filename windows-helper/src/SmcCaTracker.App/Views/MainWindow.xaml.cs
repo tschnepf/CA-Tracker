@@ -795,10 +795,28 @@ public partial class MainWindow : Window
 
     private async void MarkReturned_Click(object sender, RoutedEventArgs e)
     {
-        // A folder shown under both the BB and TFO projects is only planned once.
-        var rows = viewModel.CheckedRows().Where(row => row.Row.CanMarkReturned)
+        // The checked folders that are ready to return. The other checked active folders only when none
+        // is ready, and only after asking. A folder shown under both the BB and TFO projects is planned once.
+        var active = viewModel.CheckedRows().Where(row => row.Row.CanMarkReturned)
             .DistinctBy(row => row.Row.Folder!.FullPath, StringComparer.OrdinalIgnoreCase)
             .ToList();
+        var rows = active.Where(row => row.Status == RowStatus.ReadyToReturn).ToList();
+        if (rows.Count == 0 && active.Count > 0)
+        {
+            var question = active.Count == 1
+                ? "The checked folder isn't ready to return (see its Folder status).\n\nMove it to Returned anyway?"
+                : $"None of the {active.Count} checked folders is ready to return (see their Folder status).\n\nMove them to Returned anyway?";
+            var answer = MessageBox.Show(this, $"{question} A preview shows every move first; nothing changes until you confirm it.",
+                "Move to Returned", MessageBoxButton.YesNo, MessageBoxImage.Warning, MessageBoxResult.No);
+            if (answer != MessageBoxResult.Yes)
+            {
+                viewModel.StatusMessage = "Cancelled — nothing was changed.";
+                return;
+            }
+
+            rows = active;
+        }
+
         if (rows.Count == 0)
         {
             ShowInfo("Check the active folders you want to move into the Returned folder first. \"Check all ready to return\" checks the suggested ones.");
