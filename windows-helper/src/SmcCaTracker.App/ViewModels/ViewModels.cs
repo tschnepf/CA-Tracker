@@ -405,8 +405,23 @@ public sealed class ProjectViewModel : ObservableObject
         }
     }
 
+    private string matchingNoun = "open";
+
+    /// <summary>What the count is of, after the Show filter: "open", "items", "ready", …</summary>
+    public string MatchingNoun
+    {
+        get => matchingNoun;
+        set
+        {
+            if (Set(ref matchingNoun, value))
+            {
+                OnPropertyChanged(nameof(BadgeText));
+            }
+        }
+    }
+
     public bool HasBadge => MatchingCount > 0;
-    public string BadgeText => MatchingCount?.ToString() ?? "";
+    public string BadgeText => MatchingCount is { } count ? $"{count} {matchingNoun}" : "";
     public string BadgeToolTip => MatchingCount == 1 ? "1 item matches the filters above the item list" : $"{MatchingCount} items match the filters above the item list";
     public string OverdueText => $"{OverdueCount} overdue";
     public bool HasOverdue => OverdueCount > 0 && HasBadge;

@@ -281,7 +281,7 @@
                                             <TextBlock Text="{Binding Subtitle}" FontSize="11.5" Foreground="{DynamicResource TextSecondary}"
                                                        TextTrimming="CharacterEllipsis" />
                                         </StackPanel>
-                                        <!-- "2 overdue" (only when some are), then how many items match the list's filters. -->
+                                        <!-- "2 overdue" (only when some are), then how many items match the list's filters ("7 open"). -->
                                         <StackPanel Grid.Column="1" Orientation="Horizontal" Margin="8,0,0,0" VerticalAlignment="Center">
                                             <Border Background="{DynamicResource DangerSoftBrush}" CornerRadius="9" Padding="7,1" Margin="0,0,4,0"
                                                     Visibility="{Binding HasOverdue, Converter={StaticResource Visible}}"

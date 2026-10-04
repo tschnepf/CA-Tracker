@@ -3249,6 +3249,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
 
             var matching = source.Rows.Where(row => MatchesType(row) && Matches(row)).ToList();
             project.OverdueCount = matching.Count(row => row.IsOverdue);
+            project.MatchingNoun = MatchingNoun(matching.Count);
             project.MatchingCount = matching.Count;
         }
 
@@ -3257,6 +3258,17 @@ public sealed class MainViewModel : ObservableObject, IDisposable
             badgeSources.Remove(gone);
         }
     }
+
+    /// <summary>What a project's count is of, for its badge ("12 open", "1 item", "3 ready").</summary>
+    private string MatchingNoun(int count) => Filter switch
+    {
+        Filters.All => count == 1 ? "item" : "items",
+        Filters.Attention => count == 1 ? "needs attention" : "need attention",
+        Filters.Ready => "ready",
+        Filters.NoFolder => "with no folder",
+        Filters.Returned => "in Returned",
+        _ => "open"
+    };
 
     private bool MatchesType(RowViewModel row) =>
         SelectedType == ItemTypeChoices.Both || string.Equals(row.Row.ItemType, SelectedType, StringComparison.OrdinalIgnoreCase);
