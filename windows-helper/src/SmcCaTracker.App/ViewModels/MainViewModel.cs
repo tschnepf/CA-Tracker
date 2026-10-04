@@ -20,6 +20,8 @@ namespace SmcCaTracker.App.ViewModels;
 /// <summary>How the item list is split into sections.</summary>
 public static class GroupModes
 {
+    /// <summary>Overdue, due today, in the next 7 days, later, no due date, closed (the default).</summary>
+    public const string Urgency = "urgency";
     public const string None = "none";
     public const string Project = "project";
     public const string Type = "type";
@@ -81,7 +83,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     private List<RowViewModel> allRows = new();
     private string sortColumn = "Number";
     private bool sortDescending;
-    private string groupBy = GroupModes.ProjectAndType;
+    private string groupBy = GroupModes.Urgency;
     private bool refreshingMany;
     private bool stopMany;
     private readonly DispatcherTimer storeDebounce;
@@ -3278,6 +3280,15 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     /// </summary>
     private int CompareRows(RowViewModel left, RowViewModel right)
     {
+        if (groupBy is GroupModes.Urgency)
+        {
+            var byUrgency = left.Urgency.CompareTo(right.Urgency);
+            if (byUrgency != 0)
+            {
+                return byUrgency;
+            }
+        }
+
         if (groupBy is GroupModes.Project or GroupModes.ProjectAndType)
         {
             var byProject = string.Compare(left.ProjectName, right.ProjectName, StringComparison.CurrentCultureIgnoreCase);
@@ -3542,14 +3553,15 @@ public sealed class MainViewModel : ObservableObject, IDisposable
 
     private void ApplySavedView(ViewState view)
     {
+        view.Upgrade();
         selectedType = view.ItemType is ItemTypeChoices.Both or ItemTypes.Rfi or ItemTypes.Submittal ? view.ItemType : ItemTypeChoices.Both;
         filter = string.IsNullOrWhiteSpace(view.Filter) ? Filters.Open : view.Filter;
         dueFilter = Enum.TryParse<DueFilter>(view.Due, out var due) ? due : DueFilter.Any;
         dueWithinDays = Math.Clamp(view.DueWithinDays, 0, 365);
         disciplineFilter = view.Discipline ?? "";
-        groupBy = view.GroupBy is GroupModes.None or GroupModes.Project or GroupModes.Type or GroupModes.ProjectAndType
+        groupBy = view.GroupBy is GroupModes.Urgency or GroupModes.None or GroupModes.Project or GroupModes.Type or GroupModes.ProjectAndType
             ? view.GroupBy
-            : GroupModes.ProjectAndType;
+            : GroupModes.Urgency;
         sortColumn = string.IsNullOrWhiteSpace(view.SortColumn) ? nameof(RowViewModel.Number) : view.SortColumn;
         sortDescending = view.SortDescending;
         sortBy = view.SortPreset ?? "";
@@ -3602,6 +3614,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
 
         store.SaveViewState(new ViewState
         {
+            Version = ViewState.CurrentVersion,
             // Projects not yet tracked are remembered too; they're matched by id next time.
             SelectedProjectIds = selectedProjects.Select(project => project.Id).ToList(),
             PrimaryProjectId = SelectedProject?.Id,

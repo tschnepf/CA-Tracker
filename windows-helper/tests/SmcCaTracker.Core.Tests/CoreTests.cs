@@ -964,6 +964,44 @@ public class ItemTimingTests
         Assert.Equal("Jan 5, 2027 \u00b7 in 98 days", ItemTiming.DueText(Item(new DateTimeOffset(new DateTime(2027, 1, 5, 12, 0, 0, DateTimeKind.Local))), Today, us));
         Assert.Equal("", ItemTiming.DueText(Item(null), Today, us));
     }
+
+    [Fact]
+    public void ItemsAreGroupedByWhenTheyreDue()
+    {
+        Assert.Equal(Urgency.Overdue, ItemTiming.UrgencyOf(Item(Local(9, 28)), Today));
+        Assert.Equal(Urgency.DueToday, ItemTiming.UrgencyOf(Item(Local(9, 29)), Today));
+        Assert.Equal(Urgency.NextWeek, ItemTiming.UrgencyOf(Item(Local(9, 30)), Today));
+        Assert.Equal(Urgency.NextWeek, ItemTiming.UrgencyOf(Item(Local(10, 6)), Today));
+        Assert.Equal(Urgency.Later, ItemTiming.UrgencyOf(Item(Local(10, 7)), Today));
+        Assert.Equal(Urgency.NoDueDate, ItemTiming.UrgencyOf(Item(null), Today));
+        Assert.Equal(Urgency.NoDueDate, ItemTiming.UrgencyOf(null, Today));
+        Assert.Equal(Urgency.Closed, ItemTiming.UrgencyOf(Item(Local(9, 1), closed: true), Today));
+        // The headings are listed in this order.
+        Assert.True(Urgency.Overdue < Urgency.DueToday && Urgency.DueToday < Urgency.NextWeek && Urgency.Later < Urgency.NoDueDate);
+    }
+}
+
+public class ViewStateTests
+{
+    [Fact]
+    public void AnOldViewGroupedTheOldDefaultWayIsGroupedByWhenItsDue()
+    {
+        var old = new ViewState { Version = 0, GroupBy = "project-type" };
+        old.Upgrade();
+        Assert.Equal("urgency", old.GroupBy);
+        Assert.Equal(ViewState.CurrentVersion, old.Version);
+
+        // A grouping chosen on purpose stays, and an up-to-date view isn't changed again.
+        var chosen = new ViewState { Version = 0, GroupBy = "project" };
+        chosen.Upgrade();
+        Assert.Equal("project", chosen.GroupBy);
+        var current = new ViewState { Version = ViewState.CurrentVersion, GroupBy = "project-type" };
+        current.Upgrade();
+        Assert.Equal("project-type", current.GroupBy);
+    }
+
+    [Fact]
+    public void ANewViewIsGroupedByWhenItsDue() => Assert.Equal("urgency", new ViewState().GroupBy);
 }
 
 public class DefaultPeopleTests

@@ -444,6 +444,7 @@ public sealed class RowViewModel : ObservableObject
         DaysInCourt = ItemTiming.DaysInCourt(row.Item, today);
         DaysTillDue = ItemTiming.DaysTillDue(row.Item, today);
         DueText = ItemTiming.DueText(row.Item, today);
+        Urgency = ItemTiming.UrgencyOf(row.Item, today);
         // Where the folder sits, e.g. "Submittals\Elec\BB" or "Submittals\Elec\~Returned".
         var typeName = FolderLayout.DisplayName(folders.TypeFolder(row.ItemType));
         LocationText = row.Folder is null ? ""
@@ -482,6 +483,10 @@ public sealed class RowViewModel : ObservableObject
     public int? DaysTillDue { get; }
     /// <summary>The Due column: date and countdown, "Sep 7 · 26 days overdue".</summary>
     public string DueText { get; }
+
+    /// <summary>The "When it's due" heading this row is listed under.</summary>
+    public Urgency Urgency { get; }
+    public string UrgencyText => ItemTiming.UrgencyLabel(Urgency);
 
     /// <summary>Hover text for the Due column: the full date with its weekday.</summary>
     public string DueToolTip => Row.Item?.DueAt is { } due ? $"Due {due.ToLocalTime():dddd, MMMM d, yyyy}" : "No due date";

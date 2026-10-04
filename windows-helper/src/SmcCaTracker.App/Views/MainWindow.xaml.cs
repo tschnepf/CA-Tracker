@@ -435,6 +435,11 @@ public partial class MainWindow : Window
         }
 
         view.GroupDescriptions.Clear();
+        if (viewModel.GroupBy is GroupModes.Urgency)
+        {
+            view.GroupDescriptions.Add(new PropertyGroupDescription(nameof(RowViewModel.UrgencyText)));
+        }
+
         if (viewModel.GroupBy is GroupModes.Project or GroupModes.ProjectAndType)
         {
             view.GroupDescriptions.Add(new PropertyGroupDescription(nameof(RowViewModel.ProjectName)));

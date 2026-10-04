@@ -11,6 +11,17 @@ public enum DueFilter
     DueWithin
 }
 
+/// <summary>The item list's "When it's due" headings, in the order they're listed.</summary>
+public enum Urgency
+{
+    Overdue,
+    DueToday,
+    NextWeek,
+    Later,
+    NoDueDate,
+    Closed
+}
+
 /// <summary>Who holds an item now, how long they've had it, and how long until it's due.</summary>
 public static class ItemTiming
 {
@@ -62,6 +73,28 @@ public static class ItemTiming
             var days => $"{date} \u00b7 in {days} days"
         };
     }
+
+    /// <summary>Which "When it's due" heading an item goes under. A folder with no item has no due date.</summary>
+    public static Urgency UrgencyOf(SnapshotItem? item, DateTime today) =>
+        item is { Closed: true } ? Urgency.Closed
+        : DaysTillDue(item, today) switch
+        {
+            null => Urgency.NoDueDate,
+            < 0 => Urgency.Overdue,
+            0 => Urgency.DueToday,
+            <= 7 => Urgency.NextWeek,
+            _ => Urgency.Later
+        };
+
+    public static string UrgencyLabel(Urgency urgency) => urgency switch
+    {
+        Urgency.Overdue => "Overdue",
+        Urgency.DueToday => "Due today",
+        Urgency.NextWeek => "Due in the next 7 days",
+        Urgency.Later => "Due later",
+        Urgency.Closed => "Closed",
+        _ => "No due date"
+    };
 
     public static bool MatchesDue(SnapshotItem? item, DueFilter filter, int withinDays, DateTime today)
     {

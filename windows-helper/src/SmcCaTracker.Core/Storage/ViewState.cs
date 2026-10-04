@@ -8,6 +8,12 @@ namespace SmcCaTracker.Core.Storage;
 /// </summary>
 public sealed class ViewState
 {
+    /// <summary>The layout of the saved view. Older ones are brought up to date once by <see cref="Upgrade"/>.</summary>
+    public const int CurrentVersion = 1;
+
+    /// <summary>0 in views saved before versions were kept.</summary>
+    public int Version { get; set; }
+
     public List<string> SelectedProjectIds { get; set; } = new();
     public string? PrimaryProjectId { get; set; }
     public string ItemType { get; set; } = "all";
@@ -23,7 +29,7 @@ public sealed class ViewState
     public string Due { get; set; } = "Any";
     public int DueWithinDays { get; set; } = 7;
     public string Discipline { get; set; } = "";
-    public string GroupBy { get; set; } = "project-type";
+    public string GroupBy { get; set; } = "urgency";
     public string SortColumn { get; set; } = "Number";
     public bool SortDescending { get; set; }
     public string SortPreset { get; set; } = "number";
@@ -52,6 +58,20 @@ public sealed class ViewState
     /// columns that no longer exist ("DueColumn", merged into Due) are ignored.
     /// </summary>
     public List<string> HiddenColumns { get; set; } = new();
+
+    /// <summary>
+    /// Brings a view saved by an older version up to date, once. Version 1: a list still grouped the old
+    /// default way (project, then type) is grouped by when items are due.
+    /// </summary>
+    public void Upgrade()
+    {
+        if (Version < 1 && GroupBy == "project-type")
+        {
+            GroupBy = "urgency";
+        }
+
+        Version = CurrentVersion;
+    }
 }
 
 /// <summary>Who the Ball in court filter starts with: you, once your Helix or Procore name is known.</summary>
@@ -96,7 +116,7 @@ public sealed class ViewStateStore
             state.Filter ??= "open";
             state.Due ??= "Any";
             state.Discipline ??= "";
-            state.GroupBy ??= "project-type";
+            state.GroupBy ??= "urgency";
             state.SortColumn ??= "Number";
             state.SortPreset ??= "";
             state.ArchivedProjects ??= new List<string>();

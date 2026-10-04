@@ -506,8 +506,9 @@
                     <StackPanel Orientation="Horizontal" Margin="0,0,14,6">
                         <TextBlock Text="Group by" VerticalAlignment="Center" Margin="0,0,8,0" Foreground="{DynamicResource TextSecondary}" />
                         <ComboBox x:Name="GroupBox" SelectionChanged="Group_Changed" MinWidth="140" AutomationProperties.Name="Group by"
-                                  ToolTip="Headings for each project and/or for RFIs and Submittals. Sorting happens within each heading.">
-                            <ComboBoxItem Content="Project, then type" Tag="project-type" IsSelected="True" />
+                                  ToolTip="Headings for when items are due, for each project, or for RFIs and Submittals. Sorting happens within each heading.">
+                            <ComboBoxItem Content="When it's due" Tag="urgency" IsSelected="True" />
+                            <ComboBoxItem Content="Project, then type" Tag="project-type" />
                             <ComboBoxItem Content="Project" Tag="project" />
                             <ComboBoxItem Content="RFIs / Submittals" Tag="type" />
                             <ComboBoxItem Content="Nothing (one list)" Tag="none" />
@@ -543,6 +544,17 @@
                         <DataGrid.RowStyle>
                             <Style TargetType="DataGridRow">
                                 <Setter Property="ContextMenu" Value="{StaticResource RowMenu}" />
+                                <!-- A stripe down the left edge: red when overdue, amber when due today. -->
+                                <Setter Property="BorderThickness" Value="3,0,0,0" />
+                                <Setter Property="BorderBrush" Value="Transparent" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding IsOverdue}" Value="True">
+                                        <Setter Property="BorderBrush" Value="{DynamicResource DangerBrush}" />
+                                    </DataTrigger>
+                                    <DataTrigger Binding="{Binding IsDueToday}" Value="True">
+                                        <Setter Property="BorderBrush" Value="{DynamicResource WarningBrush}" />
+                                    </DataTrigger>
+                                </Style.Triggers>
                             </Style>
                         </DataGrid.RowStyle>
                         <DataGrid.GroupStyle>
@@ -550,7 +562,21 @@
                                 <GroupStyle.HeaderTemplate>
                                     <DataTemplate>
                                         <StackPanel Orientation="Horizontal" Margin="8,10,0,4">
-                                            <TextBlock Text="{Binding Name}" FontWeight="SemiBold" FontSize="13.5" />
+                                            <!-- "Overdue" and "Due today" headings in their colours. -->
+                                            <TextBlock Text="{Binding Name}" FontWeight="SemiBold" FontSize="13.5">
+                                                <TextBlock.Style>
+                                                    <Style TargetType="TextBlock">
+                                                        <Style.Triggers>
+                                                            <DataTrigger Binding="{Binding Name}" Value="Overdue">
+                                                                <Setter Property="Foreground" Value="{DynamicResource DangerBrush}" />
+                                                            </DataTrigger>
+                                                            <DataTrigger Binding="{Binding Name}" Value="Due today">
+                                                                <Setter Property="Foreground" Value="{DynamicResource WarningBrush}" />
+                                                            </DataTrigger>
+                                                        </Style.Triggers>
+                                                    </Style>
+                                                </TextBlock.Style>
+                                            </TextBlock>
                                             <TextBlock Text="{Binding ItemCount, StringFormat=' · {0}'}" Foreground="{DynamicResource TextSecondary}" />
                                         </StackPanel>
                                     </DataTemplate>
