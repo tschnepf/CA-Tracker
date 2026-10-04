@@ -1,0 +1,1090 @@
+<title>CA Tracker UI Review</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@62..125,500..800&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+/* Layout: a 72ch reading column for the review; each mockup breaks out to a wide stage that scrolls
+   sideways inside itself on small screens. Colours are CA Tracker's own Light.xaml / Dark.xaml tokens,
+   so the mockups read as the app. Display face condensed like a drawing title block. */
+:root{
+  --win:#F4F7FA; --surface:#FFFFFF; --surface-alt:#F7F9FB; --line:#D5DEE6; --line-strong:#B4C2CF;
+  --fg:#13202B; --fg2:#4B5E6D; --muted:#5A6B78;
+  --accent:#0B6FB3; --accent-fg:#FFFFFF; --accent-soft:#DCEEFB; --hover:#EEF3F7; --sel:#D6E9F8;
+  --danger:#B3261E; --danger-soft:#FBE3E1; --warn:#8A5A00; --warn-soft:#FFF1D6;
+  --ok:#1E7A45; --ok-soft:#DDF3E6; --neutral-soft:#EBEFF3; --backdrop:rgba(19,32,43,.38);
+  --shadow:0 1px 2px rgba(19,32,43,.06), 0 10px 28px rgba(19,32,43,.10);
+  --f-display:"Archivo","Segoe UI",system-ui,sans-serif;
+  --f-body:"Segoe UI",system-ui,-apple-system,"Helvetica Neue",Arial,sans-serif;
+  --f-mono:"IBM Plex Mono",ui-monospace,Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --win:#0E1720; --surface:#14212C; --surface-alt:#1A2A38; --line:#334555; --line-strong:#4A5E70;
+    --fg:#E9F2F8; --fg2:#A9BFD0; --muted:#829AAA;
+    --accent:#9DD7FF; --accent-fg:#06131F; --accent-soft:#1D3A50; --hover:#213444; --sel:#24445C;
+    --danger:#FFB1A9; --danger-soft:#4A2626; --warn:#FFD27A; --warn-soft:#473816;
+    --ok:#8FE3B0; --ok-soft:#1E3F2E; --neutral-soft:#243442; --backdrop:rgba(0,0,0,.5);
+    --shadow:0 1px 2px rgba(0,0,0,.3), 0 10px 28px rgba(0,0,0,.35);
+    color-scheme:dark;
+  }
+}
+:root[data-theme="dark"]{
+  --win:#0E1720; --surface:#14212C; --surface-alt:#1A2A38; --line:#334555; --line-strong:#4A5E70;
+  --fg:#E9F2F8; --fg2:#A9BFD0; --muted:#829AAA;
+  --accent:#9DD7FF; --accent-fg:#06131F; --accent-soft:#1D3A50; --hover:#213444; --sel:#24445C;
+  --danger:#FFB1A9; --danger-soft:#4A2626; --warn:#FFD27A; --warn-soft:#473816;
+  --ok:#8FE3B0; --ok-soft:#1E3F2E; --neutral-soft:#243442; --backdrop:rgba(0,0,0,.5);
+  --shadow:0 1px 2px rgba(0,0,0,.3), 0 10px 28px rgba(0,0,0,.35);
+  color-scheme:dark;
+}
+*{box-sizing:border-box}
+body{background:var(--win);color:var(--fg);font:15px/1.6 var(--f-body);margin:0}
+.page{max-width:1240px;margin:0 auto;padding-inline:clamp(16px,4vw,44px);padding-block:36px 96px}
+.prose{max-width:74ch}
+h1,h2,h3{font-family:var(--f-display);text-wrap:balance;margin:0}
+h1{font-size:clamp(36px,6vw,60px);font-weight:800;font-stretch:78%;line-height:1;letter-spacing:-.01em}
+h2{font-size:clamp(26px,3.4vw,34px);font-weight:750;font-stretch:82%;line-height:1.1;margin-top:72px}
+h3{font-size:20px;font-weight:700;font-stretch:90%;line-height:1.25}
+p{margin:12px 0}
+a{color:var(--accent)}
+code,.mono{font-family:var(--f-mono);font-size:.86em}
+.eyebrow{font:600 11.5px/1.3 var(--f-body);letter-spacing:.09em;text-transform:uppercase;color:var(--muted)}
+.lede{font-size:18px;line-height:1.55;color:var(--fg);max-width:68ch}
+.muted{color:var(--fg2)}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+
+/* Title block, like the corner of a drawing sheet */
+.titleblock{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));border:1.5px solid var(--fg);margin-bottom:28px;background:var(--surface)}
+.titleblock div{padding:8px 12px;border-left:1px solid var(--line-strong);min-width:0}
+.titleblock div:first-child{border-left:0}
+.titleblock span{display:block;font:600 10px/1.2 var(--f-body);letter-spacing:.1em;text-transform:uppercase;color:var(--muted)}
+.titleblock b{display:block;font:500 13px/1.35 var(--f-mono);margin-top:3px;overflow-wrap:anywhere}
+@media (max-width:760px){.titleblock{grid-template-columns:repeat(2,minmax(0,1fr))}.titleblock div{border-left:0;border-top:1px solid var(--line-strong)}.titleblock div:nth-child(-n+2){border-top:0}.titleblock div:nth-child(even){border-left:1px solid var(--line-strong)}}
+
+.toc{display:flex;flex-wrap:wrap;gap:6px 18px;margin-top:22px;font-size:14px}
+.toc a{text-decoration:none;font-weight:600}
+
+/* Verdict */
+.verdict{margin-top:30px;display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}
+.verdict div{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:16px 18px}
+.verdict b{display:block;font:700 15px/1.3 var(--f-body);margin-bottom:6px}
+.verdict p{margin:0;font-size:14px;color:var(--fg2)}
+@media (max-width:860px){.verdict{grid-template-columns:1fr}}
+
+/* Scorecard */
+.tablewrap{overflow-x:auto;margin-top:18px;border:1px solid var(--line);border-radius:10px;background:var(--surface)}
+table.score{border-collapse:collapse;width:100%;min-width:720px;font-size:14px}
+.score th{font:600 11.5px/1.3 var(--f-body);letter-spacing:.07em;text-transform:uppercase;color:var(--muted);text-align:left;padding:12px 16px;border-bottom:1px solid var(--line);background:var(--surface-alt)}
+.score td{padding:13px 16px;border-bottom:1px solid var(--line);vertical-align:top}
+.score tr:last-child td{border-bottom:0}
+.score td:first-child{font-weight:600;width:26%}
+.score td.today{color:var(--fg2);width:44%}
+.steps{display:inline-block;font:600 12px/1 var(--f-body);padding:4px 8px;border-radius:10px;margin-bottom:6px;font-variant-numeric:tabular-nums}
+.steps.bad{background:var(--danger-soft);color:var(--danger)}
+.steps.good{background:var(--ok-soft);color:var(--ok)}
+
+/* Findings */
+.legend{display:flex;flex-wrap:wrap;gap:8px 18px;margin-top:14px;font-size:13.5px;color:var(--fg2)}
+.sev{display:inline-block;font:700 11px/1 var(--f-body);letter-spacing:.06em;text-transform:uppercase;padding:4px 8px;border-radius:9px;vertical-align:2px}
+.sev.crit{background:var(--danger-soft);color:var(--danger)}
+.sev.high{background:var(--warn-soft);color:var(--warn)}
+.sev.med{background:var(--neutral-soft);color:var(--fg2)}
+.findings{margin-top:20px}
+.finding{display:grid;grid-template-columns:52px minmax(0,1fr);gap:4px 16px;padding-block:24px;border-top:1px solid var(--line)}
+.delta{width:44px;height:40px;color:var(--fg);font:700 14px var(--f-mono);display:grid;place-items:center}
+.delta svg{width:44px;height:40px;display:block}
+.delta.crit{color:var(--danger)} .delta.high{color:var(--warn)} .delta.med{color:var(--muted)}
+.finding h3{margin-bottom:2px}
+.finding .body{max-width:76ch;min-width:0}
+.finding p{margin:8px 0;font-size:15px}
+.evidence{font:400 12.5px/1.6 var(--f-mono);color:var(--fg2);margin-top:6px;overflow-wrap:anywhere}
+.fix{margin-top:10px;padding:10px 14px;border-left:3px solid var(--accent);background:var(--surface);border-radius:0 8px 8px 0;font-size:14.5px}
+.fix b{color:var(--accent);font-weight:700;margin-right:6px}
+.tags{display:inline-flex;flex-wrap:wrap;gap:4px;vertical-align:1px}
+.tag{font:600 11.5px/1 var(--f-mono);padding:4px 6px;border:1px solid var(--line-strong);border-radius:6px;color:var(--fg2);background:var(--surface)}
+.keep{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px 28px;margin-top:14px;padding:0;list-style:none;font-size:14.5px}
+.keep li{padding-left:22px;position:relative}
+.keep li::before{content:"✓";position:absolute;left:0;color:var(--ok);font-weight:700}
+@media (max-width:760px){.keep{grid-template-columns:1fr}}
+
+/* Mockup stage */
+.stage{margin-top:40px}
+.stage-head{display:flex;flex-wrap:wrap;align-items:baseline;justify-content:space-between;gap:6px 18px;max-width:100%}
+.stage-head h3{font-size:22px}
+.stage-note{font-size:14.5px;color:var(--fg2);max-width:80ch;margin:6px 0 14px}
+.scroller{overflow-x:auto;padding:2px 2px 12px}
+.hint{font-size:13px;color:var(--muted);margin-top:4px}
+
+/* ---------- The app (mockups) ---------- */
+.win{min-width:1120px;border:1px solid var(--line-strong);border-radius:10px;background:var(--win);box-shadow:var(--shadow);overflow:hidden;font:13px/1.4 var(--f-body);color:var(--fg);position:relative}
+.win *{font-family:inherit}
+.os-bar{height:30px;display:flex;align-items:center;gap:8px;padding:0 12px;font-size:12px;color:var(--fg2);background:var(--surface);border-bottom:1px solid var(--line)}
+.os-bar .ctl{margin-left:auto;letter-spacing:14px;color:var(--muted)}
+.app-bar{display:flex;gap:10px;align-items:center;padding:9px 16px;background:var(--surface);border-bottom:1px solid var(--line)}
+.search{flex:0 1 440px;border:1px solid var(--line);border-radius:6px;padding:6px 10px;color:var(--muted);background:var(--win)}
+.spacer{flex:1}
+.btn{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--line);background:var(--surface-alt);color:var(--fg);border-radius:6px;padding:6px 12px;font:inherit;line-height:1.2;cursor:pointer;white-space:nowrap}
+.btn:hover{border-color:var(--accent)}
+.btn.primary{background:var(--accent);border-color:var(--accent);color:var(--accent-fg);font-weight:600}
+.btn.link{background:transparent;border-color:transparent;color:var(--accent);padding:3px 6px}
+.btn.link:hover{border-color:transparent;text-decoration:underline}
+.btn.sm{padding:4px 10px;font-size:12.5px}
+.btn[disabled]{opacity:.45;cursor:default}
+.btn.ghost{background:transparent}
+.syncpill{display:inline-flex;align-items:center;gap:7px;font-size:12.5px;color:var(--fg2);border:1px solid var(--line);border-radius:14px;padding:4px 11px;background:var(--surface)}
+.dot{width:8px;height:8px;border-radius:50%;background:var(--ok);display:inline-block}
+.dot.warn{background:var(--warn)}
+.card{background:var(--surface);border:1px solid var(--line);border-radius:10px}
+.body3{display:grid;grid-template-columns:232px minmax(0,1fr) 336px;gap:14px;padding:14px;height:640px}
+.body2{display:grid;grid-template-columns:232px minmax(0,1fr);gap:14px;padding:14px}
+.rail{padding:8px;overflow:hidden}
+.rail h6{font:600 11px/1 var(--f-body);color:var(--muted);letter-spacing:.07em;text-transform:uppercase;margin:12px 8px 6px;display:flex;justify-content:space-between}
+.rail h6 em{font-style:normal;letter-spacing:0;text-transform:none;font-weight:400}
+.nav{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:7px 10px;border-radius:8px;color:var(--fg)}
+.nav.on{background:var(--sel)}
+.nav .nm{font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.nav small{display:block;font-size:11.5px;color:var(--fg2);font-weight:400;white-space:nowrap}
+.cnt{font:600 11.5px/1 var(--f-body);padding:3px 7px;border-radius:9px;background:var(--accent-soft);color:var(--fg);font-variant-numeric:tabular-nums}
+.cnt.late{background:var(--danger-soft);color:var(--danger)}
+.lt{color:var(--danger);font-weight:600}
+.td{color:var(--warn);font-weight:600}
+.collapsed{color:var(--fg2);padding:8px 10px;font-size:12.5px}
+.pane{display:flex;flex-direction:column;min-width:0;padding:14px 16px;position:relative}
+.pane-h{display:flex;align-items:baseline;gap:12px}
+.pane-h h4{font:600 18px/1.2 var(--f-body);margin:0}
+.pane-h .sub{color:var(--fg2);font-size:12.5px}
+.tiles{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));border:1px solid var(--line);border-radius:8px;overflow:hidden;margin-top:12px}
+.tile{padding:7px 12px 8px;text-align:left;border:0;border-left:1px solid var(--line);background:var(--surface);cursor:pointer;font:inherit;color:var(--fg)}
+.tile:first-child{border-left:0}
+.tile b{display:block;font-size:20px;line-height:1.2;font-weight:600;font-variant-numeric:tabular-nums}
+.tile span{font-size:12px;color:var(--fg2)}
+.tile.late b{color:var(--danger)} .tile.today b{color:var(--warn)}
+.tile:hover{background:var(--hover)}
+.tile[aria-pressed="true"]{background:var(--sel);box-shadow:inset 0 -2px 0 var(--accent)}
+.chips{display:flex;gap:6px;align-items:center;margin-top:10px;flex-wrap:wrap}
+.chip{border:1px solid var(--line);border-radius:14px;padding:4px 11px;background:var(--surface);font:inherit;color:var(--fg2);cursor:pointer;white-space:nowrap}
+.chip:hover{border-color:var(--accent)}
+.chip[aria-pressed="true"]{background:var(--accent-soft);border-color:var(--accent);color:var(--fg)}
+.chip.person{color:var(--fg);font-weight:600;background:var(--accent-soft);border-color:var(--accent)}
+.chip.add{border-style:dashed}
+.gridwrap{flex:1;overflow:auto;margin-top:10px;border:1px solid var(--line);border-radius:8px;background:var(--surface)}
+table.items{width:100%;border-collapse:collapse;font-variant-numeric:tabular-nums}
+.items th{position:sticky;top:0;z-index:1;text-align:left;font-weight:600;color:var(--fg2);font-size:12px;padding:6px 8px;background:var(--surface-alt);border-bottom:1px solid var(--line);white-space:nowrap}
+.items td{padding:0 8px;height:36px;border-bottom:1px solid var(--line);white-space:nowrap}
+.items tr.grp td{height:30px;font-weight:600;font-size:12px;letter-spacing:.04em;text-transform:uppercase;color:var(--fg2);background:var(--surface);border-bottom:1px solid var(--line)}
+.items tr.grp.late td{color:var(--danger)} .items tr.grp.today td{color:var(--warn)}
+.items tr.row{cursor:pointer}
+.items tr.row:hover td{background:var(--hover)}
+.items tr.row.on td{background:var(--sel)}
+.items td.stripe{width:4px;padding:0}
+.stripe i{display:block;width:4px;height:35px}
+.stripe i.late{background:var(--danger)} .stripe i.today{background:var(--warn)}
+.items td.ck{width:30px;padding:0 4px 0 8px}
+.items input[type=checkbox]{width:15px;height:15px;accent-color:var(--accent);cursor:pointer;margin:0;vertical-align:middle}
+.due b{font-weight:600}
+.due small{margin-left:6px;font-size:12px}
+.num{font-family:var(--f-mono);font-size:12px;color:var(--fg2)}
+.ttl{max-width:300px;overflow:hidden;text-overflow:ellipsis}
+.flag{display:inline-block;font-size:11px;font-weight:600;padding:2px 7px;border-radius:9px;background:var(--warn-soft);color:var(--warn);margin-left:6px;vertical-align:1px}
+.flag.ok{background:var(--ok-soft);color:var(--ok)}
+.split{display:inline-flex}
+.split .btn{border-radius:6px 0 0 6px}
+.split .btn+.btn{border-radius:0 6px 6px 0;border-left:0;padding-inline:7px}
+tr.row.on .split .btn,tr.row:hover .split .btn{border-color:var(--accent)}
+.selbar{display:flex;align-items:center;gap:8px;margin-top:10px;padding:8px 12px;border:1px solid var(--accent);border-radius:8px;background:var(--accent-soft)}
+.selbar[hidden]{display:none!important}
+.status-line{min-height:20px;margin-top:8px;font-size:12.5px;color:var(--ok)}
+.menu{position:absolute;z-index:5;min-width:220px;background:var(--surface);border:1px solid var(--line);border-radius:6px;padding:4px;box-shadow:var(--shadow)}
+.menu button{display:block;width:100%;text-align:left;border:0;background:transparent;color:var(--fg);font:inherit;padding:7px 10px;border-radius:4px;cursor:pointer}
+.menu button:hover,.menu button:focus-visible{background:var(--hover)}
+.menu hr{border:0;border-top:1px solid var(--line);margin:4px 6px}
+.details{padding:16px;display:flex;flex-direction:column;gap:14px;overflow:auto;min-width:0}
+.details .crumb{font-size:12px;color:var(--fg2)}
+.details h5{font:600 16px/1.3 var(--f-body);margin:2px 0 0}
+.kv{display:grid;grid-template-columns:70px minmax(0,1fr);gap:7px 10px;font-size:12.5px}
+.kv dt{color:var(--fg2)} .kv dd{margin:0;min-width:0;overflow-wrap:anywhere}
+.files{border:1px solid var(--line);border-radius:8px}
+.files div{display:grid;grid-template-columns:minmax(0,1fr) auto auto;gap:10px;align-items:center;padding:7px 10px;border-top:1px solid var(--line);font-size:12.5px}
+.files div:first-child{border-top:0}
+.files .fn{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.files small{color:var(--fg2)}
+.sect{font:600 11px/1 var(--f-body);letter-spacing:.07em;text-transform:uppercase;color:var(--muted);margin-bottom:6px}
+.openbig{display:flex;flex-direction:column;align-items:flex-start;gap:2px;width:100%;padding:9px 12px}
+.openbig small{font-weight:400;opacity:.85;font-size:12px}
+.row-actions{display:flex;gap:6px;flex-wrap:wrap}
+.note{font-size:12px;color:var(--fg2)}
+
+/* Team board */
+table.matrix{border-collapse:separate;border-spacing:6px;width:100%;table-layout:fixed}
+.matrix th{font-size:12px;font-weight:600;color:var(--fg2);text-align:left;padding:4px 6px;vertical-align:bottom}
+.matrix th.p{width:150px}
+.matrix th.tot{width:96px}
+.matrix td{padding:0}
+.matrix .who{font-weight:600;font-size:13px}
+.matrix .who small{display:block;font-weight:400;color:var(--fg2);font-size:11.5px}
+.cell{width:100%;height:56px;border:1px solid var(--line);border-radius:7px;background:var(--surface);text-align:left;padding:6px 10px;cursor:pointer;font:inherit;color:var(--fg)}
+.cell b{font-size:19px;font-weight:600;font-variant-numeric:tabular-nums;margin-right:4px}
+.cell span{color:var(--fg2);font-size:12px}
+.cell.h0 b{color:var(--fg2)}
+.cell.h1{border-color:var(--danger)} .cell.h1 b{color:var(--danger)}
+.cell.h2{background:var(--danger-soft);border-color:var(--danger)} .cell.h2 b{color:var(--danger)}
+.cell:hover{border-color:var(--accent)}
+.cell[aria-pressed="true"]{outline:2px solid var(--accent);outline-offset:1px}
+.cell.off{cursor:default;border-style:dashed;color:var(--muted);background:repeating-linear-gradient(135deg,transparent 0 7px,var(--neutral-soft) 7px 8px);font-size:12px}
+.tot-cell{padding:6px 10px;font-size:12px;color:var(--fg2)}
+.tot-cell b{font-size:16px;color:var(--fg);font-variant-numeric:tabular-nums}
+.tot-cell b.lt{color:var(--danger)}
+.drill{margin-top:12px;border:1px solid var(--line);border-radius:8px;background:var(--surface)}
+.drill-h{display:flex;align-items:center;gap:10px;padding:10px 12px;border-bottom:1px solid var(--line)}
+.drill-h b{font-size:14px}
+.copied{font-size:12px;color:var(--ok)}
+pre.copytext{margin:0;padding:10px 12px;font:12px/1.5 var(--f-mono);white-space:pre-wrap;border-top:1px solid var(--line);color:var(--fg2)}
+
+/* Watchlist dialog */
+.backdrop{background:var(--backdrop);padding:26px 0}
+.dialog{width:960px;margin:0 auto;background:var(--surface);border:1px solid var(--line-strong);border-radius:10px;box-shadow:var(--shadow);padding:20px 22px}
+.dialog h4{font:600 17px/1.2 var(--f-body);margin:0}
+.field{display:flex;align-items:center;gap:10px;margin-top:12px}
+.field label{color:var(--fg2)}
+.field input[type=text]{font:inherit;color:var(--fg);background:var(--win);border:1px solid var(--line);border-radius:6px;padding:6px 10px;width:260px}
+table.pick{width:100%;border-collapse:collapse;margin-top:14px;table-layout:fixed}
+.pick th,.pick td{border-bottom:1px solid var(--line);padding:8px 8px;text-align:center}
+.pick th{font-size:12px;font-weight:600;color:var(--fg2);vertical-align:bottom;background:var(--surface-alt)}
+.pick th:first-child,.pick td:first-child{text-align:left;width:200px}
+.pick th.all,.pick td.all{width:70px}
+.pick td small{display:block;font-size:11px;color:var(--fg2);margin-top:2px;white-space:nowrap}
+.pick td small.lt{color:var(--danger)}
+.pick input{width:17px;height:17px;accent-color:var(--accent);cursor:pointer}
+.pick tr.grp td{background:transparent;text-align:left;font:600 11px/1 var(--f-body);letter-spacing:.07em;text-transform:uppercase;color:var(--muted);padding-top:14px}
+.pick .colall{display:block;margin:4px auto 0;font-size:11.5px}
+.dlg-foot{display:flex;align-items:center;gap:10px;margin-top:16px}
+.dlg-foot .sum{color:var(--fg2)}
+.dlg-foot .sum b{color:var(--fg)}
+
+/* Before / after strips */
+.strip{padding:12px 16px;background:var(--surface);border-bottom:1px solid var(--line)}
+.strip:last-child{border-bottom:0}
+.strip-label{font:600 11px/1 var(--f-body);letter-spacing:.07em;text-transform:uppercase;color:var(--muted);margin-bottom:10px;display:flex;gap:10px;align-items:center}
+.fake{display:flex;flex-wrap:wrap;gap:8px 14px;align-items:center}
+.seg{display:inline-flex;gap:6px}
+.seg span{border:1px solid var(--line);border-radius:14px;padding:4px 12px;color:var(--fg2)}
+.seg span.on{background:var(--accent-soft);border-color:var(--accent);color:var(--fg)}
+.lbl{color:var(--fg2);margin-right:6px}
+.combo{display:inline-block;border:1px solid var(--line);border-radius:6px;padding:5px 28px 5px 10px;background:var(--win);position:relative;min-width:110px}
+.combo::after{content:"";position:absolute;right:11px;top:50%;width:6px;height:6px;border-right:1.5px solid var(--fg2);border-bottom:1.5px solid var(--fg2);transform:translateY(-70%) rotate(45deg)}
+.bar{display:flex;flex-wrap:wrap;gap:6px;align-items:center;border:1px solid var(--line);border-radius:10px;padding:8px 12px;background:var(--surface)}
+.bar.sel{border-color:var(--accent);background:var(--accent-soft)}
+.mark{display:inline-grid;place-items:center;width:20px;height:20px;border-radius:50%;background:var(--danger);color:var(--surface);font:700 11px/1 var(--f-body);margin-left:4px}
+
+/* Download / filing */
+.dl{padding:18px 20px;background:var(--surface)}
+.dl h4{font:600 18px/1.2 var(--f-body);margin:0}
+.dlitem{border:1px solid var(--line);border-radius:6px;padding:8px 12px;margin-top:10px}
+.dlitem-h{display:flex;align-items:center;gap:8px}
+.dlitem-h b{flex:1;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.chipst{font-size:12px;padding:2px 8px;border-radius:10px;background:var(--accent-soft)}
+.chipst.ok{background:var(--ok-soft);color:var(--ok)}
+.frow{display:grid;grid-template-columns:24px minmax(0,1fr) 120px 200px 70px;align-items:center;gap:8px;padding:4px 0 4px 26px;font-size:12.5px}
+.frow small{color:var(--fg2)}
+.dest{padding:4px 0 6px 26px;font-size:12.5px;color:var(--fg2);display:flex;gap:8px;align-items:center}
+.dl-foot{display:flex;align-items:center;gap:10px;margin-top:14px}
+.tabs{display:flex;gap:4px;border-bottom:1px solid var(--line);margin-top:12px}
+.tabs span{padding:8px 12px;color:var(--fg2);border-bottom:2px solid transparent;margin-bottom:-1px;white-space:nowrap}
+.tabs span.on{color:var(--fg);border-color:var(--accent);font-weight:600}
+.tabs span b{font-weight:600;margin-left:4px;font-variant-numeric:tabular-nums}
+
+/* Roadmap */
+.phases{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px;margin-top:20px}
+.phase{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:18px 18px 8px;min-width:0}
+.phase .eyebrow{margin-bottom:4px}
+.phase h3{font-size:19px;margin-bottom:8px}
+.phase ul{margin:0;padding:0;list-style:none}
+.phase li{padding:10px 0;border-top:1px solid var(--line);font-size:14px}
+.phase li .tags{margin-left:4px}
+.phase li p{margin:4px 0 0;font-size:13px;color:var(--fg2)}
+@media (max-width:980px){.phases{grid-template-columns:1fr}}
+.rules{margin-top:22px;padding:14px 18px;border:1px dashed var(--line-strong);border-radius:10px;font-size:14px;color:var(--fg2)}
+.rules b{color:var(--fg)}
+@media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
+</style>
+
+<div class="page">
+  <div class="titleblock" aria-label="Review details">
+    <div><span>Project</span><b>SMC CA Tracker</b></div>
+    <div><span>Sheet</span><b>UI review · markup set A</b></div>
+    <div><span>Build</span><b>download-window @ e8284bc</b></div>
+    <div><span>Date</span><b>2026-10-03</b></div>
+    <div><span>Looked at</span><b>source + running app, read-only</b></div>
+  </div>
+
+  <p class="eyebrow">Harsh review · usability for engineers and project coordinators</p>
+  <h1>CA Tracker UI Review</h1>
+  <div class="prose">
+    <p class="lede">CA Tracker does the hard part well. It reads Helix and Procore in the background, matches every item to its CA folder, and puts a preview in front of every folder move. The screen doesn't show that off. It's laid out around how the tool works (sync, links, folder reconciliation) when people open it for three things: what's on my plate, what's late, and opening the document. Coordinators can't ask their basic question at all.</p>
+  </div>
+  <nav class="toc" aria-label="Sections">
+    <a href="#scorecard">Task scorecard</a><a href="#findings">16 findings</a><a href="#mockups">6 mockups</a><a href="#roadmap">Roadmap</a>
+  </nav>
+
+  <div class="verdict">
+    <div><b>1 · Open on "My work"</b><p>Every project, ball in court = you, grouped Overdue / Due today / Next 7 days / Later. The app already knows your name from the Helix sign-in.</p></div>
+    <div><b>2 · Make "Open" the row's main action</b><p>One click ends in the PDF, not in an Explorer window. Downloading is a step inside it, not a separate job.</p></div>
+    <div><b>3 · Watchlists for coordinators</b><p>Pick people per project in a checkbox grid, then see a people × projects board with overdue counts in each cell.</p></div>
+  </div>
+
+  <!-- ============ SCORECARD ============ -->
+  <h2 id="scorecard">Task scorecard</h2>
+  <div class="prose"><p>The jobs these people do every day, counted against the current build. Step counts are from the source and the running window, assuming the person already knows where everything is.</p></div>
+  <div class="tablewrap">
+    <table class="score">
+      <thead><tr><th>Task</th><th>Today</th><th>Proposed</th></tr></thead>
+      <tbody>
+        <tr><td>See everything that's mine and overdue, across projects</td>
+          <td class="today"><span class="steps bad">~9 clicks</span><br>Click a project, Ctrl-click four more (the hint is 11.5px grey text under the list), open Ball in court, find and check your own name, Due ▾ → Overdue. One plain click in the project list drops the multi-selection and you start again.</td>
+          <td><span class="steps good">0 clicks</span><br>The app opens there. "Overdue" is a number at the top you can click.</td></tr>
+        <tr><td>Open the latest response on an RFI</td>
+          <td class="today"><span class="steps bad">6+ steps, 2 windows</span><br>Download → a window reads a hidden Helix page → check files → Download → Open folder → find the PDF in Explorer → double-click it.</td>
+          <td><span class="steps good">1 click</span><br><b>Open</b> opens the newest file, downloading it into the item's folder first if it isn't there.</td></tr>
+        <tr><td>See when something is due</td>
+          <td class="today"><span class="steps bad">hidden</span><br>The Due date column is off by default. You see "In 4 days"; the date is in a tooltip.</td>
+          <td><span class="steps good">visible</span><br>Date and countdown in the first column, rows grouped by how urgent they are.</td></tr>
+        <tr><td>Coordinator: Ana and Raj on Riverside, Lee on Northgate</td>
+          <td class="today"><span class="steps bad">not possible</span><br>Ball in court is one list of names applied to every project on screen. Checking Lee shows Lee everywhere.</td>
+          <td><span class="steps good">1 click</span><br>A saved watchlist with people chosen per project.</td></tr>
+        <tr><td>Coordinator: who is sitting on the most overdue items?</td>
+          <td class="today"><span class="steps bad">not possible</span><br>No per-person counts anywhere in the app.</td>
+          <td><span class="steps good">1 click</span><br>Team board: people × projects, overdue and open counts in each cell.</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <!-- ============ FINDINGS ============ -->
+  <h2 id="findings">Findings</h2>
+  <div class="legend">
+    <span><span class="sev crit">Critical</span> blocks a core job or invites the wrong action</span>
+    <span><span class="sev high">High</span> slows every session</span>
+    <span><span class="sev med">Medium</span> consistency and polish</span>
+  </div>
+  <p class="muted" style="font-size:14px;margin-top:10px">Triangles are revision deltas: the mockups below say which ones they fix.</p>
+
+  <div class="findings">
+    <article class="finding" id="f1"><div class="delta crit" data-n="1">1</div><div class="body">
+      <h3>There is no "my work" view <span class="sev crit">Critical</span></h3>
+      <p>The app records who you are: Helix gives your full name at sign-in, in the same form as the ball-in-court names, and Connections shows it as "Signed in as…". The item list never uses it. Every session starts on a single project with Ball in court set to "Everyone". Seeing your own items across projects depends on Ctrl-click, explained in small grey text at the bottom of the project list.</p>
+      <div class="evidence">ViewModels/MainViewModel.cs:528 (PersonFilterText → "Everyone") · :884 ("Signed in as") · Scripts/bridge-core.js:265 (currentUser → fullName) · Views/MainWindow.xaml:172</div>
+      <div class="fix"><b>Fix</b>A "My work" entry at the top of the project list, selected on first launch: all tracked projects, ball in court = the signed-in name, grouped by urgency. "Overdue, all projects" sits under it.</div>
+    </div></article>
+
+    <article class="finding" id="f2"><div class="delta crit" data-n="2">2</div><div class="body">
+      <h3>Coordinators can't choose people per project <span class="sev crit">Critical</span></h3>
+      <p>The Ball in court checks are one set of names applied to every project on screen. Checking Raj for Riverside also shows Raj's items on Northgate, where you don't manage him. The list offers only people who hold something right now, so you can't add a team member until they're given an item. Someone checked earlier who holds nothing here shows greyed as "(nothing here)", still filtering.</p>
+      <div class="evidence">ViewModels/MainViewModel.cs:76 (rememberedPeople, one HashSet) · :3166 MatchesPerson · :3260 RebuildPersonOptions (current holders only)</div>
+      <div class="fix"><b>Fix</b>Watchlists: saved sets of project → people. Pick from everyone who holds an item or is next on one (current and upcoming holders are both in the synced data). A people × projects board shows the counts.</div>
+    </div></article>
+
+    <article class="finding" id="f3"><div class="delta crit" data-n="3">3</div><div class="body">
+      <h3>The loudest button moves folders, and it's offered for open items <span class="sev crit">Critical</span></h3>
+      <p>The only accent-coloured button in the action bar is "Move N to Returned…". N counts every checked row whose folder is in the active folder, whether or not the item is Ready to return. In the running window, five open items in your court (three of them overdue) were checked and the bar offered <b>Move 4 to Returned…</b> in bright blue. The preview stops an accident, but people check those rows to download them, and the screen tells them filing is the main thing to do.</p>
+      <div class="evidence">Core/Comparison/ProjectComparer.cs:56 (CanMarkReturned ⇔ folder is active) · Views/MainWindow.xaml:735</div>
+      <div class="fix"><b>Fix</b>The main button follows what's checked: Open, then Download. Moving to Returned lives in a Filing view and counts only rows that are Ready to return; anything else needs an explicit "also move items still in court" choice inside the preview, which keeps its Cancel button.</div>
+    </div></article>
+
+    <article class="finding" id="f4"><div class="delta crit" data-n="4">4</div><div class="body">
+      <h3>"Download and open" never opens anything <span class="sev crit">Critical</span></h3>
+      <p>Download opens a second window, reads a hidden Helix page, lists the files, saves them, and ends at an "Open folder" link that starts Explorer. Nothing opens the file itself. "Open Online" does two different things: Helix items open in a side panel, Procore items in your web browser. Double-clicking a row opens the folder, or the item when there's no folder, and only a tooltip on the Folder column says so.</p>
+      <div class="evidence">Views/DownloadWindow.xaml.cs:331 (only explorer.exe) · Views/MainWindow.xaml:583 · Views/MainWindow.xaml.cs:1056</div>
+      <div class="fix"><b>Fix</b>One <b>Open ▾</b> split button per row. The click opens the newest file (downloading it into the item folder first if it's missing). The menu has Open folder, Open in Helix/Procore, Download files… and Verify folder. Enter opens the selected row, Space checks it.</div>
+    </div></article>
+
+    <article class="finding" id="f5"><div class="delta high" data-n="5">5</div><div class="body">
+      <h3>Overdue is a text colour in one column <span class="sev high">High</span></h3>
+      <p>Only the "Days till due" text turns red. The rows look the same otherwise, there's no count above the list, and the date is hidden by default. The project-list badge ("2 overdue" then a bare "3") is the best urgency signal in the app, but nothing says what the 3 is, and both numbers change meaning silently when the filters change.</p>
+      <div class="evidence">Core/Storage/ViewState.cs:48 (HiddenColumns = DueColumn) · Views/MainWindow.xaml:628, :280–292 · ViewModels/ViewModels.cs:410 (meaning only in a tooltip)</div>
+      <div class="fix"><b>Fix</b>Group by urgency by default (Overdue · Due today · Next 7 days · Later · No due date), a red or amber stripe on the row's left edge, and a summary strip whose numbers are filters. Badges say what they count: "3 late · 5 open".</div>
+    </div></article>
+
+    <article class="finding" id="f6"><div class="delta high" data-n="6">6</div><div class="body">
+      <h3>Fourteen columns, several saying the same thing <span class="sev high">High</span></h3>
+      <p>Title and Folder repeat each other: "000252 - BMS Panel…" appears twice on every row. Ball in court shows your name on every row once you've filtered to yourself. "Item status" (Review) sits next to "Folder status" (Open): two status columns, and the second one's "Open" pill says nothing. Discipline has a permanent "Set" link on every row for a rare setup task. The 268px action column repeats "Folder · Open Online · Download" in blue down the page, and when everything is a link nothing stands out.</p>
+      <div class="evidence">Views/MainWindow.xaml:557–692 · running window, 7 rows</div>
+      <div class="fix"><b>Fix</b>Default columns: Due, Project (when several), Number, Title, With / Days with them, Open ▾. Ball in court hides itself when one person is filtered. Folder state shows only when something's wrong (no folder yet, ready to return, two folders). Discipline moves to the details pane and the right-click menu.</div>
+    </div></article>
+
+    <article class="finding" id="f7"><div class="delta high" data-n="7">7</div><div class="body">
+      <h3>Seven filter controls, all the same weight <span class="sev high">High</span></h3>
+      <p>Type tabs, Show, Ball in court, Due, Discipline, Group by and Sort by share one row that wraps onto two lines in the default 1280px window. "Show" mixes two questions: which items (Open, All) and folder housekeeping (Needs attention, Ready to return, No folder, In Returned folder). Group by and Sort by are view settings you set once, not filters, and clicking a column heading already sorts.</p>
+      <div class="evidence">Views/MainWindow.xaml:403–527</div>
+      <div class="fix"><b>Fix</b>One row of chips: <b>[You ▾] [RFIs] [Submittals] [+ Filter]</b>, with the urgency numbers above it. Grouping, sort and columns go behind a single View button. Housekeeping moves to the Filing view.</div>
+    </div></article>
+
+    <article class="finding" id="f8"><div class="delta high" data-n="8">8</div><div class="body">
+      <h3>The project header is spent on setup <span class="sev high">High</span></h3>
+      <p>The top of the screen shows the CA folder path, the Helix link, two sync timestamps, an orange "79 folders are hidden because their names say neither BB nor TFO" warning with a button that edits the project, and "Sync from Helix" as the brightest button on screen, for something that already runs every 15 minutes. Nothing up there says how the project is doing.</p>
+      <div class="evidence">Views/MainWindow.xaml:316–400 · :320 (AccentButton) · :388</div>
+      <div class="fix"><b>Fix</b>Name, health ("3 late · next due Mon") and a quiet "Synced 2 min ago". CA folder, link and BB/TFO live in Edit project; setup problems collapse into one "⚠ 1 setup issue" chip that opens it.</div>
+    </div></article>
+
+    <article class="finding" id="f9"><div class="delta high" data-n="9">9</div><div class="body">
+      <h3>Sync is reported in seven places <span class="sev high">High</span></h3>
+      <p>The sign-in banner, Sync all ▾, Sync from Helix, every project's subtitle, the spinning mark beside each project, the progress card above the list and the footer's "Working…". For an app that syncs on its own this is noise that pushes the work down the screen.</p>
+      <div class="fix"><b>Fix</b>One sync pill in the top bar ("● Synced 2 min ago ▾", amber when something failed) with Sync now, per-site status and Connections in its menu. Keep the banner only for an expired sign-in that affects projects you track.</div>
+    </div></article>
+
+    <article class="finding" id="f10"><div class="delta med" data-n="10">10</div><div class="body">
+      <h3>The project list mixes two lists and repeats sync times <span class="sev med">Medium</span></h3>
+      <p>"No CA folder yet (8)" is longer than the tracked list above it. Every subtitle reads "BB · Helix · synced today 5:30 PM", the same text eight times. Multi-select by Ctrl-click is invisible and easy to lose.</p>
+      <div class="fix"><b>Fix</b>Subtitles show health ("3 late · 5 open" or "next due Oct 20"). "No CA folder yet" starts collapsed. Hovering a project shows a checkbox to add it to the view.</div>
+    </div></article>
+
+    <article class="finding" id="f11"><div class="delta med" data-n="11">11</div><div class="body">
+      <h3>Group headings repeat the page title <span class="sev med">Medium</span></h3>
+      <p>With one project selected, the list opens with "Aligned CMH03 · 7" then "RFIs · 3", and the project name is already the heading above. The default "Project, then type" adds two heading levels for a single project.</p>
+      <div class="fix"><b>Fix</b>Group by urgency by default. Add a project level only when several projects are shown.</div>
+    </div></article>
+
+    <article class="finding" id="f12"><div class="delta med" data-n="12">12</div><div class="body">
+      <h3>Useful features hide behind right-click and tooltips <span class="sev med">Medium</span></h3>
+      <p>Choosing columns (right-click a heading), favourites and archive (right-click a project), multi-select (Ctrl-click), double-click to open the folder, F5 to sync: none of them are visible. The grid doesn't respond to Enter or Space.</p>
+      <div class="fix"><b>Fix</b>A View button for columns, a visible ⋯ on project hover, checkboxes for multi-select, and Enter / Space / Ctrl+O on rows, listed in a "Keyboard shortcuts" item under Settings.</div>
+    </div></article>
+
+    <article class="finding" id="f13"><div class="delta med" data-n="13">13</div><div class="body">
+      <h3>One checkbox does three unrelated jobs <span class="sev med">Medium</span></h3>
+      <p>The row checkbox tooltip reads "Check to set its discipline, download it, or include its folder in a move". So the action bar always shows six buttons (Check all ready to return, Clear checks, Set discipline, Download, Move back, Move to Returned), and it stays on screen when nothing is checked.</p>
+      <div class="evidence">Views/MainWindow.xaml:569, :704–739</div>
+      <div class="fix"><b>Fix</b>The bar appears only when something is checked and shows only actions that apply to those rows. Filing actions live in the Filing view.</div>
+    </div></article>
+
+    <article class="finding" id="f14"><div class="delta med" data-n="14">14</div><div class="body">
+      <h3>The item panel is a website inside the app <span class="sev med">Medium</span></h3>
+      <p>Helix items open as the full Helix page in a side panel; Procore items leave for your browser. It's slow to load, Helix-only, looks nothing like the rest of the app, and is already exposed to Helix moving pages to its new app.</p>
+      <div class="fix"><b>Fix</b>A native details pane built from the synced data (status, due, who has it, who's next, attachments, folder) that works the same for both sites, with "Open in Helix / Procore" for anything else.</div>
+    </div></article>
+
+    <article class="finding" id="f15"><div class="delta med" data-n="15">15</div><div class="body">
+      <h3>Wasted space and duplicated chrome <span class="sev med">Medium</span></h3>
+      <p>The in-app "SMC CA Tracker" heading repeats the window title and costs a whole row. With seven rows, roughly 60% of the grid is empty while the useful detail sits in tooltips.</p>
+      <div class="fix"><b>Fix</b>Use the top bar for search and the sync pill; use the right side for the details pane.</div>
+    </div></article>
+
+    <article class="finding" id="f16"><div class="delta med" data-n="16">16</div><div class="body">
+      <h3>Labels come from the code <span class="sev med">Medium</span></h3>
+      <p>"Folder status: Open", "Needs attention", "Move back to active…", "Link…", "Include them in BB…", "Not in last Procore view". Construction people know "ball in court", but an "Open" pill beside an item status of "Review" leaves them guessing.</p>
+      <div class="fix"><b>Fix</b>Say what it means: "No folder yet", "Ready to return", "In Returned, but back with you", "Two folders match". Keep "checked" (never "ticked").</div>
+    </div></article>
+  </div>
+
+  <h3 style="margin-top:36px">Keep these</h3>
+  <ul class="keep">
+    <li>Background sync with no windows, every 15 minutes</li>
+    <li>A preview with Cancel before any folder moves</li>
+    <li>Overdue badges in the project list</li>
+    <li>Filters, sort and selection remembered between sessions</li>
+    <li>Columns sized to their longest text, not just the rows on screen</li>
+    <li>The empty state that says why and offers "Clear filters"</li>
+  </ul>
+
+  <!-- ============ MOCKUPS ============ -->
+  <h2 id="mockups">Mockups</h2>
+  <div class="prose"><p>Built in CA Tracker's own colours, so they follow your light or dark theme. Projects, people and items are made up. The first three are clickable.</p></div>
+
+  <!-- M1 -->
+  <section class="stage" aria-labelledby="m1h">
+    <div class="stage-head"><h3 id="m1h">M1 · My work, with a details pane</h3><span class="tags"><span class="tag">△1</span><span class="tag">△4</span><span class="tag">△5</span><span class="tag">△6</span><span class="tag">△7</span><span class="tag">△8</span><span class="tag">△9</span><span class="tag">△14</span><span class="tag">△15</span></span></div>
+    <p class="stage-note">The landing screen for an engineer. Click a number in the strip to filter, click a row to see it on the right, press Enter or click <b>Open</b> to open its newest file, and check a couple of rows to see the action bar.</p>
+    <div class="scroller"><div class="win" id="m1">
+      <div class="os-bar"><span>▣</span> SMC CA Tracker <span class="ctl">–▢✕</span></div>
+      <div class="app-bar">
+        <div class="search">⌕  Search number, title or project  (Ctrl+K)</div>
+        <div class="spacer"></div>
+        <span class="syncpill"><span class="dot"></span>Synced 2 min ago ▾</span>
+        <button class="btn" type="button" tabindex="-1">Settings</button>
+      </div>
+      <div class="body3">
+        <aside class="card rail" aria-label="Views and projects (mockup)">
+          <h6>Views</h6>
+          <div class="nav on"><span class="nm">My work</span><span class="cnt late">4 late</span></div>
+          <div class="nav"><span class="nm">Overdue, all projects</span><span class="cnt late">17</span></div>
+          <div class="nav"><span class="nm">Team board</span></div>
+          <h6>Watchlists</h6>
+          <div class="nav"><span class="nm">Electrical team<small>4 people · 4 projects</small></span><span class="cnt late">12</span></div>
+          <h6>Projects <em>counts for you</em></h6>
+          <div class="nav"><span class="nm">★ Riverside DC1 · BB<small><span class="lt">3 late</span> · 5 open</small></span></div>
+          <div class="nav"><span class="nm">Riverside DC1 · TFO<small><span class="td">1 due today</span></small></span></div>
+          <div class="nav"><span class="nm">Northgate Campus<small><span class="lt">1 late</span> · 3 open</small></span></div>
+          <div class="nav"><span class="nm">Harbor Point Lab<small>next due Oct 20</small></span></div>
+          <div class="nav"><span class="nm">Elm St Data Hall<small>nothing with you</small></span></div>
+          <div class="collapsed">▸ No CA folder yet (8)</div>
+        </aside>
+
+        <main class="card pane" aria-label="My work list (mockup)">
+          <div class="pane-h"><h4>My work</h4><span class="sub">Ball in court with you · 5 projects</span></div>
+          <div class="tiles" id="m1-tiles" role="group" aria-label="Filter by when it's due"></div>
+          <div class="chips">
+            <span class="chip person">You ▾</span>
+            <button class="chip" type="button" data-type="RFI" aria-pressed="false">RFIs</button>
+            <button class="chip" type="button" data-type="Submittal" aria-pressed="false">Submittals</button>
+            <span class="chip add">+ Filter</span>
+            <span class="spacer"></span>
+            <span class="chip">View ▾</span>
+          </div>
+          <div class="gridwrap">
+            <table class="items">
+              <thead><tr><th></th><th></th><th>Due</th><th>Project</th><th>Number</th><th>Title</th><th>With you</th><th></th></tr></thead>
+              <tbody id="m1-rows"></tbody>
+            </table>
+          </div>
+          <div class="selbar" id="m1-selbar" hidden>
+            <b id="m1-selcount">0 checked</b>
+            <button class="btn primary sm" type="button" id="m1-openchecked">Open newest files</button>
+            <button class="btn sm" type="button">Download…</button>
+            <button class="btn sm" type="button">Set discipline…</button>
+            <span class="spacer"></span>
+            <button class="btn link sm" type="button" id="m1-clear">Clear checks</button>
+          </div>
+          <div class="status-line" id="m1-status" aria-live="polite"></div>
+        </main>
+
+        <aside class="card details" id="m1-details" aria-label="Selected item (mockup)" aria-live="polite"></aside>
+      </div>
+      <div class="menu" id="m1-menu" hidden role="menu"></div>
+    </div></div>
+    <p class="hint">Procore rows open in Procore: CA Tracker reads Procore only through its own browser, so it has no file list for them.</p>
+  </section>
+
+  <!-- M2 -->
+  <section class="stage" aria-labelledby="m2h">
+    <div class="stage-head"><h3 id="m2h">M2 · Team board for coordinators</h3><span class="tags"><span class="tag">△2</span><span class="tag">△5</span></span></div>
+    <p class="stage-note">People down the side, projects across. Each cell is that person's items on that project: overdue in large type, open beside it. Hatched cells are pairs the watchlist doesn't follow. Click a cell to list its items, and copy them as text to paste into an email or Teams.</p>
+    <div class="scroller"><div class="win" id="m2">
+      <div class="os-bar"><span>▣</span> SMC CA Tracker <span class="ctl">–▢✕</span></div>
+      <div class="app-bar">
+        <div class="search">⌕  Search number, title or project  (Ctrl+K)</div>
+        <div class="spacer"></div>
+        <span class="syncpill"><span class="dot"></span>Synced 2 min ago ▾</span>
+        <button class="btn" type="button" tabindex="-1">Settings</button>
+      </div>
+      <div class="body2">
+        <aside class="card rail" aria-label="Views (mockup)">
+          <h6>Views</h6>
+          <div class="nav"><span class="nm">My work</span><span class="cnt late">4 late</span></div>
+          <div class="nav"><span class="nm">Overdue, all projects</span><span class="cnt late">17</span></div>
+          <div class="nav on"><span class="nm">Team board</span></div>
+          <h6>Watchlists</h6>
+          <div class="nav on"><span class="nm">Electrical team<small>4 people · 4 projects</small></span><span class="cnt late">12</span></div>
+          <div class="nav"><span class="nm">CMH closeout<small>2 people · 1 project</small></span><span class="cnt">5</span></div>
+          <div class="collapsed">+ New watchlist</div>
+        </aside>
+        <main class="card pane" aria-label="Team board (mockup)">
+          <div class="pane-h"><h4>Team board</h4><span class="combo">Electrical team</span><button class="btn sm" type="button" tabindex="-1">Edit watchlist…</button><span class="spacer"></span><span class="sub" id="m2-sum"></span></div>
+          <table class="matrix" id="m2-matrix" style="margin-top:10px"></table>
+          <div class="drill" id="m2-drill"></div>
+        </main>
+      </div>
+    </div></div>
+  </section>
+
+  <!-- M3 -->
+  <section class="stage" aria-labelledby="m3h">
+    <div class="stage-head"><h3 id="m3h">M3 · Choosing people per project</h3><span class="tags"><span class="tag">△2</span></span></div>
+    <p class="stage-note">The watchlist editor. Check a box to follow that person on that project. Under each box: what they hold there right now, so empty pairs are obvious before you check them. The row's All checks every project for that person; a column's All checks everyone on that project.</p>
+    <div class="scroller"><div class="win">
+      <div class="os-bar"><span>▣</span> SMC CA Tracker <span class="ctl">–▢✕</span></div>
+      <div class="backdrop">
+        <div class="dialog" role="group" aria-labelledby="m3t">
+          <h4 id="m3t">Edit watchlist</h4>
+          <div class="field"><label for="m3-name">Name</label><input type="text" id="m3-name" value="Electrical team"><span class="note">People come from everyone who holds an item or is next on one in these projects.</span></div>
+          <table class="pick" id="m3-pick"></table>
+          <div class="field"><span class="btn sm ghost">+ Add a person who has nothing yet…</span></div>
+          <div class="dlg-foot"><span class="sum" id="m3-sum"></span><span class="spacer"></span><button class="btn" type="button" id="m3-reset">Cancel</button><button class="btn primary" type="button" id="m3-save">Save</button></div>
+        </div>
+      </div>
+    </div></div>
+  </section>
+
+  <!-- M4 -->
+  <section class="stage" aria-labelledby="m4h">
+    <div class="stage-head"><h3 id="m4h">M4 · Filters and the action bar, before and after</h3><span class="tags"><span class="tag">△3</span><span class="tag">△7</span><span class="tag">△13</span></span></div>
+    <p class="stage-note">Same situation in both: five items in your court are checked, three of them overdue, none ready to return.</p>
+    <div class="scroller"><div class="win">
+      <div class="strip">
+        <div class="strip-label">Today</div>
+        <div class="fake">
+          <span class="seg"><span class="on">Both (7 open)</span><span>RFIs (3 open)</span><span>Submittals (4 open)</span></span>
+          <span><span class="lbl">Show</span><span class="combo">Open items</span></span>
+          <span><span class="lbl">Ball in court</span><span class="combo" style="min-width:150px">You</span></span>
+          <span><span class="lbl">Due</span><span class="combo">Any date</span></span>
+          <span><span class="lbl">Discipline</span><span class="combo">All</span></span>
+          <span><span class="lbl">Group by</span><span class="combo">Project, then type</span></span>
+          <span><span class="lbl">Sort by</span><span class="combo">Due ↑</span></span>
+        </div>
+        <div class="bar" style="margin-top:12px">
+          <span class="muted">5 checked</span>
+          <span class="btn sm">Check all ready to return</span><span class="btn sm">Clear checks</span><span class="btn sm">Set discipline of 5…</span><span class="btn sm">Download 5…</span><span class="btn sm" style="opacity:.45">Move back to active…</span>
+          <span class="spacer"></span><span class="btn primary sm">Move 4 to Returned…</span><span class="mark" title="Problem">!</span>
+        </div>
+        <p class="note" style="margin-top:8px">Seven controls of equal weight; six buttons whatever is checked; the accent button files open items away.</p>
+      </div>
+      <div class="strip">
+        <div class="strip-label">Proposed</div>
+        <div class="fake">
+          <span class="chip person">You ▾</span>
+          <span class="chip" style="background:var(--danger-soft);border-color:var(--danger);color:var(--danger)">Overdue · 3 ✕</span>
+          <span class="chip">RFIs</span><span class="chip">Submittals</span><span class="chip add">+ Filter</span>
+          <span class="spacer"></span><span class="chip">View ▾</span>
+        </div>
+        <div class="bar sel" style="margin-top:12px">
+          <b>5 checked</b>
+          <span class="btn primary sm">Open 5 newest files</span><span class="btn sm">Download 5…</span><span class="btn sm">Set discipline…</span>
+          <span class="spacer"></span><span class="btn link sm">Clear checks</span>
+        </div>
+        <p class="note" style="margin-top:8px">Group, sort and columns are under View. Nothing here moves folders; that's the Filing view (M6).</p>
+      </div>
+    </div></div>
+  </section>
+
+  <!-- M5 -->
+  <section class="stage" aria-labelledby="m5h">
+    <div class="stage-head"><h3 id="m5h">M5 · Download window that ends in the file</h3><span class="tags"><span class="tag">△4</span></span></div>
+    <p class="stage-note">For when you want more than the newest file. Files already in the folder start unchecked, and the last step opens what you downloaded.</p>
+    <div class="scroller"><div class="win" style="min-width:880px;max-width:980px">
+      <div class="os-bar"><span>▣</span> Download — CA Tracker <span class="ctl">–▢✕</span></div>
+      <div class="dl">
+        <h4>Download 3 items</h4>
+        <p class="note" style="margin:4px 0 0">New files are checked. Files already in each item's folder are left unchecked.</p>
+        <div class="dlitem">
+          <div class="dlitem-h"><span>▾</span><b>RFI 000252 · BMS panel power at pump room</b><span class="chipst">2 new files</span></div>
+          <div class="dest">→ RFIs\Elec\000252 - BMS panel power at pump room <span class="btn link sm">Change…</span></div>
+          <div class="frow"><input type="checkbox" checked tabindex="-1" aria-label="Response r1.pdf"><span>Response r1.pdf</span><small>Sep 16</small><small>New</small><span></span></div>
+          <div class="frow"><input type="checkbox" checked tabindex="-1" aria-label="Panel markup.pdf"><span>Panel markup.pdf</span><small>Sep 16</small><small>New</small><span></span></div>
+          <div class="frow"><input type="checkbox" tabindex="-1" aria-label="Question.pdf"><span>Question.pdf</span><small>Aug 28</small><small>Already in folder</small><span class="btn link sm">Open</span></div>
+        </div>
+        <div class="dlitem">
+          <div class="dlitem-h"><span>▾</span><b>Submittal 000530 · Area C power distribution</b><span class="chipst ok">Saved 2 files</span></div>
+          <div class="frow"><span class="lt" style="color:var(--ok)">✓</span><span>000530 Area C power dist r2.pdf</span><small>Sep 30</small><small>Saved</small><span class="btn link sm">Open</span></div>
+          <div class="frow"><span style="color:var(--ok)">✓</span><span>Reviewer comments.pdf</span><small>Sep 30</small><small>Saved</small><span class="btn link sm">Open</span></div>
+        </div>
+        <div class="dlitem">
+          <div class="dlitem-h"><span>▸</span><b>RFI 000283 · Lighting, Area D level 2</b><span class="chipst">1 new file · new folder</span></div>
+        </div>
+        <div class="dl-foot">
+          <label style="display:flex;gap:8px;align-items:center"><input type="checkbox" checked tabindex="-1"> Open the newest file of each item when done</label>
+          <span class="spacer"></span><span class="btn">Cancel</span><span class="btn primary">Download 3 files</span>
+        </div>
+      </div>
+    </div></div>
+  </section>
+
+  <!-- M6 -->
+  <section class="stage" aria-labelledby="m6h">
+    <div class="stage-head"><h3 id="m6h">M6 · Filing view: folder housekeeping on its own</h3><span class="tags"><span class="tag">△3</span><span class="tag">△7</span><span class="tag">△8</span><span class="tag">△16</span></span></div>
+    <p class="stage-note">Everything about CA folders, out of the engineer's way: what's ready to return, what has no folder, what came back, and setup problems like folders hidden by the BB/TFO rule. Reached from the project's ⋯ menu or a "⚠ 6 to file" chip in its header.</p>
+    <div class="scroller"><div class="win" style="min-width:980px">
+      <div class="os-bar"><span>▣</span> SMC CA Tracker <span class="ctl">–▢✕</span></div>
+      <div style="padding:14px">
+        <div class="card pane" style="padding:14px 16px">
+          <div class="pane-h"><h4>Filing · Riverside DC1 · BB</h4><span class="sub">CA folder E:\Projects\…\Riverside DC1\CA</span><span class="spacer"></span><span class="btn sm">Edit project…</span></div>
+          <div class="tabs"><span class="on">Ready to return<b>5</b></span><span>No folder yet<b>2</b></span><span>In Returned, back with you<b>1</b></span><span>Two folders match<b>1</b></span><span>Setup<b>1</b></span></div>
+          <div class="gridwrap" style="flex:none">
+            <table class="items">
+              <thead><tr><th></th><th>Number</th><th>Title</th><th>Why it's ready</th><th>Folder</th></tr></thead>
+              <tbody>
+                <tr class="row"><td class="ck"><input type="checkbox" checked tabindex="-1" aria-label="Check 000219"></td><td class="num">RFI 000219</td><td class="ttl">Transformer pad clearances</td><td>Closed Sep 30</td><td class="muted">RFIs\Elec\000219 - Transformer pad clearances</td></tr>
+                <tr class="row"><td class="ck"><input type="checkbox" checked tabindex="-1" aria-label="Check 000231"></td><td class="num">RFI 000231</td><td class="ttl">Roof penetration sleeves</td><td>With the GC since Sep 26</td><td class="muted">RFIs\Elec\000231 - Roof penetration sleeves</td></tr>
+                <tr class="row"><td class="ck"><input type="checkbox" checked tabindex="-1" aria-label="Check 000488"></td><td class="num">Submittal 000488</td><td class="ttl">UPS battery cabinets</td><td>Approved as noted Sep 24</td><td class="muted">Submittals\Elec\000488 - UPS battery cabinets</td></tr>
+                <tr class="row"><td class="ck"><input type="checkbox" checked tabindex="-1" aria-label="Check 000492"></td><td class="num">Submittal 000492</td><td class="ttl">Cable tray fittings</td><td>With the architect since Sep 22</td><td class="muted">Submittals\Elec\000492 - Cable tray fittings</td></tr>
+                <tr class="row"><td class="ck"><input type="checkbox" checked tabindex="-1" aria-label="Check 000501"></td><td class="num">Submittal 000501</td><td class="ttl">Grounding electrode test report</td><td>Closed Sep 19</td><td class="muted">Submittals\Elec\000501 - Grounding electrode test report</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <div class="bar sel" style="margin-top:10px"><b>5 checked</b><span class="spacer"></span><span class="note">Shows every move first. Nothing changes until you confirm, and Cancel leaves the folders where they are.</span><span class="btn primary sm">Move 5 to Returned…</span></div>
+        </div>
+      </div>
+    </div></div>
+  </section>
+
+  <!-- ============ ROADMAP ============ -->
+  <h2 id="roadmap">Roadmap</h2>
+  <div class="prose"><p>Ordered so each step is useful on its own. Every count comes from rows already in memory, so none of this should slow the list.</p></div>
+  <div class="phases">
+    <div class="phase">
+      <p class="eyebrow">Phase 1 · small XAML and view-model changes</p>
+      <h3>Quick wins</h3>
+      <ul>
+        <li>Make Download the accent button; Move to Returned becomes secondary and counts only Ready to return rows <span class="tags"><span class="tag">△3</span></span><p>CheckSummary and the action bar only; the move itself (Operations.cs) is untouched.</p></li>
+        <li>Default Ball in court to the signed-in name on first run <span class="tags"><span class="tag">△1</span></span><p>store.Account(Helix).UserName is the Helix fullName, the same form as the holder names.</p></li>
+        <li>Show the due date by default and merge it with Days till due ("Sep 7 · 26 days late") <span class="tags"><span class="tag">△5</span></span></li>
+        <li>New group mode "Urgency", the default for one project; left-edge stripe on late and due-today rows <span class="tags"><span class="tag">△5</span><span class="tag">△11</span></span></li>
+        <li>Hide the Folder column by default, Ball in court when one person is filtered, and the "Open" folder pill <span class="tags"><span class="tag">△6</span></span></li>
+        <li>Badges say "3 late · 5 open"; action bar hides when nothing is checked and drops buttons that don't apply <span class="tags"><span class="tag">△5</span><span class="tag">△13</span></span></li>
+        <li>Enter opens, Space checks; drop the in-app title row <span class="tags"><span class="tag">△12</span><span class="tag">△15</span></span></li>
+      </ul>
+    </div>
+    <div class="phase">
+      <p class="eyebrow">Phase 2 · new views on existing data</p>
+      <h3>Built for the engineer</h3>
+      <ul>
+        <li>"My work" and "Overdue, all projects" at the top of the project list <span class="tags"><span class="tag">△1</span></span><p>Every tracked project selected, with a preset person and due filter.</p></li>
+        <li>Open ▾ split button with "open newest file" <span class="tags"><span class="tag">△4</span></span><p>Reuses HelixDownloadSession to fetch one attachment into the item folder, then opens it. Helix only; Procore rows open in Procore.</p></li>
+        <li>Native details pane in place of the Helix web panel <span class="tags"><span class="tag">△14</span></span><p>Status, due, current and upcoming holders, attachment count; files load when an item is selected.</p></li>
+        <li>Chip filter row, View menu, one sync pill <span class="tags"><span class="tag">△7</span><span class="tag">△9</span></span></li>
+        <li>Compact project header with health; setup issues in one chip <span class="tags"><span class="tag">△8</span><span class="tag">△10</span></span></li>
+      </ul>
+    </div>
+    <div class="phase">
+      <p class="eyebrow">Phase 3 · coordinators</p>
+      <h3>People across projects</h3>
+      <ul>
+        <li>Watchlists: project → people, chosen in a grid <span class="tags"><span class="tag">△2</span></span><p>Stored in ViewState keyed by ProjectViewModel.ArchiveKey; MatchesPerson checks the row's own project. Choices come from current and upcoming holders.</p></li>
+        <li>Team board with drill-down and "Copy as list" <span class="tags"><span class="tag">△2</span><span class="tag">△5</span></span><p>Copies plain text to the clipboard; nothing is sent anywhere.</p></li>
+        <li>Filing view with tabs <span class="tags"><span class="tag">△3</span><span class="tag">△16</span></span></li>
+        <li>Optional: share watchlists through the company server; a dot on items changed since you last looked (ModifiedAt)</li>
+      </ul>
+    </div>
+  </div>
+  <div class="rules"><b>Kept from the owner's rules:</b> every folder move still opens a preview with Cancel first · the UI says "checked", never "ticked" · Procore is read only through the built-in browser (no API), so Procore rows open in Procore rather than listing files · nothing here adds disk or network work to showing the list.</div>
+</div>
+
+<script>
+(function(){
+  // ---------- revision deltas ----------
+  document.querySelectorAll('.delta[data-n]').forEach(function(el){
+    var n = el.getAttribute('data-n');
+    el.innerHTML = '<svg viewBox="0 0 44 40" aria-hidden="true"><path d="M22 3 L41 37 H3 Z" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linejoin="round"/><text x="22" y="31" text-anchor="middle" fill="currentColor" style="font:700 13px var(--f-mono)">' + n + '</text></svg><span class="sr" style="position:absolute;left:-9999px">Finding ' + n + '</span>';
+  });
+
+  // ---------- M1: My work ----------
+  var TODAY = new Date(2026, 9, 3);
+  var MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  var items = [
+    {id:1, type:'RFI', num:'000252', proj:'Riverside DC1 · BB', title:'BMS panel power at pump room', due:'2026-09-07', withDays:16, since:'Sep 17', next:'Ana Ruiz (SMC), coordinator review', status:'Review', site:'Helix', folder:'RFIs\\Elec\\000252 - BMS panel power at pump room', disc:'Electrical (auto)', files:[['Response r1.pdf','Sep 16',false],['Panel markup.pdf','Sep 16',false],['Question.pdf','Aug 28',true]]},
+    {id:2, type:'Submittal', num:'000437', proj:'Riverside DC1 · BB', title:'Lightning protection products', due:'2026-07-29', withDays:9, since:'Sep 24', next:'Architect review', status:'Review', site:'Helix', folder:'Submittals\\Elec\\000437 - Lightning protection products', disc:'Electrical', files:[['000437 LP products r1.pdf','Sep 23',true],['Cut sheets.pdf','Jul 15',true]]},
+    {id:3, type:'Submittal', num:'000530', proj:'Riverside DC1 · BB', title:'Area C power distribution', due:'2026-09-29', withDays:18, since:'Sep 15', next:'GC, return to subcontractor', status:'Review', site:'Helix', folder:'Submittals\\Elec\\000530 - Area C power distribution', disc:'Electrical', files:[['000530 Area C power dist r2.pdf','Sep 30',false],['Reviewer comments.pdf','Sep 30',false]]},
+    {id:4, type:'RFI', num:'0118', proj:'Northgate Campus', title:'Generator pad grounding detail', due:'2026-10-02', withDays:5, since:'Sep 28', next:'GC', status:'Open', site:'Procore', folder:'RFIs\\0118 - Generator pad grounding detail', disc:'Electrical (auto)', files:null},
+    {id:5, type:'RFI', num:'000280', proj:'Riverside DC1 · TFO', title:'Admin area lighting changes', due:'2026-10-03', withDays:3, since:'Sep 30', next:'Ana Ruiz (SMC)', status:'Review', site:'Helix', folder:'RFIs\\Elec\\000280 - Admin area lighting changes', disc:'Electrical', files:[['Sketch SK-14.pdf','Sep 29',false]]},
+    {id:6, type:'RFI', num:'000283', proj:'Riverside DC1 · BB', title:'Lighting, Area D level 2', due:'2026-10-07', withDays:3, since:'Sep 30', next:'GC', status:'Review', site:'Helix', folder:null, disc:'None yet', files:[['Area D RCP markup.pdf','Sep 29',false]]},
+    {id:7, type:'Submittal', num:'000542', proj:'Riverside DC1 · BB', title:'Lighting, shop areas', due:'2026-10-09', withDays:7, since:'Sep 26', next:'Architect review', status:'Review', site:'Helix', folder:'Submittals\\Elec\\000542 - Lighting, shop areas', disc:'Electrical', files:[['000542 Shop lighting.pdf','Sep 25',true]]},
+    {id:8, type:'Submittal', num:'2204', proj:'Northgate Campus', title:'Switchgear shop drawings, rev 2', due:'2026-10-08', withDays:2, since:'Oct 1', next:'Engineer of record', status:'Pending', site:'Procore', folder:'Submittals\\2204 - Switchgear shop drawings', disc:'Electrical', files:null},
+    {id:9, type:'Submittal', num:'0311', proj:'Harbor Point Lab', title:'Fire alarm device cut sheets', due:'2026-10-20', withDays:1, since:'Oct 2', next:'Fire protection engineer', status:'Review', site:'Helix', folder:'Submittals\\FA\\0311 - Fire alarm device cut sheets', disc:'Fire alarm', files:[['FA devices.pdf','Oct 1',false]]},
+    {id:10, type:'RFI', num:'0131', proj:'Northgate Campus', title:'Cable tray routing at mezzanine', due:null, withDays:11, since:'Sep 22', next:'GC', status:'Open', site:'Procore', folder:'RFIs\\0131 - Cable tray routing at mezzanine', disc:'Electrical (auto)', files:null}
+  ];
+  var BUCKETS = [['late','Overdue'],['today','Due today'],['soon','Next 7 days'],['later','Later'],['nodate','No due date']];
+  function parse(s){ var p = s.split('-').map(Number); return new Date(p[0], p[1]-1, p[2]); }
+  function days(it){ return it.due ? Math.round((parse(it.due) - TODAY) / 86400000) : null; }
+  function bucket(it){ var d = days(it); return d === null ? 'nodate' : d < 0 ? 'late' : d === 0 ? 'today' : d <= 7 ? 'soon' : 'later'; }
+  function fmt(s){ var d = parse(s); return MONTHS[d.getMonth()] + ' ' + d.getDate(); }
+  function rel(it){ var d = days(it); if (d === null) return ''; if (d < 0) return (-d) + (d === -1 ? ' day late' : ' days late'); if (d === 0) return 'today'; if (d === 1) return 'tomorrow'; return 'in ' + d + ' days'; }
+  function esc(s){ return String(s).replace(/[&<>"]/g, function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]; }); }
+  function newest(it){ return it.files && it.files.length ? it.files[0] : null; }
+
+  var state = { bucket:'all', type:null, sel:1, checked:{} };
+  var tilesEl = document.getElementById('m1-tiles');
+  var rowsEl = document.getElementById('m1-rows');
+  var detailsEl = document.getElementById('m1-details');
+  var statusEl = document.getElementById('m1-status');
+  var menuEl = document.getElementById('m1-menu');
+  var winEl = document.getElementById('m1');
+
+  function visible(){ return items.filter(function(it){ return !state.type || it.type === state.type; }); }
+
+  function renderTiles(){
+    var v = visible();
+    var html = '<button type="button" class="tile" data-b="all" aria-pressed="' + (state.bucket === 'all') + '"><b>' + v.length + '</b><span>All with you</span></button>';
+    BUCKETS.forEach(function(b){
+      var n = v.filter(function(it){ return bucket(it) === b[0]; }).length;
+      html += '<button type="button" class="tile ' + b[0] + '" data-b="' + b[0] + '" aria-pressed="' + (state.bucket === b[0]) + '"><b>' + n + '</b><span>' + b[1] + '</span></button>';
+    });
+    tilesEl.innerHTML = html;
+  }
+
+  function renderRows(){
+    var v = visible();
+    var html = '';
+    BUCKETS.forEach(function(b){
+      if (state.bucket !== 'all' && state.bucket !== b[0]) return;
+      var group = v.filter(function(it){ return bucket(it) === b[0]; });
+      if (!group.length) return;
+      html += '<tr class="grp ' + b[0] + '"><td colspan="8">' + b[1] + ' · ' + group.length + '</td></tr>';
+      group.forEach(function(it){
+        var bk = bucket(it), cls = bk === 'late' ? 'lt' : bk === 'today' ? 'td' : 'muted';
+        var dueCell = it.due ? '<b>' + fmt(it.due) + '</b><small class="' + cls + '">' + rel(it) + '</small>' : '<span class="muted">—</span>';
+        var flag = it.folder ? '' : '<span class="flag">No folder yet</span>';
+        html += '<tr class="row' + (state.sel === it.id ? ' on' : '') + '" data-id="' + it.id + '" tabindex="0" aria-selected="' + (state.sel === it.id) + '">' +
+          '<td class="stripe"><i class="' + bk + '"></i></td>' +
+          '<td class="ck"><input type="checkbox" aria-label="Check ' + it.type + ' ' + it.num + '"' + (state.checked[it.id] ? ' checked' : '') + '></td>' +
+          '<td class="due">' + dueCell + '</td>' +
+          '<td>' + esc(it.proj) + '</td>' +
+          '<td class="num">' + it.type + ' ' + it.num + '</td>' +
+          '<td class="ttl" title="' + esc(it.title) + '">' + esc(it.title) + flag + '</td>' +
+          '<td>' + it.withDays + (it.withDays === 1 ? ' day' : ' days') + '</td>' +
+          '<td><span class="split"><button type="button" class="btn sm" data-open="' + it.id + '">Open</button><button type="button" class="btn sm" data-more="' + it.id + '" aria-label="More ways to open ' + it.num + '" aria-haspopup="menu">▾</button></span></td>' +
+          '</tr>';
+      });
+    });
+    rowsEl.innerHTML = html || '<tr><td colspan="8" style="height:80px;text-align:center" class="muted">Nothing here. Click "All with you" to see every item.</td></tr>';
+  }
+
+  function renderDetails(){
+    var it = items.filter(function(x){ return x.id === state.sel; })[0];
+    if (!it){ detailsEl.innerHTML = '<p class="note">Select an item to see it here.</p>'; return; }
+    var bk = bucket(it), cls = bk === 'late' ? 'lt' : bk === 'today' ? 'td' : '';
+    var f = newest(it);
+    var open = f
+      ? '<button type="button" class="btn primary openbig" data-open="' + it.id + '">Open newest file<small>' + esc(f[0]) + ' · ' + f[1] + (f[2] ? '' : ' · downloads into its folder first') + '</small></button>'
+      : '<button type="button" class="btn primary openbig" data-open="' + it.id + '">Open in Procore<small>Opens the item in your web browser</small></button>';
+    var files = '';
+    if (it.files){
+      files = '<div><div class="sect">Files in Helix · ' + it.files.length + '</div><div class="files">' + it.files.map(function(x){
+        return '<div><span class="fn" title="' + esc(x[0]) + '">' + esc(x[0]) + '</span><small>' + x[1] + '</small>' + (x[2] ? '<span class="flag ok">In folder</span>' : '<button type="button" class="btn link sm" data-dl="' + esc(x[0]) + '">Download</button>') + '</div>';
+      }).join('') + '</div></div>';
+    } else {
+      files = '<p class="note">Procore items open in Procore. CA Tracker reads Procore through its own browser only, so it has no file list here.</p>';
+    }
+    detailsEl.innerHTML =
+      '<div><div class="crumb">' + it.type + ' ' + it.num + ' · ' + esc(it.proj) + ' · ' + it.site + '</div><h5>' + esc(it.title) + '</h5></div>' +
+      open +
+      '<div class="row-actions"><button type="button" class="btn sm"' + (it.folder ? '' : ' disabled') + '>Open folder</button><button type="button" class="btn sm">Open in ' + it.site + '</button>' + (it.site === 'Helix' ? '<button type="button" class="btn sm">Verify folder</button>' : '') + '</div>' +
+      '<dl class="kv">' +
+        '<dt>Due</dt><dd>' + (it.due ? '<span class="' + cls + '">' + fmt(it.due) + ', 2026 · ' + rel(it) + '</span>' : 'No due date') + '</dd>' +
+        '<dt>With</dt><dd>You, since ' + it.since + ' (' + it.withDays + (it.withDays === 1 ? ' day' : ' days') + ')</dd>' +
+        '<dt>Next</dt><dd>' + esc(it.next) + '</dd>' +
+        '<dt>Status</dt><dd>' + esc(it.status) + ' in ' + it.site + '</dd>' +
+        '<dt>Folder</dt><dd>' + (it.folder ? esc(it.folder) : '<span class="td">No folder yet.</span> Open or Download creates one in the discipline\'s folder.') + '</dd>' +
+        '<dt>Discipline</dt><dd>' + esc(it.disc) + ' <button type="button" class="btn link sm">Change</button></dd>' +
+      '</dl>' + files;
+  }
+
+  function renderSelbar(){
+    var n = Object.keys(state.checked).filter(function(k){ return state.checked[k]; }).length;
+    var bar = document.getElementById('m1-selbar');
+    bar.hidden = n === 0;
+    document.getElementById('m1-selcount').textContent = n + ' checked';
+    document.getElementById('m1-openchecked').textContent = n === 1 ? 'Open newest file' : 'Open ' + n + ' newest files';
+  }
+
+  function openItem(id){
+    var it = items.filter(function(x){ return x.id === id; })[0];
+    if (!it) return;
+    var f = newest(it);
+    statusEl.textContent = f
+      ? (f[2] ? 'Opened ' + f[0] + ' from ' + it.folder : 'Downloaded ' + f[0] + ' into ' + (it.folder || 'a new folder for ' + it.num) + ' and opened it')
+      : 'Opened ' + it.type + ' ' + it.num + ' in Procore';
+    if (f && !f[2]) { f[2] = true; if (!it.folder) { it.folder = (it.type === 'RFI' ? 'RFIs' : 'Submittals') + '\\Elec\\' + it.num + ' - ' + it.title; } renderRows(); renderDetails(); }
+  }
+
+  function closeMenu(){ menuEl.hidden = true; }
+  function showMenu(id, btn){
+    var it = items.filter(function(x){ return x.id === id; })[0];
+    var f = newest(it);
+    menuEl.innerHTML =
+      (f ? '<button type="button" role="menuitem" data-open="' + id + '">Open newest file</button>' : '') +
+      '<button type="button" role="menuitem"' + (it.folder ? '' : ' disabled') + '>Open folder</button>' +
+      '<button type="button" role="menuitem">Open in ' + it.site + '</button><hr>' +
+      (it.site === 'Helix' ? '<button type="button" role="menuitem">Download files…</button><button type="button" role="menuitem">Verify folder…</button><hr>' : '') +
+      '<button type="button" role="menuitem">Set discipline…</button>';
+    var wr = winEl.getBoundingClientRect(), br = btn.getBoundingClientRect();
+    menuEl.style.left = Math.max(8, br.right - wr.left - 220) + 'px';
+    menuEl.style.top = (br.bottom - wr.top + 4) + 'px';
+    menuEl.hidden = false;
+    var first = menuEl.querySelector('button'); if (first) first.focus();
+  }
+
+  function renderAll(){ renderTiles(); renderRows(); renderDetails(); renderSelbar(); }
+
+  tilesEl.addEventListener('click', function(e){
+    var t = e.target.closest('.tile'); if (!t) return;
+    state.bucket = t.getAttribute('data-b'); renderTiles(); renderRows();
+  });
+  document.querySelectorAll('#m1 .chip[data-type]').forEach(function(c){
+    c.addEventListener('click', function(){
+      var t = c.getAttribute('data-type');
+      state.type = state.type === t ? null : t;
+      document.querySelectorAll('#m1 .chip[data-type]').forEach(function(o){ o.setAttribute('aria-pressed', String(o.getAttribute('data-type') === state.type)); });
+      renderTiles(); renderRows();
+    });
+  });
+  rowsEl.addEventListener('click', function(e){
+    var o = e.target.closest('[data-open]'); if (o){ e.stopPropagation(); closeMenu(); openItem(Number(o.getAttribute('data-open'))); return; }
+    var m = e.target.closest('[data-more]'); if (m){ e.stopPropagation(); showMenu(Number(m.getAttribute('data-more')), m); return; }
+    var tr = e.target.closest('tr.row'); if (!tr) return;
+    var id = Number(tr.getAttribute('data-id'));
+    if (e.target.matches('input[type=checkbox]')){ state.checked[id] = e.target.checked; renderSelbar(); return; }
+    state.sel = id; renderRows(); renderDetails();
+    var again = rowsEl.querySelector('tr[data-id="' + id + '"]'); if (again) again.focus();
+  });
+  rowsEl.addEventListener('keydown', function(e){
+    var tr = e.target.closest('tr.row'); if (!tr || e.target !== tr) return;
+    var id = Number(tr.getAttribute('data-id'));
+    if (e.key === 'Enter'){ e.preventDefault(); state.sel = id; renderRows(); renderDetails(); openItem(id); var a = rowsEl.querySelector('tr[data-id="' + id + '"]'); if (a) a.focus(); }
+    else if (e.key === ' '){ e.preventDefault(); state.checked[id] = !state.checked[id]; renderRows(); renderSelbar(); var b = rowsEl.querySelector('tr[data-id="' + id + '"]'); if (b) b.focus(); }
+    else if (e.key === 'ArrowDown' || e.key === 'ArrowUp'){
+      e.preventDefault();
+      var rows = Array.prototype.slice.call(rowsEl.querySelectorAll('tr.row'));
+      var i = rows.indexOf(tr) + (e.key === 'ArrowDown' ? 1 : -1);
+      if (rows[i]){ state.sel = Number(rows[i].getAttribute('data-id')); renderRows(); renderDetails(); var c = rowsEl.querySelector('tr[data-id="' + state.sel + '"]'); if (c) c.focus(); }
+    }
+  });
+  detailsEl.addEventListener('click', function(e){
+    var o = e.target.closest('[data-open]'); if (o){ openItem(Number(o.getAttribute('data-open'))); return; }
+    var d = e.target.closest('[data-dl]'); if (d){
+      var it = items.filter(function(x){ return x.id === state.sel; })[0];
+      it.files.forEach(function(f){ if (f[0] === d.getAttribute('data-dl')) f[2] = true; });
+      statusEl.textContent = 'Downloaded ' + d.getAttribute('data-dl') + ' into ' + (it.folder || 'a new folder for ' + it.num);
+      renderDetails();
+    }
+  });
+  menuEl.addEventListener('click', function(e){
+    var o = e.target.closest('[data-open]'); if (o) openItem(Number(o.getAttribute('data-open')));
+    closeMenu();
+  });
+  menuEl.addEventListener('keydown', function(e){ if (e.key === 'Escape') closeMenu(); });
+  document.addEventListener('click', function(e){ if (!menuEl.hidden && !menuEl.contains(e.target)) closeMenu(); });
+  document.getElementById('m1-openchecked').addEventListener('click', function(){
+    var ids = Object.keys(state.checked).filter(function(k){ return state.checked[k]; }).map(Number);
+    ids.forEach(function(id){ var it = items.filter(function(x){ return x.id === id; })[0]; var f = newest(it); if (f) f[2] = true; });
+    statusEl.textContent = 'Opened the newest file of ' + ids.length + (ids.length === 1 ? ' item' : ' items') + ' (Procore items open in Procore)';
+    renderDetails();
+  });
+  document.getElementById('m1-clear').addEventListener('click', function(){ state.checked = {}; renderRows(); renderSelbar(); });
+  renderAll();
+
+  // ---------- M2: Team board ----------
+  var people = [['You','SMC · Electrical'],['Ana Ruiz','SMC · Coordinator'],['Raj Patel','SMC · Electrical'],['Lee Chen','SMC · Fire alarm']];
+  var projects = ['Riverside DC1 · BB','Riverside DC1 · TFO','Northgate Campus','Harbor Point Lab'];
+  var board = [
+    [[3,5],[0,1],[1,3],[0,1]],
+    [[1,4],[0,2],null,[0,3]],
+    [[4,6],[1,2],null,null],
+    [null,null,[2,4],[0,1]]
+  ];
+  var pool = ['Feeder sizing at UPS room','Busway layout, level 2','Grounding at roof RTUs','Panelboard schedules','Lighting control zones','Emergency lighting inverters','Conduit routing at duct bank','Generator breaker settings','Receptacle heights in labs','Fire alarm riser diagram','Heat trace power','Seismic bracing for cable tray'];
+  var lateDays = [41,12,6,2,1,3];
+  var dueIn = [3,9,14,21,30];
+  var m2sel = [2,0];
+  var matrixEl = document.getElementById('m2-matrix');
+  var drillEl = document.getElementById('m2-drill');
+
+  function rowsFor(p, j){
+    var c = board[p][j]; if (!c) return [];
+    if (p === 0 && j === 0){
+      return items.filter(function(it){ return it.proj === projects[0]; })
+        .sort(function(a, b){ return (days(a) === null ? 9999 : days(a)) - (days(b) === null ? 9999 : days(b)); })
+        .map(function(it){ return [it.type + ' ' + it.num, it.title, it.due ? fmt(it.due) : '—', rel(it) || 'no due date', bucket(it) === 'late']; });
+    }
+    var out = [];
+    for (var k = 0; k < c[1]; k++){
+      var late = k < c[0];
+      var title = pool[(p * 3 + j * 5 + k) % pool.length];
+      var num = (k % 2 ? 'Submittal ' : 'RFI ') + String(200 + p * 37 + j * 53 + k * 7).padStart(6, '0');
+      var d = late ? -lateDays[(k + p) % lateDays.length] : dueIn[(k + j) % dueIn.length];
+      var dt = new Date(TODAY.getTime() + d * 86400000);
+      out.push([num, title, MONTHS[dt.getMonth()] + ' ' + dt.getDate(), late ? (-d) + (d === -1 ? ' day late' : ' days late') : 'in ' + d + ' days', late, d]);
+    }
+    return out.sort(function(a, b){ return a[5] - b[5]; });
+  }
+
+  function renderBoard(){
+    var totLate = 0, totOpen = 0;
+    var html = '<thead><tr><th class="p"></th>' + projects.map(function(pr){ return '<th>' + esc(pr) + '</th>'; }).join('') + '<th class="tot">Total</th></tr></thead><tbody>';
+    people.forEach(function(pp, p){
+      var rl = 0, ro = 0;
+      html += '<tr><th class="who" scope="row">' + esc(pp[0]) + '<small>' + esc(pp[1]) + '</small></th>';
+      projects.forEach(function(pr, j){
+        var c = board[p][j];
+        if (!c){ html += '<td><div class="cell off">Not watched</div></td>'; return; }
+        rl += c[0]; ro += c[1];
+        var heat = c[0] === 0 ? 'h0' : c[0] < 3 ? 'h1' : 'h2';
+        var on = m2sel[0] === p && m2sel[1] === j;
+        html += '<td><button type="button" class="cell ' + heat + '" data-p="' + p + '" data-j="' + j + '" aria-pressed="' + on + '" aria-label="' + esc(pp[0]) + ' on ' + esc(pr) + ': ' + c[0] + ' overdue, ' + c[1] + ' open"><b>' + c[0] + '</b><span>late · ' + c[1] + ' open</span></button></td>';
+      });
+      totLate += rl; totOpen += ro;
+      html += '<td><div class="tot-cell"><b class="' + (rl ? 'lt' : '') + '">' + rl + '</b> late<br>' + ro + ' open</div></td></tr>';
+    });
+    html += '</tbody>';
+    matrixEl.innerHTML = html;
+    document.getElementById('m2-sum').innerHTML = '<b class="lt">' + totLate + ' overdue</b> · ' + totOpen + ' open · oldest: 66 days late (You, Submittal 000437)';
+  }
+
+  function renderDrill(){
+    var p = m2sel[0], j = m2sel[1], c = board[p][j];
+    var rows = rowsFor(p, j);
+    var text = people[p][0] + ' on ' + projects[j] + ': ' + c[0] + ' overdue, ' + c[1] + ' open\n' + rows.map(function(r){ return '• ' + r[0] + ' ' + r[1] + ' (due ' + r[2] + ', ' + r[3] + ')'; }).join('\n');
+    drillEl.innerHTML = '<div class="drill-h"><b>' + esc(people[p][0]) + ' · ' + esc(projects[j]) + '</b><span class="muted">' + c[0] + ' overdue · ' + c[1] + ' open</span><span class="spacer"></span><span class="copied" id="m2-copied" aria-live="polite"></span><button type="button" class="btn sm" id="m2-copy">Copy as list</button><button type="button" class="btn sm">Open as list</button></div>' +
+      '<table class="items"><thead><tr><th></th><th>Due</th><th>Number</th><th>Title</th></tr></thead><tbody>' +
+      rows.map(function(r){ return '<tr><td class="stripe"><i class="' + (r[4] ? 'late' : '') + '"></i></td><td class="due"><b>' + r[2] + '</b><small class="' + (r[4] ? 'lt' : 'muted') + '">' + r[3] + '</small></td><td class="num">' + r[0] + '</td><td class="ttl" style="max-width:none">' + esc(r[1]) + '</td></tr>'; }).join('') +
+      '</tbody></table>';
+    document.getElementById('m2-copy').addEventListener('click', function(){
+      var done = function(ok){
+        var el = document.getElementById('m2-copied'); if (!el) return;
+        el.textContent = ok ? 'Copied ' + rows.length + ' items' : 'Copy was blocked here; select the text below';
+        if (!ok && !drillEl.querySelector('pre')){ var pre = document.createElement('pre'); pre.className = 'copytext'; pre.textContent = text; drillEl.appendChild(pre); }
+      };
+      try { navigator.clipboard.writeText(text).then(function(){ done(true); }, function(){ done(false); }); } catch (err) { done(false); }
+    });
+  }
+  matrixEl.addEventListener('click', function(e){
+    var c = e.target.closest('.cell[data-p]'); if (!c) return;
+    m2sel = [Number(c.getAttribute('data-p')), Number(c.getAttribute('data-j'))];
+    renderBoard(); renderDrill();
+    var again = matrixEl.querySelector('.cell[data-p="' + m2sel[0] + '"][data-j="' + m2sel[1] + '"]'); if (again) again.focus();
+  });
+  renderBoard(); renderDrill();
+
+  // ---------- M3: Watchlist editor ----------
+  var everyone = [
+    ['You','SMC'],['Ana Ruiz','SMC'],['Raj Patel','SMC'],['Lee Chen','SMC'],
+    ['Maria Gomez','General contractor'],['Owen Brooks','Architect']
+  ];
+  var counts = [
+    [[3,5],[0,1],[1,3],[0,1]],
+    [[1,4],[0,2],[0,1],[0,3]],
+    [[4,6],[1,2],[0,0],[0,0]],
+    [[0,0],[0,1],[2,4],[0,1]],
+    [[2,9],[0,3],[3,7],[1,2]],
+    [[0,3],[0,0],[1,5],[0,2]]
+  ];
+  var initial = [[1,1,1,1],[1,1,0,1],[1,1,0,0],[0,0,1,1],[0,0,0,0],[0,0,0,0]];
+  var watch = initial.map(function(r){ return r.slice(); });
+  var pickEl = document.getElementById('m3-pick');
+
+  function renderPick(){
+    var html = '<thead><tr><th>Person</th>' + projects.map(function(pr, j){
+      var all = watch.every(function(r){ return r[j]; });
+      return '<th>' + esc(pr) + '<button type="button" class="btn link sm colall" data-col="' + j + '">' + (all ? 'None' : 'All') + '</button></th>';
+    }).join('') + '<th class="all">All</th></tr></thead><tbody>';
+    var lastCo = '';
+    everyone.forEach(function(pp, p){
+      var co = pp[1] === 'SMC' ? 'Your company (SMC)' : 'Other companies';
+      if (co !== lastCo){ html += '<tr class="grp"><td colspan="' + (projects.length + 2) + '">' + co + '</td></tr>'; lastCo = co; }
+      html += '<tr><td><b>' + esc(pp[0]) + '</b>' + (pp[1] === 'SMC' ? '' : '<small>' + esc(pp[1]) + '</small>') + '</td>';
+      projects.forEach(function(pr, j){
+        var c = counts[p][j];
+        var label = c[1] === 0 ? 'nothing now' : (c[0] ? '<span class="lt">' + c[0] + ' late</span> · ' : '') + c[1] + ' open';
+        html += '<td><input type="checkbox" data-p="' + p + '" data-j="' + j + '"' + (watch[p][j] ? ' checked' : '') + ' aria-label="Watch ' + esc(pp[0]) + ' on ' + esc(pr) + '"><small>' + label + '</small></td>';
+      });
+      var rowAll = watch[p].every(Boolean);
+      html += '<td class="all"><input type="checkbox" data-row="' + p + '"' + (rowAll ? ' checked' : '') + ' aria-label="Watch ' + esc(pp[0]) + ' on every project"></td></tr>';
+    });
+    pickEl.innerHTML = html + '</tbody>';
+    var pairs = 0, open = 0, late = 0, ppl = 0;
+    watch.forEach(function(r, p){ var any = false; r.forEach(function(w, j){ if (w){ pairs++; any = true; open += counts[p][j][1]; late += counts[p][j][0]; } }); if (any) ppl++; });
+    document.getElementById('m3-sum').innerHTML = 'Watching <b>' + ppl + ' people</b> in <b>' + pairs + '</b> person–project pairs · <b>' + open + '</b> open items · <b class="lt">' + late + ' overdue</b>';
+  }
+  pickEl.addEventListener('change', function(e){
+    var t = e.target;
+    if (t.hasAttribute('data-row')){ var p = Number(t.getAttribute('data-row')); watch[p] = watch[p].map(function(){ return t.checked ? 1 : 0; }); }
+    else if (t.hasAttribute('data-p')){ watch[Number(t.getAttribute('data-p'))][Number(t.getAttribute('data-j'))] = t.checked ? 1 : 0; }
+    renderPick();
+    var again = pickEl.querySelector(t.hasAttribute('data-row') ? '[data-row="' + t.getAttribute('data-row') + '"]' : '[data-p="' + t.getAttribute('data-p') + '"][data-j="' + t.getAttribute('data-j') + '"]'); if (again) again.focus();
+  });
+  pickEl.addEventListener('click', function(e){
+    var b = e.target.closest('[data-col]'); if (!b) return;
+    var j = Number(b.getAttribute('data-col')); var all = watch.every(function(r){ return r[j]; });
+    watch.forEach(function(r){ r[j] = all ? 0 : 1; });
+    renderPick();
+  });
+  document.getElementById('m3-reset').addEventListener('click', function(){ watch = initial.map(function(r){ return r.slice(); }); renderPick(); });
+  document.getElementById('m3-save').addEventListener('click', function(){ document.getElementById('m3-sum').insertAdjacentHTML('beforeend', ' · <span style="color:var(--ok)">Saved (mockup)</span>'); });
+  renderPick();
+})();
+</script>
