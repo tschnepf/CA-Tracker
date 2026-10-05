@@ -1861,7 +1861,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
 
             if (IsMultiProject)
             {
-                return $"Showing items from all {selectedProjects.Count} selected projects. The CA folder and link above are for {SelectedProject?.Name}; Edit project… edits it.";
+                return $"Showing items from the {selectedProjects.Count} selected projects. Select just one to see its CA folder and link, or to edit it.";
             }
 
             var snapshot = SelectedProject?.Snapshot;
