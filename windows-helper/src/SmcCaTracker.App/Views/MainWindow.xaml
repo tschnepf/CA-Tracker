@@ -827,16 +827,16 @@
                                     </DataTemplate>
                                 </DataGridTemplateColumn.CellTemplate>
                             </DataGridTemplateColumn>
-                            <!-- Open (the item in the built-in Helix page, a Procore item online, or the folder when there's
-                                 no item), Download, and ▾ for the rest (everything is also on right-click). Beside the box
-                                 so they never scroll out of sight. -->
-                            <DataGridTemplateColumn x:Name="ActionsColumn" Width="192" CanUserSort="False" CanUserResize="False">
+                            <!-- Open Online (the item in the built-in Helix page, or a Procore item in your web browser),
+                                 Download, and ▾ for the rest (everything is also on right-click). Beside the box so they
+                                 never scroll out of sight. -->
+                            <DataGridTemplateColumn x:Name="ActionsColumn" Width="232" CanUserSort="False" CanUserResize="False">
                                 <DataGridTemplateColumn.CellTemplate>
                                     <DataTemplate>
                                         <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
-                                            <Button Content="Open" Click="OpenRow_Click" IsEnabled="{Binding CanOpen}" Padding="11,2" FontSize="12.5"
+                                            <Button Content="Open Online" Click="OpenRow_Click" IsEnabled="{Binding HasItem}" Padding="10,2" FontSize="12.5"
                                                     ToolTip="{Binding OpenToolTip}" ToolTipService.ShowOnDisabled="True"
-                                                    AutomationProperties.Name="{Binding Number, StringFormat=Open {0}}" />
+                                                    AutomationProperties.Name="{Binding Number, StringFormat=Open {0} online}" />
                                             <Button Content="Download" Click="DownloadRow_Click" IsEnabled="{Binding CanDownload}" Padding="9,2"
                                                     FontSize="12.5" Margin="4,0,0,0"
                                                     ToolTip="{Binding DownloadToolTip}" ToolTipService.ShowOnDisabled="True"

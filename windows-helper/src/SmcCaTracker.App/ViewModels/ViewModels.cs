@@ -607,13 +607,11 @@ public sealed class RowViewModel : ObservableObject
     /// <summary>Its folder status is worth a line in the details pane (more than "Open" or "No folder").</summary>
     public bool HasFolderNote => Row.Status is not (RowStatus.Open or RowStatus.NoFolder);
 
-    /// <summary>The row's Open: the item in the built-in Helix page, a Procore item online, or the folder when there's no item.</summary>
-    public bool CanOpen => HasItem || HasFolder;
-
+    /// <summary>Hover text for the row's Open Online: where the item opens (a folder with no item has nothing to open online).</summary>
     public string OpenToolTip => CanDownload
         ? "Open it in Helix, in the panel on the right"
         : HasItem ? $"Open it in {Project.ProviderLabel} (in your web browser)"
-        : "Open its folder in Explorer";
+        : "No Helix or Procore item for this folder. ▾ → Open folder opens the folder.";
 
     /// <summary>"Open in Helix" / "Open in Procore" in the row's menu.</summary>
     public string OpenOnlineText => Project.ProviderLabel.Length > 0 ? $"Open in {Project.ProviderLabel}" : "Open online";

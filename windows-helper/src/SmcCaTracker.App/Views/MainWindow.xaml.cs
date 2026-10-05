@@ -1142,21 +1142,12 @@ public partial class MainWindow : Window
         ShowDownloadWindow(new[] { request }, verify: true);
     }
 
-    /// <summary>A row's Open: the item in the built-in Helix page, a Procore item online, or the folder when there's no item.</summary>
+    /// <summary>A row's Open Online: the item in the built-in Helix page, or a Procore item in your web browser.</summary>
     private async void OpenRow_Click(object sender, RoutedEventArgs e)
     {
-        if (sender is not FrameworkElement { DataContext: RowViewModel row })
-        {
-            return;
-        }
-
-        if (row.HasItem)
+        if (sender is FrameworkElement { DataContext: RowViewModel { HasItem: true } row })
         {
             await OpenItemAsync(row);
-        }
-        else if (row.HasFolder)
-        {
-            OpenInExplorer(row.Row.Folder!.FullPath);
         }
     }
 
