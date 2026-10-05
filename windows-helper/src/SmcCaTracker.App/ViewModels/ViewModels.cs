@@ -581,6 +581,17 @@ public sealed class RowViewModel : ObservableObject
     public bool HasFolder => Row.Folder is not null;
     public bool HasItem => Row.Item is not null;
 
+    /// <summary>The row's Open: the newest file (Helix), the item online (Procore), or the folder when there's no item.</summary>
+    public bool CanOpen => HasItem || HasFolder;
+
+    public string OpenToolTip => CanDownload
+        ? "Open its newest file: the copy in its folder when it's there, otherwise a copy from Helix (the CA folder isn't changed)"
+        : HasItem ? $"Open it in {Project.ProviderLabel} (in your web browser)"
+        : "Open its folder in Explorer";
+
+    /// <summary>"Open in Helix" / "Open in Procore" in the row's menu.</summary>
+    public string OpenOnlineText => Project.ProviderLabel.Length > 0 ? $"Open in {Project.ProviderLabel}" : "Open online";
+
     /// <summary>Downloads work for Helix items only.</summary>
     public bool CanDownload => Row.Item is not null
         && string.Equals(Project.Project.Connection?.Provider, Providers.Helix, StringComparison.OrdinalIgnoreCase);

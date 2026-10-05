@@ -1133,6 +1133,72 @@ public partial class MainWindow : Window
         ShowDownloadWindow(new[] { request }, verify: true);
     }
 
+    /// <summary>A row's Open: the newest file of a Helix item, a Procore item online, or the folder when there's no item.</summary>
+    private async void OpenRow_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not FrameworkElement { DataContext: RowViewModel row })
+        {
+            return;
+        }
+
+        if (row.CanDownload)
+        {
+            OpenNewestFile(row);
+        }
+        else if (row.HasItem)
+        {
+            await OpenItemAsync(row);
+        }
+        else if (row.HasFolder)
+        {
+            OpenInExplorer(row.Row.Folder!.FullPath);
+        }
+    }
+
+    /// <summary>A row's ▾: its menu (the same as on right-click), under the button.</summary>
+    private void RowMenu_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is FrameworkElement { DataContext: RowViewModel row } button && FindResource("RowMenu") is ContextMenu menu)
+        {
+            menu.DataContext = row;
+            menu.PlacementTarget = button;
+            menu.Placement = System.Windows.Controls.Primitives.PlacementMode.Bottom;
+            menu.IsOpen = true;
+        }
+    }
+
+    private void OpenNewestFile_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is FrameworkElement { DataContext: RowViewModel row })
+        {
+            OpenNewestFile(row);
+        }
+    }
+
+    /// <summary>
+    /// Opens the newest file Helix has for a row's item: the copy in its folder when it's there, otherwise a copy
+    /// from Helix kept in the app's folder (the CA folder isn't changed). An item with no files opens in Helix.
+    /// </summary>
+    private void OpenNewestFile(RowViewModel row)
+    {
+        if (viewModel.DownloadRequestFor(row) is not { } request)
+        {
+            return;
+        }
+
+        var window = new OpenFileWindow(request, viewModel.Paths) { Owner = this };
+        window.FileOpened += message => viewModel.StatusMessage = message;
+        window.NoFiles += async () =>
+        {
+            viewModel.StatusMessage = $"{row.TypeSingular} {row.Number} has no attachments in Helix, so it opens there instead.";
+            await OpenItemAsync(row);
+        };
+        // It uses the built-in browser's sign-in, like the Download window.
+        downloadWindowsOpen++;
+        window.Closed += (_, _) => downloadWindowsOpen--;
+        window.Show();
+    }
+
     private async void OpenRowLink_Click(object sender, RoutedEventArgs e)
     {
         if (sender is FrameworkElement { DataContext: RowViewModel row })

@@ -9,11 +9,13 @@
     <Window.Resources>
         <BooleanToVisibilityConverter x:Key="Visible" />
 
-        <!-- An item row's right-click menu: the same actions as its links, and Set discipline. The row is
-             the menu's DataContext. -->
-        <ContextMenu x:Key="RowMenu">
+        <!-- An item row's menu, on right-click and on its ▾: every way to open it, download, verify, and Set
+             discipline. The row is the menu's DataContext. Not shared, so the ▾ gets a menu of its own. -->
+        <ContextMenu x:Key="RowMenu" x:Shared="False">
+            <MenuItem Header="Open newest file" Click="OpenNewestFile_Click" IsEnabled="{Binding CanDownload}"
+                      ToolTip="The copy in its folder when it's there, otherwise a copy from Helix (the CA folder isn't changed)" />
             <MenuItem Header="Open folder" Click="OpenRowFolder_Click" IsEnabled="{Binding HasFolder}" />
-            <MenuItem Header="Open Online" Click="OpenRowLink_Click" IsEnabled="{Binding HasItem}"
+            <MenuItem Header="{Binding OpenOnlineText}" Click="OpenRowLink_Click" IsEnabled="{Binding HasItem}"
                       ToolTip="Helix items open in the panel on the right; Procore items open in your web browser" />
             <MenuItem Header="Download…" Click="DownloadRow_Click" IsEnabled="{Binding CanDownload}"
                       ToolTip="{Binding DownloadToolTip}" ToolTipService.ShowOnDisabled="True" />
@@ -810,28 +812,19 @@
                                     </DataTemplate>
                                 </DataGridTemplateColumn.CellTemplate>
                             </DataGridTemplateColumn>
-                            <!-- Row actions, always shown (also on right-click), beside the box so they never scroll
-                                 out of sight. Ones that don't apply to the row are greyed out. -->
-                            <DataGridTemplateColumn x:Name="ActionsColumn" Width="268" CanUserSort="False" CanUserResize="False">
+                            <!-- Open (the newest file of a Helix item, a Procore item online, or the folder when there's no
+                                 item) and ▾ for every other way (also on right-click), beside the box so they never scroll
+                                 out of sight. -->
+                            <DataGridTemplateColumn x:Name="ActionsColumn" Width="100" CanUserSort="False" CanUserResize="False">
                                 <DataGridTemplateColumn.CellTemplate>
                                     <DataTemplate>
                                         <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
-                                            <Button Style="{StaticResource LinkButton}" Content="Folder" Click="OpenRowFolder_Click"
-                                                    IsEnabled="{Binding HasFolder}"
-                                                    AutomationProperties.Name="{Binding Number, StringFormat=Open the folder of {0}}"
-                                                    ToolTip="Open this item's folder in Explorer" />
-                                            <Button Style="{StaticResource LinkButton}" Content="Open Online" Click="OpenRowLink_Click"
-                                                    IsEnabled="{Binding HasItem}"
-                                                    AutomationProperties.Name="{Binding Number, StringFormat=Open {0} online}"
-                                                    ToolTip="Helix items open in the panel on the right; Procore items open in your web browser" />
-                                            <Button Style="{StaticResource LinkButton}" Content="Download" Click="DownloadRow_Click"
-                                                    IsEnabled="{Binding CanDownload}"
-                                                    AutomationProperties.Name="{Binding Number, StringFormat=Download {0}}"
-                                                    ToolTip="{Binding DownloadToolTip}" ToolTipService.ShowOnDisabled="True" />
-                                            <Button Style="{StaticResource LinkButton}" Content="Verify" Click="VerifyRow_Click"
-                                                    IsEnabled="{Binding CanDownload}"
-                                                    AutomationProperties.Name="{Binding Number, StringFormat=Verify the folder of {0}}"
-                                                    ToolTip="Check that this item's folder has every file Helix has for it (missing ones can then be downloaded)" />
+                                            <Button Content="Open" Click="OpenRow_Click" IsEnabled="{Binding CanOpen}" Padding="11,2" FontSize="12.5"
+                                                    ToolTip="{Binding OpenToolTip}" ToolTipService.ShowOnDisabled="True"
+                                                    AutomationProperties.Name="{Binding Number, StringFormat=Open {0}}" />
+                                            <Button Content="▾" Click="RowMenu_Click" Padding="7,2" FontSize="12.5" Margin="2,0,0,0"
+                                                    ToolTip="Open its folder, open it online, download, verify, or set its discipline"
+                                                    AutomationProperties.Name="{Binding Number, StringFormat=More for {0}}" />
                                         </StackPanel>
                                     </DataTemplate>
                                 </DataGridTemplateColumn.CellTemplate>

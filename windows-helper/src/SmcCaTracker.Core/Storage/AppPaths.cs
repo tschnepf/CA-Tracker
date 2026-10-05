@@ -38,6 +38,12 @@ public sealed class AppPaths
     /// <summary>Anonymized samples exported for test cases.</summary>
     public string ExportsDirectory => Path.Combine(Root, "exports");
 
+    /// <summary>
+    /// Copies of files opened from Helix with a row's Open (when the item's folder doesn't have them). Kept
+    /// here, never in a CA folder; ones not opened for 30 days are removed.
+    /// </summary>
+    public string OpenedFilesDirectory => Path.Combine(Root, "opened");
+
     /// <summary>Timings and errors, one file per day.</summary>
     public string LogsDirectory => Path.Combine(Root, "logs");
 
