@@ -50,6 +50,9 @@ public sealed class ViewState
     /// <summary>Show archived projects in the list (dimmed) so they can be unarchived.</summary>
     public bool ShowArchived { get; set; }
 
+    /// <summary>The item details pane beside the list is on (View → Item details).</summary>
+    public bool ShowItemDetails { get; set; }
+
     /// <summary>Width of the project list, in pixels (drag the bar beside it).</summary>
     public double ProjectsPaneWidth { get; set; } = 290;
 

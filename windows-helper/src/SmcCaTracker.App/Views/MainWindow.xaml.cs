@@ -70,6 +70,7 @@ public partial class MainWindow : Window
             viewModel.Dispose();
         };
         ItemPanel.CloseRequested += (_, _) => ShowItemPanel(false);
+        InitDetailsPanel();
         // Coming back to the app (e.g. from Explorer): check the CA folders straight away.
         Activated += (_, _) => viewModel.CheckFoldersSoon();
         GroupProjectList();
@@ -92,6 +93,9 @@ public partial class MainWindow : Window
                     break;
                 case nameof(MainViewModel.PersonFilterText):
                     UpdateColumns();
+                    break;
+                case nameof(MainViewModel.ShowItemDetails):
+                    OnShowItemDetailsChanged();
                     break;
             }
         };
@@ -171,6 +175,7 @@ public partial class MainWindow : Window
         ApplyItemGrouping();
         UpdateSortArrows();
         UpdateColumns();
+        OnShowItemDetailsChanged();
         viewModel.ViewStateRestored();
     }
 
@@ -417,6 +422,10 @@ public partial class MainWindow : Window
             }
         }
 
+        var details = new MenuItem { Header = "Item details on the right", IsCheckable = true, IsChecked = viewModel.ShowItemDetails };
+        details.Click += (_, _) => viewModel.ShowItemDetails = details.IsChecked;
+        menu.Items.Add(details);
+        menu.Items.Add(new Separator());
         Heading("Group by");
         Choices(GroupBox);
         menu.Items.Add(new Separator());
@@ -1228,25 +1237,175 @@ public partial class MainWindow : Window
         }
     }
 
-    /// <summary>Shows or hides the item panel beside the list (its width is kept while the app is open).</summary>
-    private void ShowItemPanel(bool show)
+    // ---- The panel beside the list: the Helix page, or the selected item's details -----------------
+
+    private enum PanelMode
     {
-        if (show == (ItemPanel.Visibility == Visibility.Visible))
+        None,
+        Details,
+        Helix
+    }
+
+    private PanelMode panelMode;
+
+    // Each mode keeps its own width while the app is open (drag the bar to change it).
+    private GridLength helixPanelWidth = new(0.9, GridUnitType.Star);
+    private GridLength detailsPanelWidth = new(360);
+
+    // The selected row, by key, so the details follow it when the list is rebuilt (a sync, a folder change).
+    private string? selectedRowKey;
+
+    /// <summary>Shows the Helix page beside the list, or when it closes, the details (if on) or nothing.</summary>
+    private void ShowItemPanel(bool show) =>
+        SetPanel(show ? PanelMode.Helix : viewModel.ShowItemDetails ? PanelMode.Details : PanelMode.None);
+
+    private void SetPanel(PanelMode mode)
+    {
+        if (mode == panelMode)
         {
             return;
         }
 
-        ItemPanel.Visibility = show ? Visibility.Visible : Visibility.Collapsed;
-        PanelSplitter.Visibility = ItemPanel.Visibility;
-        PanelSplitterColumn.Width = show ? new GridLength(10) : new GridLength(0);
-        ItemPanelColumn.Width = show ? itemPanelWidth : new GridLength(0);
-        if (!show)
+        if (panelMode != PanelMode.None && ItemPanelColumn.ActualWidth > 0)
         {
-            itemPanelWidth = ItemPanelColumn.ActualWidth > 0 ? new GridLength(ItemPanelColumn.ActualWidth / Math.Max(1, ListColumn.ActualWidth), GridUnitType.Star) : itemPanelWidth;
+            if (panelMode == PanelMode.Helix)
+            {
+                helixPanelWidth = new GridLength(ItemPanelColumn.ActualWidth / Math.Max(1, ListColumn.ActualWidth), GridUnitType.Star);
+            }
+            else
+            {
+                detailsPanelWidth = new GridLength(ItemPanelColumn.ActualWidth);
+            }
+        }
+
+        panelMode = mode;
+        ItemPanel.Visibility = mode == PanelMode.Helix ? Visibility.Visible : Visibility.Collapsed;
+        DetailsPanel.Visibility = mode == PanelMode.Details ? Visibility.Visible : Visibility.Collapsed;
+        PanelSplitter.Visibility = mode == PanelMode.None ? Visibility.Collapsed : Visibility.Visible;
+        PanelSplitterColumn.Width = mode == PanelMode.None ? new GridLength(0) : new GridLength(10);
+        ItemPanelColumn.Width = mode switch
+        {
+            PanelMode.Helix => helixPanelWidth,
+            PanelMode.Details => detailsPanelWidth,
+            _ => new GridLength(0)
+        };
+        if (mode == PanelMode.Details)
+        {
+            DetailsPanel.Show(SelectedRow());
         }
     }
 
-    private GridLength itemPanelWidth = new(0.9, GridUnitType.Star);
+    private RowViewModel? SelectedRow() => ItemsGrid.SelectedItem as RowViewModel;
+
+    private void InitDetailsPanel()
+    {
+        ItemsGrid.SelectionChanged += (_, _) =>
+        {
+            // A rebuilt list clears the selection for a moment; RestoreSelectedRow picks the row up again.
+            if (SelectedRow() is { } row)
+            {
+                selectedRowKey = row.Key;
+                if (panelMode == PanelMode.Details)
+                {
+                    DetailsPanel.Show(row);
+                }
+            }
+        };
+        viewModel.Rows.CollectionChanged += (_, _) =>
+            Dispatcher.InvokeAsync(RestoreSelectedRow, System.Windows.Threading.DispatcherPriority.Background);
+        DetailsPanel.CloseRequested += (_, _) => viewModel.ShowItemDetails = false;
+        DetailsPanel.ActionRequested += async (action, row) =>
+        {
+            switch (action)
+            {
+                case "open":
+                    await OpenItemAsync(row);
+                    break;
+                case "download":
+                    if (viewModel.DownloadRequestFor(row) is { } request)
+                    {
+                        ShowDownloadWindow(new[] { request });
+                    }
+
+                    break;
+                case "verify":
+                    if (viewModel.DownloadRequestFor(row) is { } check)
+                    {
+                        ShowDownloadWindow(new[] { check }, verify: true);
+                    }
+
+                    break;
+                case "folder":
+                    OpenInExplorer(row.Row.Folder?.FullPath);
+                    break;
+                case "newest":
+                    OpenNewestFile(row);
+                    break;
+                case "discipline":
+                    await ChooseDisciplineAsync(new[] { row }, row.Row.Folder?.Name ?? $"{row.Number} - {row.Title}");
+                    break;
+            }
+        };
+    }
+
+    /// <summary>After the list is rebuilt: select the row that was selected (its new copy), so the details stay on it.</summary>
+    private void RestoreSelectedRow()
+    {
+        if (SelectedRow() is { } selected)
+        {
+            if (panelMode == PanelMode.Details)
+            {
+                DetailsPanel.Show(selected);
+            }
+
+            return;
+        }
+
+        var again = selectedRowKey is null ? null : viewModel.Rows.FirstOrDefault(row => row.Key == selectedRowKey);
+        if (again is not null)
+        {
+            ItemsGrid.SelectedItem = again;
+        }
+        else if (panelMode == PanelMode.Details)
+        {
+            DetailsPanel.Show(null);
+        }
+    }
+
+    /// <summary>Item details turned on or off: show or hide them (the Helix page, when open, stays).</summary>
+    private void OnShowItemDetailsChanged()
+    {
+        ItemPanel.SetCloseLabel(viewModel.ShowItemDetails);
+        if (viewModel.ShowItemDetails && panelMode == PanelMode.None)
+        {
+            SetPanel(PanelMode.Details);
+        }
+        else if (!viewModel.ShowItemDetails && panelMode == PanelMode.Details)
+        {
+            SetPanel(PanelMode.None);
+        }
+    }
+
+    /// <summary>A row's "Show details": select it and show its details (closing the Helix page if it is open).</summary>
+    private async void ShowRowDetails_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not FrameworkElement { DataContext: RowViewModel row })
+        {
+            return;
+        }
+
+        ItemsGrid.SelectedItem = row;
+        viewModel.ShowItemDetails = true;
+        if (panelMode == PanelMode.Helix)
+        {
+            await ItemPanel.CloseItemAsync();
+        }
+        else
+        {
+            SetPanel(PanelMode.Details);
+            DetailsPanel.Show(row);
+        }
+    }
 
     /// <summary>Double-click a row: open its folder, or the item when it has no folder yet.</summary>
     private async void Grid_MouseDoubleClick(object sender, MouseButtonEventArgs e)

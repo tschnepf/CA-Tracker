@@ -11,6 +11,7 @@
 
         <!-- An item row's right-click menu: every action on it. The row is the menu's DataContext. -->
         <ContextMenu x:Key="RowMenu">
+            <MenuItem Header="Show details" Click="ShowRowDetails_Click" ToolTip="Show this item in the details pane beside the list" />
             <MenuItem Header="{Binding OpenOnlineText}" Click="OpenRowLink_Click" IsEnabled="{Binding HasItem}"
                       ToolTip="Helix items open in the panel on the right; Procore items open in your web browser" />
             <MenuItem Header="Download…" Click="DownloadRow_Click" IsEnabled="{Binding CanDownload}"
@@ -27,6 +28,7 @@
 
         <!-- A row's ▾: what isn't on its own buttons (Open and Download are). Not shared, so each ▾ gets its own. -->
         <ContextMenu x:Key="RowMoreMenu" x:Shared="False">
+            <MenuItem Header="Show details" Click="ShowRowDetails_Click" ToolTip="Show this item in the details pane beside the list" />
             <MenuItem Header="Open newest file" Click="OpenNewestFile_Click" IsEnabled="{Binding CanDownload}"
                       ToolTip="The copy in its folder when it's there, otherwise a copy from Helix (the CA folder isn't changed)" />
             <MenuItem Header="Open folder" Click="OpenRowFolder_Click" IsEnabled="{Binding HasFolder}" />
@@ -229,6 +231,8 @@
                           Background="Transparent" ResizeBehavior="PreviousAndNext" Visibility="Collapsed"
                           ToolTip="Drag to resize the item panel" />
             <views:ItemPanel x:Name="ItemPanel" Grid.Column="4" Visibility="Collapsed" />
+            <!-- Or the selected item's details (View → Item details); Open in Helix switches to the Helix page. -->
+            <views:DetailsPanel x:Name="DetailsPanel" Grid.Column="4" Visibility="Collapsed" />
 
             <!-- Projects -->
             <Border Grid.Column="0" Style="{StaticResource Card}" Padding="10">

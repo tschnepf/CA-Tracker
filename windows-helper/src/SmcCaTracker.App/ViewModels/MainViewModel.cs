@@ -78,6 +78,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     private readonly HashSet<string> rememberedPeople = new(StringComparer.OrdinalIgnoreCase);
     private bool rememberCompany;
     private bool peopleDefaulted;
+    private bool showItemDetails;
     private bool viewStateReady;
     private readonly Dictionary<string, ProjectComparison> comparisons = new(StringComparer.Ordinal);
     private List<RowViewModel> allRows = new();
@@ -3844,6 +3845,20 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         rememberedPeople.UnionWith(view.People.Select(PersonNames.WithoutCompany).Where(name => name.Length > 0));
         rememberCompany = view.AnyoneAtCompany;
         peopleDefaulted = view.PeopleDefaulted;
+        showItemDetails = view.ShowItemDetails;
+    }
+
+    /// <summary>The item details pane beside the list (View → Item details); remembered.</summary>
+    public bool ShowItemDetails
+    {
+        get => showItemDetails;
+        set
+        {
+            if (Set(ref showItemDetails, value))
+            {
+                ScheduleViewStateSave();
+            }
+        }
     }
 
     /// <summary>Called by the window once it has restored the saved view; changes are saved from then on.</summary>
@@ -3882,6 +3897,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
             People = rememberedPeople.OrderBy(name => name, StringComparer.CurrentCultureIgnoreCase).ToList(),
             AnyoneAtCompany = rememberCompany,
             PeopleDefaulted = peopleDefaulted,
+            ShowItemDetails = showItemDetails,
             Due = dueFilter.ToString(),
             DueWithinDays = dueWithinDays,
             Discipline = disciplineFilter,

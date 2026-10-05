@@ -581,6 +581,32 @@ public sealed class RowViewModel : ObservableObject
     public bool HasFolder => Row.Folder is not null;
     public bool HasItem => Row.Item is not null;
 
+    /// <summary>Identifies the row across list rebuilds: its project, type, and folder or item.</summary>
+    public string Key => $"{Project.Id}|{Row.ItemType}|{Row.Folder?.FullPath ?? "item:" + Row.Item?.ItemId}";
+
+    /// <summary>The details pane's first line: "RFI 000252 · Aligned CMH03 · Helix".</summary>
+    public string DetailsCrumb => string.Join(" · ", new[] { HasItem ? $"{TypeSingular} {Number}" : $"{TypeSingular} folder", ProjectName, Project.ProviderLabel }
+        .Where(part => part.Length > 0));
+
+    /// <summary>Who has it now and for how long, for the details pane.</summary>
+    public string WithText => HolderNames.Count == 0 ? (Row.Item is null ? "—" : HolderText)
+        : DaysInCourt is null ? string.Join(", ", HolderNames)
+        : $"{string.Join(", ", HolderNames)} · {DaysInCourtText}";
+
+    /// <summary>Who has the next step (Helix's "upcoming" people), for the details pane.</summary>
+    public string NextText => Row.Item is not { Closed: false } item ? "" : string.Join(", ", item.Holders
+        .Where(holder => string.Equals(holder.State, "upcoming", StringComparison.OrdinalIgnoreCase) && !string.IsNullOrWhiteSpace(holder.Name))
+        .Select(holder => PersonNames.WithoutCompany(holder.Name))
+        .Distinct(StringComparer.OrdinalIgnoreCase));
+
+    public bool HasNext => NextText.Length > 0;
+
+    /// <summary>Where its folder is ("Submittals\Elec\000437 - …"), or that it has none.</summary>
+    public string FolderPathText => Row.Folder is null ? "No folder yet" : $"{LocationText}\\{Row.Folder.Name}";
+
+    /// <summary>Its folder status is worth a line in the details pane (more than "Open" or "No folder").</summary>
+    public bool HasFolderNote => Row.Status is not (RowStatus.Open or RowStatus.NoFolder);
+
     /// <summary>The row's Open: the item in the built-in Helix page, a Procore item online, or the folder when there's no item.</summary>
     public bool CanOpen => HasItem || HasFolder;
 

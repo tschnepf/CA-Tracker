@@ -1141,6 +1141,32 @@ public class NewestFileTests
     }
 }
 
+public class FolderFilesTests
+{
+    [Fact]
+    public void TheFolderIsListedNewestFirstWithoutHiddenFiles()
+    {
+        using var temp = new TempFolder();
+        var item = temp.Make("000252 - BMS panel");
+        var question = Path.Combine(item, "Question.pdf");
+        var response = Path.Combine(temp.Make("000252 - BMS panel", "R1"), "Response.pdf");
+        var partial = Path.Combine(item, "Markup.pdf.1234.partial");
+        var hidden = Path.Combine(item, "desktop.ini");
+        foreach (var path in new[] { question, response, partial, hidden })
+        {
+            File.WriteAllText(path, "x");
+        }
+
+        File.SetAttributes(hidden, FileAttributes.Hidden | FileAttributes.System);
+        File.SetLastWriteTime(question, DateTime.Now.AddDays(-10));
+        File.SetLastWriteTime(response, DateTime.Now.AddDays(-1));
+
+        var files = FolderFiles.List(item, 40);
+        Assert.Equal(new[] { Path.Combine("R1", "Response.pdf"), "Question.pdf" }, files.Select(file => file.RelativePath));
+        Assert.Single(FolderFiles.List(item, 1));
+    }
+}
+
 public class DownloadNamingTests
 {
     [Theory]
