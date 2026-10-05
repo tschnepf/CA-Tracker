@@ -25,14 +25,17 @@ public enum Urgency
 /// <summary>Who holds an item now, how long they've had it, and how long until it's due.</summary>
 public static class ItemTiming
 {
-    /// <summary>People the item is with right now (Helix "In court", Procore "Ball In Court").</summary>
+    /// <summary>
+    /// People the item is with right now (Helix "In court", Procore "Ball In Court"), once each, also
+    /// when Procore wrote one of them with the company in brackets.
+    /// </summary>
     public static IReadOnlyList<SnapshotHolder> CurrentHolders(SnapshotItem? item) =>
         item is null || item.Closed
             ? Array.Empty<SnapshotHolder>()
             : item.Holders
                 .Where(holder => string.Equals(holder.State, "current", StringComparison.OrdinalIgnoreCase)
                     && !string.IsNullOrWhiteSpace(holder.Name))
-                .GroupBy(holder => holder.Name.Trim(), StringComparer.OrdinalIgnoreCase)
+                .GroupBy(holder => PersonNames.WithoutCompany(holder.Name), StringComparer.OrdinalIgnoreCase)
                 .Select(group => group.First())
                 .ToList();
 

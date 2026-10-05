@@ -555,7 +555,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     /// <summary>The names you're signed in to Helix and Procore as (the same form as the ball-in-court names).</summary>
     private List<string> YourNames() => new[] { store.Account(Providers.Helix)?.UserName, store.Account(Providers.Procore)?.UserName }
         .Where(name => !string.IsNullOrWhiteSpace(name))
-        .Select(name => name!.Trim())
+        .Select(name => PersonNames.WithoutCompany(name))
         .Distinct(StringComparer.OrdinalIgnoreCase)
         .ToList();
 
@@ -3280,8 +3280,10 @@ public sealed class MainViewModel : ObservableObject, IDisposable
             return true;
         }
 
-        // Any checked person (or anyone at the company) having the item is a match.
-        return (rememberCompany && row.Holders.Any(holder => row.Comparison.Company.Matches(holder.CompanyId, holder.Company)))
+        // Any checked person (or anyone at the company) having the item is a match. A person Procore lists
+        // only by name may have the company in brackets after it.
+        return (rememberCompany && row.Holders.Any(holder => row.Comparison.Company.Matches(holder.CompanyId, holder.Company)
+                    || row.Comparison.Company.Matches(null, PersonNames.CompanyIn(holder.Name))))
             || row.HolderNames.Any(rememberedPeople.Contains);
     }
 
@@ -3592,8 +3594,9 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         projectsPaneWidth = view.ProjectsPaneWidth is >= 200 and <= 700 ? view.ProjectsPaneWidth : 290;
         hiddenColumns.Clear();
         hiddenColumns.UnionWith(view.HiddenColumns ?? new List<string>());
+        // Checked names are kept without a company in brackets, as the list now shows them.
         rememberedPeople.Clear();
-        rememberedPeople.UnionWith(view.People);
+        rememberedPeople.UnionWith(view.People.Select(PersonNames.WithoutCompany).Where(name => name.Length > 0));
         rememberCompany = view.AnyoneAtCompany;
         peopleDefaulted = view.PeopleDefaulted;
     }

@@ -455,7 +455,10 @@ public sealed class RowViewModel : ObservableObject
         var folders = comparison.Folders;
         CourtText = row.Item is null ? "" : CourtEvaluator.Describe(row.Court, company);
         Holders = ItemTiming.CurrentHolders(row.Item);
-        HolderNames = Holders.Select(holder => holder.Name.Trim()).ToList();
+        // Names without a company in brackets, so a person Procore writes both ways is one person.
+        HolderNames = Holders.Select(holder => PersonNames.WithoutCompany(holder.Name))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
         DaysInCourt = ItemTiming.DaysInCourt(row.Item, today);
         DaysTillDue = ItemTiming.DaysTillDue(row.Item, today);
         DueText = ItemTiming.DueText(row.Item, today);

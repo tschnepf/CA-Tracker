@@ -951,6 +951,17 @@ public class ItemTimingTests
     }
 
     [Fact]
+    public void APersonProcoreWritesBothWaysHoldsTheItemOnce()
+    {
+        var item = Item(null, false,
+            new SnapshotHolder { Name = "Pat Lee", State = "current", Company = "Acme Electric" },
+            new SnapshotHolder { Name = "Pat Lee (Acme Electric)", State = "current" },
+            new SnapshotHolder { Name = "Sam Roe (Acme Electric)", State = "current" });
+
+        Assert.Equal(new[] { "Pat Lee", "Sam Roe (Acme Electric)" }, ItemTiming.CurrentHolders(item).Select(holder => holder.Name));
+    }
+
+    [Fact]
     public void DueTextShowsTheDateAndHowFarOffItIs()
     {
         var us = System.Globalization.CultureInfo.GetCultureInfo("en-US");
@@ -1020,6 +1031,24 @@ public class ViewStateTests
         old.HiddenColumns.Remove("FolderColumn");
         old.Upgrade();
         Assert.DoesNotContain("FolderColumn", old.HiddenColumns);
+    }
+}
+
+public class PersonNamesTests
+{
+    [Theory]
+    [InlineData("Pat Lee (Acme Electric)", "Pat Lee", "Acme Electric")]
+    [InlineData("  Pat Lee  ", "Pat Lee", null)]
+    [InlineData("Pat Lee (Acme (West))", "Pat Lee", "Acme (West)")]
+    [InlineData("Robert (Bob) Jones", "Robert (Bob) Jones", null)]
+    [InlineData("(Acme Electric)", "(Acme Electric)", null)]
+    [InlineData("Lee(Acme)", "Lee(Acme)", null)]
+    [InlineData("Pat Lee ()", "Pat Lee ()", null)]
+    [InlineData(null, "", null)]
+    public void TheCompanyInBracketsComesOffTheName(string? name, string person, string? company)
+    {
+        Assert.Equal(person, PersonNames.WithoutCompany(name));
+        Assert.Equal(company, PersonNames.CompanyIn(name));
     }
 }
 
