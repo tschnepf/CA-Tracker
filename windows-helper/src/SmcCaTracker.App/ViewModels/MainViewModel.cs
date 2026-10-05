@@ -698,14 +698,13 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         }
     }
 
-    /// <summary>The views' counts, from every linked project's rows (an item in both a BB and a TFO project counts once).</summary>
+    /// <summary>The views' counts, from every linked project's rows, counted as the list shows them.</summary>
     private void UpdateViewCounts()
     {
         var you = YourNames().ToHashSet(StringComparer.OrdinalIgnoreCase);
         var open = ViewProjects()
             .SelectMany(project => badgeSources.TryGetValue(project.Id, out var source) ? source.Rows : new List<RowViewModel>())
             .Where(row => row.Row.Item is { Closed: false })
-            .DistinctBy(row => $"{row.Project.Project.Connection?.Provider}|{row.Project.Project.Connection?.ProjectId}|{row.Row.ItemType}|{row.Row.Item!.ItemId}")
             .ToList();
         var mine = open.Where(row => row.HolderNames.Any(you.Contains)).ToList();
         myWorkOpen = mine.Count;
@@ -1944,6 +1943,9 @@ public sealed class MainViewModel : ObservableObject, IDisposable
 
     /// <summary>The CA folder and link (Details) describe one project, so they hide when several are shown.</summary>
     public bool CanShowProjectDetails => HasProject && !IsMultiProject;
+
+    /// <summary>Edit project / Choose CA folder acts on one project: hidden while several are shown (My work, Ctrl-click).</summary>
+    public bool CanEditProject => HasProject && !IsMultiProject;
 
     // ---- The header's counts by when items are due (each a quick Due filter) ----------------
 
@@ -3685,7 +3687,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
                      nameof(ProjectTitle), nameof(CaFolderText), nameof(ConnectionText), nameof(RefreshButtonText),
                      nameof(DataTimestampText), nameof(FolderTimestampText), nameof(TimestampText), nameof(ProjectSubtitle), nameof(HasProjectSubtitle),
                      nameof(CompanyText), nameof(FolderWarning), nameof(HasFolderWarning), nameof(CanCreateTypeFolders),
-                     nameof(HasSetupChip), nameof(SetupIssuesText), nameof(CanShowProjectDetails), nameof(HasDueChips),
+                     nameof(HasSetupChip), nameof(SetupIssuesText), nameof(CanShowProjectDetails), nameof(CanEditProject), nameof(HasDueChips),
                      nameof(LastSyncFailed), nameof(CanIncludeUnlabeled), nameof(IncludeUnlabeledText), nameof(MarkReturnedToolTip),
                      nameof(HasActiveFilters),
                      nameof(IsPlaceholder), nameof(CanEditConnection), nameof(EditButtonText),

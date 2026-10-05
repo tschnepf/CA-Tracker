@@ -522,7 +522,8 @@
                                 <Button Content="Cancel" Click="CancelRefresh_Click" Margin="8,0,0,0"
                                         ToolTip="Stops this sync (a background sync finishes by itself)"
                                         Visibility="{Binding CanCancelRefresh, Converter={StaticResource Visible}}" />
-                                <Button Content="{Binding EditButtonText}" Click="EditProject_Click" Margin="8,0,0,0" IsEnabled="{Binding HasProject}" />
+                                <Button Content="{Binding EditButtonText}" Click="EditProject_Click" Margin="8,0,0,0"
+                                        Visibility="{Binding CanEditProject, Converter={StaticResource Visible}}" />
                                 <Button x:Name="ProjectMenuButton" Content="⋯" Click="ProjectMenu_Click" Margin="4,0,0,0" Padding="10,6"
                                         IsEnabled="{Binding HasProject}" AutomationProperties.Name="More project actions"
                                         ToolTip="Favorite, archive, or turn syncing on or off (also on right-click in the project list)" />
@@ -613,17 +614,17 @@
                 <!-- The type, then the filters, each saying what it is set to ("Open items", "Any due date"), and View
                      (grouping, sort and columns). On one line in a wide window; they wrap together otherwise. -->
                 <WrapPanel Grid.Row="1" Margin="0,10,0,4">
-                    <StackPanel Orientation="Horizontal" Margin="0,0,8,6">
-                        <RadioButton GroupName="Type" Style="{StaticResource SegmentButton}" Padding="10,5"
+                    <StackPanel Orientation="Horizontal" Margin="0,0,6,6">
+                        <RadioButton GroupName="Type" Style="{StaticResource SegmentButton}" Padding="9,5"
                                      Content="{Binding BothTabText}" Tag="all" IsChecked="True" Checked="Type_Checked"
                                      ToolTip="RFIs and Submittals in one list" />
-                        <RadioButton GroupName="Type" Style="{StaticResource SegmentButton}" Padding="10,5"
+                        <RadioButton GroupName="Type" Style="{StaticResource SegmentButton}" Padding="9,5"
                                      Content="{Binding RfiTabText}" Tag="rfi" Checked="Type_Checked" />
-                        <RadioButton GroupName="Type" Style="{StaticResource SegmentButton}" Padding="10,5"
+                        <RadioButton GroupName="Type" Style="{StaticResource SegmentButton}" Padding="9,5"
                                      Content="{Binding SubmittalTabText}" Tag="submittal" Checked="Type_Checked" Margin="0" />
                     </StackPanel>
 
-                    <ComboBox x:Name="ShowBox" SelectionChanged="Show_Changed" MinWidth="100" Margin="0,0,8,6" AutomationProperties.Name="Show"
+                    <ComboBox x:Name="ShowBox" SelectionChanged="Show_Changed" MinWidth="100" Margin="0,0,6,6" AutomationProperties.Name="Show"
                               ToolTip="Which items to list: open ones, all of them, or one of the folder views">
                         <ComboBoxItem Content="Open items" Tag="open" IsSelected="True" />
                         <ComboBoxItem Content="All items" Tag="all" />
@@ -633,15 +634,15 @@
                         <ComboBoxItem Content="In Returned folder" Tag="returned" />
                     </ComboBox>
 
-                    <Grid Margin="0,0,8,6">
+                    <Grid Margin="0,0,6,6">
                         <Button x:Name="PersonButton" Click="PersonButton_Click" HorizontalContentAlignment="Stretch"
                                 Padding="10,5" Background="{DynamicResource InputBackground}" AutomationProperties.Name="Ball in court"
                                 ToolTip="Who has the item now. Check one or more people.">
                             <DockPanel>
                                 <Path DockPanel.Dock="Right" VerticalAlignment="Center" Margin="10,0,1,0"
                                       Data="M 0 0 L 4 4 L 8 0" Stroke="{DynamicResource TextSecondary}" StrokeThickness="1.5" />
-                                <TextBlock TextTrimming="CharacterEllipsis" MaxWidth="260">
-                                    <Run Text="Ball in court:" Foreground="{DynamicResource TextSecondary}" />
+                                <TextBlock TextTrimming="CharacterEllipsis" MaxWidth="220">
+                                    <Run Text="In court:" Foreground="{DynamicResource TextSecondary}" />
                                     <Run Text="{Binding PersonFilterText, Mode=OneWay}" />
                                 </TextBlock>
                             </DockPanel>
@@ -689,7 +690,7 @@
                         </Popup>
                     </Grid>
 
-                    <StackPanel Orientation="Horizontal" Margin="0,0,8,6">
+                    <StackPanel Orientation="Horizontal" Margin="0,0,6,6">
                         <ComboBox x:Name="DueBox" SelectionChanged="Due_Changed" MinWidth="100" AutomationProperties.Name="Due"
                                   ToolTip="When the items are due (the counts under the project's name set this too)">
                             <ComboBoxItem Content="Any due date" Tag="Any" IsSelected="True" />
@@ -705,7 +706,7 @@
                         </StackPanel>
                     </StackPanel>
 
-                    <ComboBox x:Name="DisciplineBox" SelectionChanged="DisciplineBox_Changed" MinWidth="100" Margin="0,0,8,6"
+                    <ComboBox x:Name="DisciplineBox" SelectionChanged="DisciplineBox_Changed" MinWidth="100" Margin="0,0,6,6"
                               AutomationProperties.Name="Discipline" ToolTip="Only the items of one discipline">
                         <ComboBoxItem Content="All disciplines" Tag="" IsSelected="True" />
                     </ComboBox>
