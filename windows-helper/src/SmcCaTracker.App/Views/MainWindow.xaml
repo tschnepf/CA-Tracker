@@ -830,7 +830,7 @@
                             <!-- Open (the item in the built-in Helix page, a Procore item online, or the folder when there's
                                  no item), Download, and ▾ for the rest (everything is also on right-click). Beside the box
                                  so they never scroll out of sight. -->
-                            <DataGridTemplateColumn x:Name="ActionsColumn" Width="176" CanUserSort="False" CanUserResize="False">
+                            <DataGridTemplateColumn x:Name="ActionsColumn" Width="192" CanUserSort="False" CanUserResize="False">
                                 <DataGridTemplateColumn.CellTemplate>
                                     <DataTemplate>
                                         <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
