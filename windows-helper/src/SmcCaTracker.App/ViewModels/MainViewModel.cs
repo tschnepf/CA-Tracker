@@ -3337,7 +3337,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         var count = allRows.Count(row => (itemType == ItemTypeChoices.Both
                 || string.Equals(row.Row.ItemType, itemType, StringComparison.OrdinalIgnoreCase))
             && Matches(row));
-        return count == 0 ? label : Filter == Filters.Open ? $"{label} ({count} open)" : $"{label} ({count})";
+        return count == 0 ? label : $"{label} ({count})";
     }
 
     private void RebuildRows()

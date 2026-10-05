@@ -36,7 +36,7 @@ public partial class MainWindow : Window
 
         // The discipline filter offers the company's disciplines (or the defaults).
         DisciplineBox.Items.Clear();
-        DisciplineBox.Items.Add(new ComboBoxItem { Content = "All", Tag = "", IsSelected = true });
+        DisciplineBox.Items.Add(new ComboBoxItem { Content = "All disciplines", Tag = "", IsSelected = true });
         foreach (var discipline in SmcCaTracker.Core.Comparison.Disciplines.All)
         {
             DisciplineBox.Items.Add(new ComboBoxItem { Content = discipline.Label, Tag = discipline.Code });
@@ -395,6 +395,53 @@ public partial class MainWindow : Window
         (DisciplineColumn, nameof(DisciplineColumn), "Discipline"),
         (ResultColumn, nameof(ResultColumn), "Folder status")
     };
+
+    /// <summary>
+    /// View: the grouping, the sort and the columns, in one menu. The choices go through the (hidden) Group
+    /// and Sort boxes, so they work as before and are remembered the same way.
+    /// </summary>
+    private void ViewButton_Click(object sender, RoutedEventArgs e)
+    {
+        var menu = new ContextMenu { PlacementTarget = ViewButton, Placement = System.Windows.Controls.Primitives.PlacementMode.Bottom };
+
+        void Heading(string text) => menu.Items.Add(new MenuItem { Header = text, IsEnabled = false });
+
+        void Choices(ComboBox box)
+        {
+            foreach (var choice in box.Items.OfType<ComboBoxItem>()
+                         .Where(choice => choice.Visibility == Visibility.Visible || ReferenceEquals(choice, box.SelectedItem)))
+            {
+                var item = new MenuItem { Header = choice.Content, IsCheckable = true, IsChecked = ReferenceEquals(choice, box.SelectedItem) };
+                item.Click += (_, _) => box.SelectedItem = choice;
+                menu.Items.Add(item);
+            }
+        }
+
+        Heading("Group by");
+        Choices(GroupBox);
+        menu.Items.Add(new Separator());
+        Heading("Sort by (or click a column heading)");
+        Choices(SortBox);
+        menu.Items.Add(new Separator());
+        Heading("Columns");
+        foreach (var (_, name, label) in OptionalColumns())
+        {
+            var item = new MenuItem { Header = label, IsCheckable = true, StaysOpenOnClick = true, IsChecked = !viewModel.IsColumnHidden(name) };
+            if (name == nameof(CourtColumn) && viewModel.IsOnePersonFilter)
+            {
+                item.Header = "Ball in court (hidden while one person is checked)";
+            }
+
+            item.Click += (_, _) =>
+            {
+                viewModel.SetColumnHidden(name, !item.IsChecked);
+                UpdateColumns();
+            };
+            menu.Items.Add(item);
+        }
+
+        menu.IsOpen = true;
+    }
 
     /// <summary>Right-click any column heading: a checked item per column you can turn off.</summary>
     private void InitColumnsMenu()

@@ -610,91 +610,89 @@
                     </StackPanel>
                 </Border>
 
-                <!-- Type, then the filters, grouping and sort. Each label wraps together with its control. -->
+                <!-- The type, then the filters, each saying what it is set to ("Open items", "Any due date"), and View
+                     (grouping, sort and columns). On one line in a wide window; they wrap together otherwise. -->
                 <WrapPanel Grid.Row="1" Margin="0,10,0,4">
-                    <StackPanel Orientation="Horizontal" Margin="0,0,10,6">
-                        <RadioButton GroupName="Type" Style="{StaticResource SegmentButton}"
+                    <StackPanel Orientation="Horizontal" Margin="0,0,8,6">
+                        <RadioButton GroupName="Type" Style="{StaticResource SegmentButton}" Padding="10,5"
                                      Content="{Binding BothTabText}" Tag="all" IsChecked="True" Checked="Type_Checked"
                                      ToolTip="RFIs and Submittals in one list" />
-                        <RadioButton GroupName="Type" Style="{StaticResource SegmentButton}"
+                        <RadioButton GroupName="Type" Style="{StaticResource SegmentButton}" Padding="10,5"
                                      Content="{Binding RfiTabText}" Tag="rfi" Checked="Type_Checked" />
-                        <RadioButton GroupName="Type" Style="{StaticResource SegmentButton}"
+                        <RadioButton GroupName="Type" Style="{StaticResource SegmentButton}" Padding="10,5"
                                      Content="{Binding SubmittalTabText}" Tag="submittal" Checked="Type_Checked" Margin="0" />
                     </StackPanel>
 
-                    <StackPanel Orientation="Horizontal" Margin="0,0,14,6">
-                        <TextBlock Text="Show" VerticalAlignment="Center" Margin="0,0,8,0" Foreground="{DynamicResource TextSecondary}" />
-                        <ComboBox x:Name="ShowBox" SelectionChanged="Show_Changed" MinWidth="150" AutomationProperties.Name="Show"
-                                  ToolTip="Which items to list: open ones, all of them, or one of the folder views">
-                            <ComboBoxItem Content="Open items" Tag="open" IsSelected="True" />
-                            <ComboBoxItem Content="All items" Tag="all" />
-                            <ComboBoxItem Content="Needs attention" Tag="attention" />
-                            <ComboBoxItem Content="Ready to return" Tag="ready" />
-                            <ComboBoxItem Content="No folder" Tag="nofolder" />
-                            <ComboBoxItem Content="In Returned folder" Tag="returned" />
-                        </ComboBox>
-                    </StackPanel>
+                    <ComboBox x:Name="ShowBox" SelectionChanged="Show_Changed" MinWidth="100" Margin="0,0,8,6" AutomationProperties.Name="Show"
+                              ToolTip="Which items to list: open ones, all of them, or one of the folder views">
+                        <ComboBoxItem Content="Open items" Tag="open" IsSelected="True" />
+                        <ComboBoxItem Content="All items" Tag="all" />
+                        <ComboBoxItem Content="Needs attention" Tag="attention" />
+                        <ComboBoxItem Content="Ready to return" Tag="ready" />
+                        <ComboBoxItem Content="No folder" Tag="nofolder" />
+                        <ComboBoxItem Content="In Returned folder" Tag="returned" />
+                    </ComboBox>
 
-                    <StackPanel Orientation="Horizontal" Margin="0,0,14,6">
-                        <TextBlock Text="Ball in court" VerticalAlignment="Center" Margin="0,0,8,0" Foreground="{DynamicResource TextSecondary}" />
-                        <Grid>
-                            <Button x:Name="PersonButton" Click="PersonButton_Click" MinWidth="170" HorizontalContentAlignment="Stretch"
-                                    Padding="10,5" Background="{DynamicResource InputBackground}" AutomationProperties.Name="Ball in court"
-                                    ToolTip="Who has the item now. Check one or more people.">
+                    <Grid Margin="0,0,8,6">
+                        <Button x:Name="PersonButton" Click="PersonButton_Click" HorizontalContentAlignment="Stretch"
+                                Padding="10,5" Background="{DynamicResource InputBackground}" AutomationProperties.Name="Ball in court"
+                                ToolTip="Who has the item now. Check one or more people.">
+                            <DockPanel>
+                                <Path DockPanel.Dock="Right" VerticalAlignment="Center" Margin="10,0,1,0"
+                                      Data="M 0 0 L 4 4 L 8 0" Stroke="{DynamicResource TextSecondary}" StrokeThickness="1.5" />
+                                <TextBlock TextTrimming="CharacterEllipsis" MaxWidth="260">
+                                    <Run Text="Ball in court:" Foreground="{DynamicResource TextSecondary}" />
+                                    <Run Text="{Binding PersonFilterText, Mode=OneWay}" />
+                                </TextBlock>
+                            </DockPanel>
+                        </Button>
+                        <Popup x:Name="PersonPopup" PlacementTarget="{Binding ElementName=PersonButton}" Placement="Bottom"
+                               StaysOpen="False" AllowsTransparency="True" Closed="PersonPopup_Closed" Opened="PersonPopup_Opened"
+                               KeyDown="PersonPopup_KeyDown">
+                            <Border Background="{DynamicResource SurfaceBackground}" BorderBrush="{DynamicResource LineBrush}"
+                                    BorderThickness="1" CornerRadius="6" Padding="8" Margin="0,2,0,0" MinWidth="240">
                                 <DockPanel>
-                                    <Path DockPanel.Dock="Right" VerticalAlignment="Center" Margin="10,0,1,0"
-                                          Data="M 0 0 L 4 4 L 8 0" Stroke="{DynamicResource TextSecondary}" StrokeThickness="1.5" />
-                                    <TextBlock Text="{Binding PersonFilterText}" TextTrimming="CharacterEllipsis" MaxWidth="240" />
-                                </DockPanel>
-                            </Button>
-                            <Popup x:Name="PersonPopup" PlacementTarget="{Binding ElementName=PersonButton}" Placement="Bottom"
-                                   StaysOpen="False" AllowsTransparency="True" Closed="PersonPopup_Closed" Opened="PersonPopup_Opened"
-                                   KeyDown="PersonPopup_KeyDown">
-                                <Border Background="{DynamicResource SurfaceBackground}" BorderBrush="{DynamicResource LineBrush}"
-                                        BorderThickness="1" CornerRadius="6" Padding="8" Margin="0,2,0,0" MinWidth="240">
-                                    <DockPanel>
-                                        <DockPanel DockPanel.Dock="Top" Margin="0,0,0,6" LastChildFill="False">
-                                            <TextBlock DockPanel.Dock="Left" Text="BALL IN COURT" Style="{StaticResource SectionTitle}"
-                                                       VerticalAlignment="Center" Margin="2,0,0,0" />
-                                            <Button DockPanel.Dock="Right" Style="{StaticResource LinkButton}" Content="Everyone"
-                                                    Click="ClearPeople_Click" ToolTip="Clear the checks and show everyone" />
-                                            <Button DockPanel.Dock="Right" Style="{StaticResource LinkButton}" Content="Just you"
-                                                    Click="ShowOnlyYou_Click" ToolTip="Check only yourself (the name you're signed in to Helix or Procore as)"
-                                                    Visibility="{Binding CanShowOnlyYou, Converter={StaticResource Visible}}" />
-                                        </DockPanel>
-                                        <TextBlock DockPanel.Dock="Top" Style="{StaticResource Muted}" FontSize="12" Margin="2,0,0,6"
-                                                   Text="No one has open items here yet. Sync to read them."
-                                                   Visibility="{Binding HasNoPersonChoices, Converter={StaticResource Visible}}" />
-                                        <ScrollViewer MaxHeight="380" VerticalScrollBarVisibility="Auto">
-                                            <ItemsControl x:Name="PersonChoiceList" ItemsSource="{Binding PersonChoices}">
-                                                <ItemsControl.ItemTemplate>
-                                                    <DataTemplate>
-                                                        <CheckBox Content="{Binding Label}" IsChecked="{Binding IsChecked, Mode=TwoWay}" Margin="2,3">
-                                                            <CheckBox.Style>
-                                                                <Style TargetType="CheckBox" BasedOn="{StaticResource {x:Type CheckBox}}">
-                                                                    <Style.Triggers>
-                                                                        <DataTrigger Binding="{Binding IsAbsent}" Value="True">
-                                                                            <Setter Property="Opacity" Value="0.6" />
-                                                                            <Setter Property="ToolTip" Value="Holds nothing in the projects shown; still checked, so the list stays filtered" />
-                                                                        </DataTrigger>
-                                                                    </Style.Triggers>
-                                                                </Style>
-                                                            </CheckBox.Style>
-                                                        </CheckBox>
-                                                    </DataTemplate>
-                                                </ItemsControl.ItemTemplate>
-                                            </ItemsControl>
-                                        </ScrollViewer>
+                                    <DockPanel DockPanel.Dock="Top" Margin="0,0,0,6" LastChildFill="False">
+                                        <TextBlock DockPanel.Dock="Left" Text="BALL IN COURT" Style="{StaticResource SectionTitle}"
+                                                   VerticalAlignment="Center" Margin="2,0,0,0" />
+                                        <Button DockPanel.Dock="Right" Style="{StaticResource LinkButton}" Content="Everyone"
+                                                Click="ClearPeople_Click" ToolTip="Clear the checks and show everyone" />
+                                        <Button DockPanel.Dock="Right" Style="{StaticResource LinkButton}" Content="Just you"
+                                                Click="ShowOnlyYou_Click" ToolTip="Check only yourself (the name you're signed in to Helix or Procore as)"
+                                                Visibility="{Binding CanShowOnlyYou, Converter={StaticResource Visible}}" />
                                     </DockPanel>
-                                </Border>
-                            </Popup>
-                        </Grid>
-                    </StackPanel>
+                                    <TextBlock DockPanel.Dock="Top" Style="{StaticResource Muted}" FontSize="12" Margin="2,0,0,6"
+                                               Text="No one has open items here yet. Sync to read them."
+                                               Visibility="{Binding HasNoPersonChoices, Converter={StaticResource Visible}}" />
+                                    <ScrollViewer MaxHeight="380" VerticalScrollBarVisibility="Auto">
+                                        <ItemsControl x:Name="PersonChoiceList" ItemsSource="{Binding PersonChoices}">
+                                            <ItemsControl.ItemTemplate>
+                                                <DataTemplate>
+                                                    <CheckBox Content="{Binding Label}" IsChecked="{Binding IsChecked, Mode=TwoWay}" Margin="2,3">
+                                                        <CheckBox.Style>
+                                                            <Style TargetType="CheckBox" BasedOn="{StaticResource {x:Type CheckBox}}">
+                                                                <Style.Triggers>
+                                                                    <DataTrigger Binding="{Binding IsAbsent}" Value="True">
+                                                                        <Setter Property="Opacity" Value="0.6" />
+                                                                        <Setter Property="ToolTip" Value="Holds nothing in the projects shown; still checked, so the list stays filtered" />
+                                                                    </DataTrigger>
+                                                                </Style.Triggers>
+                                                            </Style>
+                                                        </CheckBox.Style>
+                                                    </CheckBox>
+                                                </DataTemplate>
+                                            </ItemsControl.ItemTemplate>
+                                        </ItemsControl>
+                                    </ScrollViewer>
+                                </DockPanel>
+                            </Border>
+                        </Popup>
+                    </Grid>
 
-                    <StackPanel Orientation="Horizontal" Margin="0,0,14,6">
-                        <TextBlock Text="Due" VerticalAlignment="Center" Margin="0,0,8,0" Foreground="{DynamicResource TextSecondary}" />
-                        <ComboBox x:Name="DueBox" SelectionChanged="Due_Changed" MinWidth="120" AutomationProperties.Name="Due">
-                            <ComboBoxItem Content="Any date" Tag="Any" IsSelected="True" />
+                    <StackPanel Orientation="Horizontal" Margin="0,0,8,6">
+                        <ComboBox x:Name="DueBox" SelectionChanged="Due_Changed" MinWidth="100" AutomationProperties.Name="Due"
+                                  ToolTip="When the items are due (the counts under the project's name set this too)">
+                            <ComboBoxItem Content="Any due date" Tag="Any" IsSelected="True" />
                             <ComboBoxItem Content="Overdue" Tag="Overdue" />
                             <ComboBoxItem Content="Due today" Tag="DueToday" />
                             <ComboBoxItem Content="Due within…" Tag="DueWithin" />
@@ -707,15 +705,21 @@
                         </StackPanel>
                     </StackPanel>
 
-                    <StackPanel Orientation="Horizontal" Margin="0,0,14,6">
-                        <TextBlock Text="Discipline" VerticalAlignment="Center" Margin="0,0,8,0" Foreground="{DynamicResource TextSecondary}" />
-                        <ComboBox x:Name="DisciplineBox" SelectionChanged="DisciplineBox_Changed" MinWidth="120" AutomationProperties.Name="Discipline">
-                            <ComboBoxItem Content="All" Tag="" IsSelected="True" />
-                        </ComboBox>
-                    </StackPanel>
+                    <ComboBox x:Name="DisciplineBox" SelectionChanged="DisciplineBox_Changed" MinWidth="100" Margin="0,0,8,6"
+                              AutomationProperties.Name="Discipline" ToolTip="Only the items of one discipline">
+                        <ComboBoxItem Content="All disciplines" Tag="" IsSelected="True" />
+                    </ComboBox>
 
-                    <StackPanel Orientation="Horizontal" Margin="0,0,14,6">
-                        <TextBlock Text="Group by" VerticalAlignment="Center" Margin="0,0,8,0" Foreground="{DynamicResource TextSecondary}" />
+                    <Button x:Name="ViewButton" Click="ViewButton_Click" Padding="10,5" Margin="0,0,0,6"
+                            AutomationProperties.Name="View: grouping, sort and columns" ToolTip="Group, sort, and choose the columns">
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Text="View" />
+                            <Path VerticalAlignment="Center" Margin="8,1,0,0" Data="M 0 0 L 4 4 L 8 0" Stroke="{DynamicResource TextSecondary}" StrokeThickness="1.5" />
+                        </StackPanel>
+                    </Button>
+
+                    <!-- The grouping and sort the View menu sets (they keep the choice and its effects; not shown). -->
+                    <StackPanel Visibility="Collapsed">
                         <ComboBox x:Name="GroupBox" SelectionChanged="Group_Changed" MinWidth="140" AutomationProperties.Name="Group by"
                                   ToolTip="Headings for when items are due, for each project, or for RFIs and Submittals. Sorting happens within each heading.">
                             <ComboBoxItem Content="When it's due" Tag="urgency" IsSelected="True" />
@@ -724,10 +728,6 @@
                             <ComboBoxItem Content="RFIs / Submittals" Tag="type" />
                             <ComboBoxItem Content="Nothing (one list)" Tag="none" />
                         </ComboBox>
-                    </StackPanel>
-
-                    <StackPanel Orientation="Horizontal" Margin="0,0,14,6">
-                        <TextBlock Text="Sort by" VerticalAlignment="Center" Margin="0,0,8,0" Foreground="{DynamicResource TextSecondary}" />
                         <ComboBox x:Name="SortBox" SelectionChanged="Sort_Changed" MinWidth="150" AutomationProperties.Name="Sort by"
                                   ToolTip="Or click any column heading to sort by it (click again to reverse)">
                             <ComboBoxItem Content="Number" Tag="number" IsSelected="True" />
@@ -738,7 +738,6 @@
                             <ComboBoxItem x:Name="SortByColumnItem" Content="By column heading" Tag="column" Visibility="Collapsed" />
                         </ComboBox>
                     </StackPanel>
-
                 </WrapPanel>
 
                 <Grid Grid.Row="2">
