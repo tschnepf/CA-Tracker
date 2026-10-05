@@ -574,12 +574,47 @@ public partial class MainWindow : Window
         }
     }
 
+    // The rows selected when a button in a row was last pressed (see SetRowDiscipline_Click).
+    private List<RowViewModel>? selectionAtPress;
+
+    private void ItemsGrid_PreviewMouseLeftButtonDown(object sender, MouseButtonEventArgs e) =>
+        selectionAtPress = e.OriginalSource is DependencyObject source && IsInButton(source)
+            ? ItemsGrid.SelectedItems.OfType<RowViewModel>().ToList()
+            : null;
+
+    // A right-click keeps the selection as it is, so its menu uses the selection itself.
+    private void ItemsGrid_PreviewMouseRightButtonDown(object sender, MouseButtonEventArgs e) => selectionAtPress = null;
+
+    /// <summary>
+    /// A row's Set (or Set discipline… in its menus). On a row that is one of several checked rows it sets
+    /// them all; on one of several selected (highlighted) rows, all of those; otherwise just this row.
+    /// </summary>
     private async void SetRowDiscipline_Click(object sender, RoutedEventArgs e)
     {
-        if (sender is FrameworkElement { DataContext: RowViewModel row } && row.CanSelect)
+        if (sender is not FrameworkElement { DataContext: RowViewModel row } || !row.CanSelect)
         {
-            await ChooseDisciplineAsync(new[] { row }, row.Row.Folder?.Name ?? $"{row.Number} - {row.Title}");
+            return;
         }
+
+        var checkedRows = viewModel.CheckedRows().Where(other => other.CanSelect).ToList();
+        if (row.IsChecked && checkedRows.Count > 1)
+        {
+            await ChooseDisciplineAsync(checkedRows, $"{checkedRows.Count} checked items");
+            return;
+        }
+
+        // Pressing a button in a row selects just that row before the click arrives, so this uses the rows
+        // that were selected when the button (Set, or the ▾ whose menu this came from) was pressed.
+        var selectedRows = (selectionAtPress ?? ItemsGrid.SelectedItems.OfType<RowViewModel>().ToList())
+            .Where(other => other.CanSelect).ToList();
+        selectionAtPress = null;
+        if (selectedRows.Count > 1 && selectedRows.Contains(row))
+        {
+            await ChooseDisciplineAsync(selectedRows, $"{selectedRows.Count} selected items");
+            return;
+        }
+
+        await ChooseDisciplineAsync(new[] { row }, row.Row.Folder?.Name ?? $"{row.Number} - {row.Title}");
     }
 
     private async void SetTickedDiscipline_Click(object sender, RoutedEventArgs e)

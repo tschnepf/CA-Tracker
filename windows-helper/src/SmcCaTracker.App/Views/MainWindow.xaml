@@ -766,6 +766,7 @@
 
                     <DataGrid x:Name="ItemsGrid" ItemsSource="{Binding Rows}" IsReadOnly="True"
                               MouseDoubleClick="Grid_MouseDoubleClick" PreviewKeyDown="ItemsGrid_PreviewKeyDown" Sorting="ItemsGrid_Sorting"
+                              PreviewMouseLeftButtonDown="ItemsGrid_PreviewMouseLeftButtonDown" PreviewMouseRightButtonDown="ItemsGrid_PreviewMouseRightButtonDown"
                               VirtualizingPanel.IsVirtualizingWhenGrouping="True" VirtualizingPanel.VirtualizationMode="Recycling"
                               HorizontalScrollBarVisibility="Auto" SizeChanged="ItemsGrid_SizeChanged" FrozenColumnCount="2"
                               AutomationProperties.Name="Items">
@@ -922,7 +923,7 @@
                                         <DockPanel ToolTip="{Binding DisciplineToolTip}">
                                             <Button DockPanel.Dock="Right" Style="{StaticResource LinkButton}" Content="Set"
                                                     Click="SetRowDiscipline_Click" IsEnabled="{Binding CanSelect}"
-                                                    ToolTip="Choose the discipline. For an item with no folder yet, its download goes into that discipline's folder." />
+                                                    ToolTip="Choose the discipline. On one of several checked (or selected) items, it sets them all. For an item with no folder yet, its download goes into that discipline's folder." />
                                             <TextBlock Text="{Binding DisciplineText}" VerticalAlignment="Center" TextTrimming="CharacterEllipsis">
                                                 <TextBlock.Style>
                                                     <Style TargetType="TextBlock">
