@@ -220,24 +220,64 @@
             <!-- Projects -->
             <Border Grid.Column="0" Style="{StaticResource Card}" Padding="10">
                 <DockPanel>
-                    <!-- PROJECTS, and Sync all (every site now; ▾ syncs one site or opens Connections). Its progress
-                         shows under the search box. Buttons are declared in the order Tab visits them. -->
+                    <!-- PROJECTS, and how syncing stands ("● Synced 8:24 AM", "⟳ Syncing…", "⚠ Sign-in needed"). The pill
+                         opens Sync all now (or Stop), one site, and Connections. Progress shows under the search box. -->
                     <DockPanel DockPanel.Dock="Top" Margin="6,0,4,8">
-                        <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
-                            <Button x:Name="SyncAllButton" Content="{Binding SyncAllText}" Click="SyncAll_Click" Padding="10,4"
-                                    ToolTip="Sync every Helix and Procore project now. F5 syncs the selected project." />
-                            <Button x:Name="SyncMenuButton" Content="▾" Click="SyncMenu_Click" Margin="2,0,0,0" Padding="8,4"
-                                    AutomationProperties.Name="More sync choices" ToolTip="Sync one site, or open Connections">
-                                <Button.ContextMenu>
-                                    <ContextMenu>
-                                        <MenuItem x:Name="SyncHelixMenu" Header="Sync Helix" Click="SyncHelix_Click" />
-                                        <MenuItem x:Name="SyncProcoreMenu" Header="Sync Procore" Click="SyncProcore_Click" />
-                                        <Separator />
-                                        <MenuItem Header="Connections…" Click="OpenConnections_Click" />
-                                    </ContextMenu>
-                                </Button.ContextMenu>
-                            </Button>
-                        </StackPanel>
+                        <Button x:Name="SyncMenuButton" DockPanel.Dock="Right" Click="SyncMenu_Click" Padding="9,3"
+                                ToolTip="{Binding SyncPillToolTip}" AutomationProperties.Name="{Binding SyncPillText}">
+                            <StackPanel Orientation="Horizontal">
+                                <TextBlock Margin="0,0,6,0" VerticalAlignment="Center" Width="11" TextAlignment="Center" RenderTransformOrigin="0.5,0.55">
+                                    <TextBlock.RenderTransform>
+                                        <RotateTransform Angle="0" />
+                                    </TextBlock.RenderTransform>
+                                    <TextBlock.Style>
+                                        <Style TargetType="TextBlock">
+                                            <Setter Property="Text" Value="●" />
+                                            <Setter Property="Foreground" Value="{DynamicResource TextMuted}" />
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding SyncPillState}" Value="synced">
+                                                    <Setter Property="Foreground" Value="{DynamicResource SuccessBrush}" />
+                                                </DataTrigger>
+                                                <DataTrigger Binding="{Binding SyncPillState}" Value="failed">
+                                                    <Setter Property="Text" Value="⚠" />
+                                                    <Setter Property="Foreground" Value="{DynamicResource WarningBrush}" />
+                                                </DataTrigger>
+                                                <DataTrigger Binding="{Binding SyncPillState}" Value="signin">
+                                                    <Setter Property="Text" Value="⚠" />
+                                                    <Setter Property="Foreground" Value="{DynamicResource DangerBrush}" />
+                                                </DataTrigger>
+                                                <DataTrigger Binding="{Binding SyncPillState}" Value="syncing">
+                                                    <Setter Property="Text" Value="⟳" />
+                                                    <Setter Property="Foreground" Value="{DynamicResource AccentBrush}" />
+                                                    <DataTrigger.EnterActions>
+                                                        <BeginStoryboard x:Name="SpinPill">
+                                                            <Storyboard>
+                                                                <DoubleAnimation Storyboard.TargetProperty="(TextBlock.RenderTransform).(RotateTransform.Angle)"
+                                                                                 From="0" To="360" Duration="0:0:1.2" RepeatBehavior="Forever" />
+                                                            </Storyboard>
+                                                        </BeginStoryboard>
+                                                    </DataTrigger.EnterActions>
+                                                    <DataTrigger.ExitActions>
+                                                        <StopStoryboard BeginStoryboardName="SpinPill" />
+                                                    </DataTrigger.ExitActions>
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </TextBlock.Style>
+                                </TextBlock>
+                                <TextBlock Text="{Binding SyncPillText}" VerticalAlignment="Center" FontSize="12" />
+                                <Path VerticalAlignment="Center" Margin="7,1,0,0" Data="M 0 0 L 4 4 L 8 0" Stroke="{DynamicResource TextSecondary}" StrokeThickness="1.5" />
+                            </StackPanel>
+                            <Button.ContextMenu>
+                                <ContextMenu>
+                                    <MenuItem Header="{Binding SyncNowText}" Click="SyncAll_Click" />
+                                    <MenuItem x:Name="SyncHelixMenu" Header="Sync Helix" Click="SyncHelix_Click" />
+                                    <MenuItem x:Name="SyncProcoreMenu" Header="Sync Procore" Click="SyncProcore_Click" />
+                                    <Separator />
+                                    <MenuItem Header="Connections…" Click="OpenConnections_Click" />
+                                </ContextMenu>
+                            </Button.ContextMenu>
+                        </Button>
                         <TextBlock Text="PROJECTS" Style="{StaticResource SectionTitle}" Margin="0" VerticalAlignment="Center" />
                     </DockPanel>
                     <!-- Find a project (Ctrl+F): by name or hosting company. -->

@@ -182,6 +182,11 @@ public sealed class ProjectViewModel : ObservableObject
                 lines.Add($"Hosted by {project.CompanyName} in {ProviderLabel}");
             }
 
+            if (snapshot is not null)
+            {
+                lines.Add($"Synced {Formatting.When(snapshot.ScannedAt)}");
+            }
+
             if (IsFavorite)
             {
                 lines.Add("★ Favorite (for you only). Right-click or ⋯ → Remove from favorites.");
@@ -201,6 +206,21 @@ public sealed class ProjectViewModel : ObservableObject
             }
 
             return string.Join(Environment.NewLine, lines);
+        }
+    }
+
+    private string nextDue = "";
+
+    /// <summary>"next due Oct 7": the soonest due date, today or later, among its items that match the list's filters.</summary>
+    public string NextDueText
+    {
+        get => nextDue;
+        set
+        {
+            if (Set(ref nextDue, value))
+            {
+                OnPropertyChanged(nameof(Subtitle));
+            }
         }
     }
 
@@ -340,9 +360,10 @@ public sealed class ProjectViewModel : ObservableObject
                 return $"{ProviderLabel}{CompanyPart} · waiting for the first sync";
             }
 
+            // When it was synced is in the tooltip (and the pill above the list); this says what's coming up.
             return snapshot is null
                 ? $"{part}{ProviderLabel} · not synced yet"
-                : $"{part}{ProviderLabel}{CompanyPart} · synced {Formatting.When(snapshot.ScannedAt)}";
+                : $"{part}{ProviderLabel}{CompanyPart}{(nextDue.Length > 0 ? $" · {nextDue}" : "")}";
         }
     }
 

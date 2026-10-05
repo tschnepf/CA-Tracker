@@ -137,6 +137,18 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         // The last session's selection, filters and sort (applied before the first compare).
         savedView = store.View;
         ApplySavedView(savedView);
+
+        // The sync pill follows each site's state, a background sync's included.
+        foreach (var connection in Connections)
+        {
+            connection.PropertyChanged += (_, args) =>
+            {
+                if (args.PropertyName is nameof(ConnectionViewModel.State) or nameof(ConnectionViewModel.LastSyncedText))
+                {
+                    RaiseSyncPill();
+                }
+            };
+        }
         viewStateTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
         viewStateTimer.Tick += (_, _) =>
         {
@@ -1019,6 +1031,44 @@ public sealed class MainViewModel : ObservableObject, IDisposable
 
     public bool IsAnySyncing => Connections.Any(connection => connection.IsSyncing);
 
+    // ---- The sync pill: how syncing stands, in one place ------------------------------------
+
+    /// <summary>For the pill's mark and colour: syncing, signin, failed, synced or idle.</summary>
+    public string SyncPillState =>
+        Connections.Any(connection => connection.IsBusy) ? "syncing"
+        : Connections.Any(connection => connection.WantsSignIn && connection.NeedsSignIn) ? "signin"
+        : Connections.Any(connection => connection.IsSignedIn && connection.FailedCount > 0) ? "failed"
+        : Connections.Any(connection => connection.HasSynced) ? "synced"
+        : "idle";
+
+    public string SyncPillText => SyncPillState switch
+    {
+        "syncing" => "Syncing…",
+        "signin" => "Sign-in needed",
+        "failed" => Connections.Sum(connection => connection.FailedCount) is var failed && failed == 1 ? "1 not read" : $"{Connections.Sum(connection => connection.FailedCount)} not read",
+        "synced" => LastSyncedAt is { } at ? $"Synced {(at.ToLocalTime().Date == DateTime.Today ? at.ToLocalTime().ToString("h:mm tt") : at.ToLocalTime().ToString("MMM d"))}" : "Synced",
+        _ => "Not synced yet"
+    };
+
+    /// <summary>Each site's state, and what the pill's menu does.</summary>
+    public string SyncPillToolTip => string.Join(Environment.NewLine,
+        Connections.Select(connection => $"{connection.Label}: {connection.StateText}{(connection.LastSyncedText.Length > 0 ? $" · {connection.LastSyncedText}" : "")}")
+            .Append("Helix and Procore are synced in the background. Click to sync now, sync one site, or open Connections."));
+
+    /// <summary>The pill menu's first item: sync everything now, or stop the sync that is running.</summary>
+    public string SyncNowText => IsAnySyncing ? "Stop syncing" : "Sync all now";
+
+    /// <summary>When a project's items were last read, the latest of all.</summary>
+    private DateTimeOffset? LastSyncedAt => Projects.Select(project => project.Snapshot?.ScannedAt).Where(at => at is not null).Max();
+
+    private void RaiseSyncPill()
+    {
+        foreach (var name in new[] { nameof(SyncPillState), nameof(SyncPillText), nameof(SyncPillToolTip), nameof(SyncNowText) })
+        {
+            OnPropertyChanged(name);
+        }
+    }
+
     /// <summary>The header's button: Sync all, or Stop while a sync it started runs.</summary>
     public string SyncAllText => IsAnySyncing ? "Stop syncing" : "Sync all";
 
@@ -1124,6 +1174,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         OnPropertyChanged(nameof(CanShowOnlyYou));
         OnPropertyChanged(nameof(CanShowMyWork));
         OnPropertyChanged(nameof(MyWorkToolTip));
+        RaiseSyncPill();
         DefaultPeopleToYou();
     }
 
@@ -1156,6 +1207,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         connection.StopRequested = false;
         OnPropertyChanged(nameof(IsAnySyncing));
         OnPropertyChanged(nameof(SyncAllText));
+        RaiseSyncPill();
         try
         {
             string? found = null;
@@ -1195,6 +1247,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
             OnPropertyChanged(nameof(IsAnySyncing));
             OnPropertyChanged(nameof(SyncAllText));
             RefreshAccounts();
+            RaiseSyncPill();
         }
     }
 
@@ -3430,6 +3483,10 @@ public sealed class MainViewModel : ObservableObject, IDisposable
             project.OverdueCount = matching.Count(row => row.IsOverdue);
             project.MatchingNoun = MatchingNoun(matching.Count);
             project.MatchingCount = matching.Count;
+            var next = matching.Where(row => row.DaysTillDue >= 0).MinBy(row => row.DaysTillDue);
+            project.NextDueText = next?.Row.Item?.DueAt is not { } due ? ""
+                : next.DaysTillDue == 0 ? "next due today"
+                : $"next due {due.ToLocalTime():MMM d}";
         }
 
         foreach (var gone in badgeSources.Keys.Where(id => Projects.All(project => project.Id != id)).ToList())
