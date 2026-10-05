@@ -581,11 +581,11 @@ public sealed class RowViewModel : ObservableObject
     public bool HasFolder => Row.Folder is not null;
     public bool HasItem => Row.Item is not null;
 
-    /// <summary>The row's Open: the newest file (Helix), the item online (Procore), or the folder when there's no item.</summary>
+    /// <summary>The row's Open: the item in the built-in Helix page, a Procore item online, or the folder when there's no item.</summary>
     public bool CanOpen => HasItem || HasFolder;
 
     public string OpenToolTip => CanDownload
-        ? "Open its newest file: the copy in its folder when it's there, otherwise a copy from Helix (the CA folder isn't changed)"
+        ? "Open it in Helix, in the panel on the right"
         : HasItem ? $"Open it in {Project.ProviderLabel} (in your web browser)"
         : "Open its folder in Explorer";
 

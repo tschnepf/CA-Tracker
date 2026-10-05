@@ -9,16 +9,27 @@
     <Window.Resources>
         <BooleanToVisibilityConverter x:Key="Visible" />
 
-        <!-- An item row's menu, on right-click and on its ▾: every way to open it, download, verify, and Set
-             discipline. The row is the menu's DataContext. Not shared, so the ▾ gets a menu of its own. -->
-        <ContextMenu x:Key="RowMenu" x:Shared="False">
-            <MenuItem Header="Open newest file" Click="OpenNewestFile_Click" IsEnabled="{Binding CanDownload}"
-                      ToolTip="The copy in its folder when it's there, otherwise a copy from Helix (the CA folder isn't changed)" />
-            <MenuItem Header="Open folder" Click="OpenRowFolder_Click" IsEnabled="{Binding HasFolder}" />
+        <!-- An item row's right-click menu: every action on it. The row is the menu's DataContext. -->
+        <ContextMenu x:Key="RowMenu">
             <MenuItem Header="{Binding OpenOnlineText}" Click="OpenRowLink_Click" IsEnabled="{Binding HasItem}"
                       ToolTip="Helix items open in the panel on the right; Procore items open in your web browser" />
             <MenuItem Header="Download…" Click="DownloadRow_Click" IsEnabled="{Binding CanDownload}"
                       ToolTip="{Binding DownloadToolTip}" ToolTipService.ShowOnDisabled="True" />
+            <Separator />
+            <MenuItem Header="Open newest file" Click="OpenNewestFile_Click" IsEnabled="{Binding CanDownload}"
+                      ToolTip="The copy in its folder when it's there, otherwise a copy from Helix (the CA folder isn't changed)" />
+            <MenuItem Header="Open folder" Click="OpenRowFolder_Click" IsEnabled="{Binding HasFolder}" />
+            <MenuItem Header="Verify folder…" Click="VerifyRow_Click" IsEnabled="{Binding CanDownload}"
+                      ToolTip="Check that the item's folder has every file Helix has for it" />
+            <Separator />
+            <MenuItem Header="Set discipline…" Click="SetRowDiscipline_Click" IsEnabled="{Binding CanSelect}" />
+        </ContextMenu>
+
+        <!-- A row's ▾: what isn't on its own buttons (Open and Download are). Not shared, so each ▾ gets its own. -->
+        <ContextMenu x:Key="RowMoreMenu" x:Shared="False">
+            <MenuItem Header="Open newest file" Click="OpenNewestFile_Click" IsEnabled="{Binding CanDownload}"
+                      ToolTip="The copy in its folder when it's there, otherwise a copy from Helix (the CA folder isn't changed)" />
+            <MenuItem Header="Open folder" Click="OpenRowFolder_Click" IsEnabled="{Binding HasFolder}" />
             <MenuItem Header="Verify folder…" Click="VerifyRow_Click" IsEnabled="{Binding CanDownload}"
                       ToolTip="Check that the item's folder has every file Helix has for it" />
             <Separator />
@@ -812,18 +823,22 @@
                                     </DataTemplate>
                                 </DataGridTemplateColumn.CellTemplate>
                             </DataGridTemplateColumn>
-                            <!-- Open (the newest file of a Helix item, a Procore item online, or the folder when there's no
-                                 item) and ▾ for every other way (also on right-click), beside the box so they never scroll
-                                 out of sight. -->
-                            <DataGridTemplateColumn x:Name="ActionsColumn" Width="100" CanUserSort="False" CanUserResize="False">
+                            <!-- Open (the item in the built-in Helix page, a Procore item online, or the folder when there's
+                                 no item), Download, and ▾ for the rest (everything is also on right-click). Beside the box
+                                 so they never scroll out of sight. -->
+                            <DataGridTemplateColumn x:Name="ActionsColumn" Width="176" CanUserSort="False" CanUserResize="False">
                                 <DataGridTemplateColumn.CellTemplate>
                                     <DataTemplate>
                                         <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
                                             <Button Content="Open" Click="OpenRow_Click" IsEnabled="{Binding CanOpen}" Padding="11,2" FontSize="12.5"
                                                     ToolTip="{Binding OpenToolTip}" ToolTipService.ShowOnDisabled="True"
                                                     AutomationProperties.Name="{Binding Number, StringFormat=Open {0}}" />
-                                            <Button Content="▾" Click="RowMenu_Click" Padding="7,2" FontSize="12.5" Margin="2,0,0,0"
-                                                    ToolTip="Open its folder, open it online, download, verify, or set its discipline"
+                                            <Button Content="Download" Click="DownloadRow_Click" IsEnabled="{Binding CanDownload}" Padding="9,2"
+                                                    FontSize="12.5" Margin="4,0,0,0"
+                                                    ToolTip="{Binding DownloadToolTip}" ToolTipService.ShowOnDisabled="True"
+                                                    AutomationProperties.Name="{Binding Number, StringFormat=Download {0}}" />
+                                            <Button Content="▾" Click="RowMenu_Click" Padding="7,2" FontSize="12.5" Margin="4,0,0,0"
+                                                    ToolTip="Open its newest file or its folder, verify its folder, or set its discipline"
                                                     AutomationProperties.Name="{Binding Number, StringFormat=More for {0}}" />
                                         </StackPanel>
                                     </DataTemplate>

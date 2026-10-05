@@ -1133,7 +1133,7 @@ public partial class MainWindow : Window
         ShowDownloadWindow(new[] { request }, verify: true);
     }
 
-    /// <summary>A row's Open: the newest file of a Helix item, a Procore item online, or the folder when there's no item.</summary>
+    /// <summary>A row's Open: the item in the built-in Helix page, a Procore item online, or the folder when there's no item.</summary>
     private async void OpenRow_Click(object sender, RoutedEventArgs e)
     {
         if (sender is not FrameworkElement { DataContext: RowViewModel row })
@@ -1141,11 +1141,7 @@ public partial class MainWindow : Window
             return;
         }
 
-        if (row.CanDownload)
-        {
-            OpenNewestFile(row);
-        }
-        else if (row.HasItem)
+        if (row.HasItem)
         {
             await OpenItemAsync(row);
         }
@@ -1155,10 +1151,10 @@ public partial class MainWindow : Window
         }
     }
 
-    /// <summary>A row's ▾: its menu (the same as on right-click), under the button.</summary>
+    /// <summary>A row's ▾: what isn't on its buttons, under the button.</summary>
     private void RowMenu_Click(object sender, RoutedEventArgs e)
     {
-        if (sender is FrameworkElement { DataContext: RowViewModel row } button && FindResource("RowMenu") is ContextMenu menu)
+        if (sender is FrameworkElement { DataContext: RowViewModel row } button && FindResource("RowMoreMenu") is ContextMenu menu)
         {
             menu.DataContext = row;
             menu.PlacementTarget = button;
