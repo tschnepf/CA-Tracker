@@ -23,6 +23,42 @@
             <MenuItem Header="Set discipline…" Click="SetRowDiscipline_Click" IsEnabled="{Binding CanSelect}" />
         </ContextMenu>
 
+        <!-- A view at the top of the project list (My work, Overdue): looks like a project row, highlighted
+             while it is the one showing (Tag bound to whether it is). -->
+        <Style x:Key="ViewButton" TargetType="Button">
+            <Setter Property="Foreground" Value="{DynamicResource TextPrimary}" />
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+            <Setter Property="Padding" Value="10,7" />
+            <Setter Property="Margin" Value="0,0,0,2" />
+            <Setter Property="Cursor" Value="Hand" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="Chrome" Background="{TemplateBinding Background}" CornerRadius="8" Padding="{TemplateBinding Padding}">
+                            <ContentPresenter HorizontalAlignment="Stretch" VerticalAlignment="Center" />
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Chrome" Property="Background" Value="{DynamicResource HoverBrush}" />
+                            </Trigger>
+                            <Trigger Property="IsKeyboardFocused" Value="True">
+                                <Setter TargetName="Chrome" Property="Background" Value="{DynamicResource HoverBrush}" />
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter Property="Opacity" Value="0.45" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+            <Style.Triggers>
+                <DataTrigger Binding="{Binding Tag, RelativeSource={RelativeSource Self}}" Value="True">
+                    <Setter Property="Background" Value="{DynamicResource SelectionBrush}" />
+                </DataTrigger>
+            </Style.Triggers>
+        </Style>
+
         <Style x:Key="StatusPill" TargetType="Border">
             <Setter Property="CornerRadius" Value="10" />
             <Setter Property="Padding" Value="8,2" />
@@ -159,6 +195,37 @@
                                          Visibility="{Binding IsSyncProgressRunning, Converter={StaticResource Visible}}" />
                         </StackPanel>
                     </Border>
+                    <!-- Views across every linked project: your open items, and everything overdue. -->
+                    <StackPanel DockPanel.Dock="Top" Margin="0,0,0,2">
+                        <TextBlock Text="VIEWS" Style="{StaticResource SectionTitle}" Margin="6,2,0,4" />
+                        <Button Style="{StaticResource ViewButton}" Click="ShowMyWork_Click" Tag="{Binding IsMyWorkActive}"
+                                IsEnabled="{Binding CanShowMyWork}" ToolTip="{Binding MyWorkToolTip}" ToolTipService.ShowOnDisabled="True"
+                                AutomationProperties.Name="My work">
+                            <DockPanel>
+                                <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
+                                    <Border Background="{DynamicResource DangerSoftBrush}" CornerRadius="9" Padding="7,1" Margin="0,0,4,0"
+                                            Visibility="{Binding HasMyWorkOverdue, Converter={StaticResource Visible}}">
+                                        <TextBlock Text="{Binding MyWorkOverdueText}" FontSize="11.5" FontWeight="SemiBold" Foreground="{DynamicResource DangerBrush}" />
+                                    </Border>
+                                    <Border Background="{DynamicResource AccentSoftBrush}" CornerRadius="9" Padding="7,1"
+                                            Visibility="{Binding HasMyWorkOpen, Converter={StaticResource Visible}}">
+                                        <TextBlock Text="{Binding MyWorkOpenText}" FontSize="11.5" FontWeight="SemiBold" />
+                                    </Border>
+                                </StackPanel>
+                                <TextBlock Text="My work" FontWeight="SemiBold" VerticalAlignment="Center" />
+                            </DockPanel>
+                        </Button>
+                        <Button Style="{StaticResource ViewButton}" Click="ShowAllOverdue_Click" Tag="{Binding IsAllOverdueActive}"
+                                ToolTip="Overdue items in every linked project, whoever has them" AutomationProperties.Name="Overdue, all projects">
+                            <DockPanel>
+                                <Border DockPanel.Dock="Right" Background="{DynamicResource DangerSoftBrush}" CornerRadius="9" Padding="7,1" VerticalAlignment="Center"
+                                        Visibility="{Binding HasAllOverdue, Converter={StaticResource Visible}}">
+                                    <TextBlock Text="{Binding AllOverdueText}" FontSize="11.5" FontWeight="SemiBold" Foreground="{DynamicResource DangerBrush}" />
+                                </Border>
+                                <TextBlock Text="Overdue, all projects" FontWeight="SemiBold" VerticalAlignment="Center" />
+                            </DockPanel>
+                        </Button>
+                    </StackPanel>
                     <!-- New project, and Settings (which opens in place of the projects, with its own way back). -->
                     <Grid DockPanel.Dock="Bottom" Margin="4,8,4,2">
                         <Grid.ColumnDefinitions>

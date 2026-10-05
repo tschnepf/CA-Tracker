@@ -589,6 +589,126 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         ScheduleViewStateSave();
     }
 
+    // ---- Views across projects: My work, Overdue -------------------------------------------
+
+    /// <summary>The projects the views look across: every project in your list linked to Helix or Procore, except archived ones.</summary>
+    private List<ProjectViewModel> ViewProjects() => Projects.Where(project => project.IsConnected && !project.IsArchived).ToList();
+
+    private bool ShowsEveryViewProject
+    {
+        get
+        {
+            var all = ViewProjects();
+            return all.Count > 1 && all.Count == selectedProjects.Count && all.All(selectedProjects.Contains);
+        }
+    }
+
+    /// <summary>My work is showing: every linked project, your open items, no other filter.</summary>
+    public bool IsMyWorkActive => ShowsEveryViewProject && Filter == Filters.Open && DueFilter == DueFilter.Any
+        && DisciplineFilter.Length == 0 && !rememberCompany && YourNames() is { Count: > 0 } you && rememberedPeople.SetEquals(you);
+
+    /// <summary>Overdue, all projects is showing: every linked project, overdue items, whoever has them.</summary>
+    public bool IsAllOverdueActive => ShowsEveryViewProject && Filter == Filters.Open && DueFilter == DueFilter.Overdue
+        && DisciplineFilter.Length == 0 && !HasPersonFilter;
+
+    /// <summary>My work needs your name, from the Helix or Procore sign-in.</summary>
+    public bool CanShowMyWork => YourNames().Count > 0;
+
+    public string MyWorkToolTip => CanShowMyWork
+        ? "Your open items in every linked project, by when they're due"
+        : "Sign in to Helix or Procore (Settings → Connections) so CA Tracker knows your name";
+
+    private int myWorkOpen;
+    private int myWorkOverdue;
+    private int allOverdue;
+
+    public string MyWorkOpenText => $"{myWorkOpen} open";
+    public bool HasMyWorkOpen => myWorkOpen > 0;
+    public string MyWorkOverdueText => $"{myWorkOverdue} overdue";
+    public bool HasMyWorkOverdue => myWorkOverdue > 0;
+    public string AllOverdueText => allOverdue.ToString();
+    public bool HasAllOverdue => allOverdue > 0;
+
+    /// <summary>Shows your open items in every linked project.</summary>
+    public void ShowMyWork()
+    {
+        var names = YourNames();
+        if (names.Count == 0)
+        {
+            return;
+        }
+
+        rememberedPeople.Clear();
+        rememberedPeople.UnionWith(names);
+        rememberCompany = false;
+        ShowView(DueFilter.Any);
+    }
+
+    /// <summary>Shows every overdue item in every linked project, whoever has it.</summary>
+    public void ShowAllOverdue()
+    {
+        rememberedPeople.Clear();
+        rememberCompany = false;
+        ShowView(DueFilter.Overdue);
+    }
+
+    private void ShowView(DueFilter due)
+    {
+        var projects = ViewProjects();
+        if (projects.Count == 0)
+        {
+            return;
+        }
+
+        // Set together, so the list is rebuilt once.
+        filter = Filters.Open;
+        dueFilter = due;
+        disciplineFilter = "";
+        foreach (var name in new[] { nameof(Filter), nameof(DueFilter), nameof(IsDueWithin), nameof(DisciplineFilter) })
+        {
+            OnPropertyChanged(name);
+        }
+
+        RebuildPersonOptions();
+        SetSelectedProjects(projects, SelectedProject is { } current && projects.Contains(current) ? current : projects[0]);
+        RebuildRows();
+    }
+
+    private void RaiseViews()
+    {
+        foreach (var name in new[]
+                 {
+                     nameof(IsMyWorkActive), nameof(IsAllOverdueActive), nameof(CanShowMyWork), nameof(MyWorkToolTip),
+                     nameof(ProjectTitle), nameof(ProjectSubtitle), nameof(HasProjectSubtitle)
+                 })
+        {
+            OnPropertyChanged(name);
+        }
+    }
+
+    /// <summary>The views' counts, from every linked project's rows (an item in both a BB and a TFO project counts once).</summary>
+    private void UpdateViewCounts()
+    {
+        var you = YourNames().ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var open = ViewProjects()
+            .SelectMany(project => badgeSources.TryGetValue(project.Id, out var source) ? source.Rows : new List<RowViewModel>())
+            .Where(row => row.Row.Item is { Closed: false })
+            .DistinctBy(row => $"{row.Project.Project.Connection?.Provider}|{row.Project.Project.Connection?.ProjectId}|{row.Row.ItemType}|{row.Row.Item!.ItemId}")
+            .ToList();
+        var mine = open.Where(row => row.HolderNames.Any(you.Contains)).ToList();
+        myWorkOpen = mine.Count;
+        myWorkOverdue = mine.Count(row => row.IsOverdue);
+        allOverdue = open.Count(row => row.IsOverdue);
+        foreach (var name in new[]
+                 {
+                     nameof(MyWorkOpenText), nameof(HasMyWorkOpen), nameof(MyWorkOverdueText), nameof(HasMyWorkOverdue),
+                     nameof(AllOverdueText), nameof(HasAllOverdue)
+                 })
+        {
+            OnPropertyChanged(name);
+        }
+    }
+
     /// <summary>"Just you" in the Ball in court list: only your own names checked.</summary>
     public bool CanShowOnlyYou => YourNames().Count > 0;
 
@@ -998,6 +1118,8 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         OnPropertyChanged(nameof(CanSignOutOfBrowser));
         OnPropertyChanged(nameof(IsSignedOutOfBrowser));
         OnPropertyChanged(nameof(CanShowOnlyYou));
+        OnPropertyChanged(nameof(CanShowMyWork));
+        OnPropertyChanged(nameof(MyWorkToolTip));
         DefaultPeopleToYou();
     }
 
@@ -1582,8 +1704,9 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     public bool CanCancelRefresh => refreshingMany || SelectedProject is { } project
         && (headerRuns.ContainsKey(project) || project.ActiveRefresh is { IsFinished: false });
     public bool CanRefresh => HasProject && !IsRefreshing && !refreshStarting;
-    public string ProjectTitle => IsMultiProject
-        ? $"{selectedProjects.Count} projects selected"
+    public string ProjectTitle => IsMyWorkActive ? "My work"
+        : IsAllOverdueActive ? "Overdue, all projects"
+        : IsMultiProject ? $"{selectedProjects.Count} projects selected"
         : SelectedProject?.Name ?? "Choose or add a project";
     public string CaFolderText => HasCaFolder ? SelectedProject!.Project.CaFolder : "No CA folder chosen";
     public string ConnectionText
@@ -1669,6 +1792,16 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     {
         get
         {
+            if (IsMyWorkActive)
+            {
+                return $"Your open items in all {selectedProjects.Count} linked projects. Select a project on the left to see just that one.";
+            }
+
+            if (IsAllOverdueActive)
+            {
+                return $"Overdue items in all {selectedProjects.Count} linked projects, whoever has them.";
+            }
+
             if (IsMultiProject)
             {
                 return $"Showing items from all {selectedProjects.Count} selected projects. The CA folder and link above are for {SelectedProject?.Name}; Edit project… edits it.";
@@ -3127,6 +3260,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         OnPropertyChanged(nameof(RfiTabText));
         OnPropertyChanged(nameof(SubmittalTabText));
         OnPropertyChanged(nameof(BothTabText));
+        RaiseViews();
         ScheduleViewStateSave();
         ScheduleBadges();
     }
@@ -3253,6 +3387,8 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         {
             badgeSources.Remove(gone);
         }
+
+        UpdateViewCounts();
     }
 
     /// <summary>What a project's count is of, for its badge ("12 open", "1 item", "3 ready").</summary>

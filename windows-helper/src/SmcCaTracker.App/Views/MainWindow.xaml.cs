@@ -584,6 +584,20 @@ public partial class MainWindow : Window
 
     private void ShowOnlyYou_Click(object sender, RoutedEventArgs e) => viewModel.ShowOnlyYou();
 
+    /// <summary>My work: your open items in every linked project. The filter boxes follow.</summary>
+    private void ShowMyWork_Click(object sender, RoutedEventArgs e)
+    {
+        viewModel.ShowMyWork();
+        ShowFilterChoices();
+    }
+
+    /// <summary>Overdue, all projects: every overdue item in every linked project.</summary>
+    private void ShowAllOverdue_Click(object sender, RoutedEventArgs e)
+    {
+        viewModel.ShowAllOverdue();
+        ShowFilterChoices();
+    }
+
     private void Due_Changed(object sender, SelectionChangedEventArgs e)
     {
         if (DataContext is MainViewModel model && DueBox.SelectedItem is ComboBoxItem { Tag: string tag }
