@@ -51,6 +51,18 @@ public static class Filters
     public const string Ready = "ready";
     public const string NoFolder = "nofolder";
     public const string Returned = "returned";
+
+    /// <summary>Folder in Returned, but the item is back in your company's court.</summary>
+    public const string Reopened = "reopened";
+
+    /// <summary>More than one folder for an item, or a folder matching several items.</summary>
+    public const string Duplicates = "duplicates";
+
+    /// <summary>A folder with no Helix or Procore item.</summary>
+    public const string NoItem = "noitem";
+
+    /// <summary>The Filing view's tabs: everything but Open and All is folder housekeeping.</summary>
+    public static bool IsFiling(string filter) => filter is not (Open or All);
 }
 
 /// <summary>
@@ -1227,10 +1239,81 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         {
             if (Set(ref filter, value))
             {
+                OnPropertyChanged(nameof(IsFiling));
+                OnPropertyChanged(nameof(IsNotFiling));
                 RebuildRows();
             }
         }
     }
+
+    // ---- Filing: folder housekeeping, apart from the everyday list --------------------------
+
+    /// <summary>The list shows one of the Filing tabs (folder housekeeping) instead of open or all items.</summary>
+    public bool IsFiling => Filters.IsFiling(filter);
+    public bool IsNotFiling => !IsFiling;
+
+    private Dictionary<string, int> filingCounts = new();
+
+    /// <summary>How many rows each Filing tab has (the type and discipline filters apply; who has it and when it's due don't).</summary>
+    private void UpdateFilingCounts()
+    {
+        var rows = allRows.Where(MatchesType).Where(MatchesDiscipline).ToList();
+        filingCounts = new Dictionary<string, int>
+        {
+            [Filters.Attention] = rows.Count(row => row.Row.NeedsAttention),
+            [Filters.Ready] = rows.Count(row => row.Status == RowStatus.ReadyToReturn),
+            [Filters.Reopened] = rows.Count(row => row.Status == RowStatus.Reopened),
+            [Filters.Duplicates] = rows.Count(row => row.Status is RowStatus.Duplicate or RowStatus.Ambiguous),
+            [Filters.NoItem] = rows.Count(row => row.Status == RowStatus.NotInProvider),
+            [Filters.NoFolder] = rows.Count(row => row.Status == RowStatus.NoFolder),
+            [Filters.Returned] = rows.Count(row => row.Row.Folder?.Location == FolderLocation.Returned)
+        };
+        foreach (var name in new[]
+                 {
+                     nameof(FilingButtonText), nameof(FilingButtonToolTip), nameof(FilingAttentionText), nameof(FilingReadyText),
+                     nameof(FilingReopenedText), nameof(FilingDuplicatesText), nameof(FilingNoItemText), nameof(FilingNoFolderText),
+                     nameof(FilingReturnedText), nameof(IsFilingAttention), nameof(IsFilingReady), nameof(IsFilingReopened),
+                     nameof(IsFilingDuplicates), nameof(IsFilingNoItem), nameof(IsFilingNoFolder), nameof(IsFilingReturned), nameof(ShowDueChips)
+                 })
+        {
+            OnPropertyChanged(name);
+        }
+    }
+
+    private int FilingCount(string tab) => filingCounts.TryGetValue(tab, out var count) ? count : 0;
+
+    /// <summary>The header's Filing button: how many folders need a look, or the way back to the items.</summary>
+    public string FilingButtonText => IsFiling ? "← Back to items"
+        : FilingCount(Filters.Attention) > 0 ? $"Filing · {FilingCount(Filters.Attention)}"
+        : "Filing";
+
+    public string FilingButtonToolTip => IsFiling
+        ? "Back to the open items"
+        : "Folder housekeeping: folders ready to move to Returned, back with you, with two folders or no item, and items with no folder";
+
+    public string FilingAttentionText => $"To look at ({FilingCount(Filters.Attention)})";
+    public string FilingReadyText => $"Ready to return ({FilingCount(Filters.Ready)})";
+    public string FilingReopenedText => $"Back with you ({FilingCount(Filters.Reopened)})";
+    public string FilingDuplicatesText => $"Two folders ({FilingCount(Filters.Duplicates)})";
+    public string FilingNoItemText => $"No item ({FilingCount(Filters.NoItem)})";
+    public string FilingNoFolderText => $"No folder yet ({FilingCount(Filters.NoFolder)})";
+    public string FilingReturnedText => $"In Returned ({FilingCount(Filters.Returned)})";
+    public bool IsFilingAttention => filter == Filters.Attention;
+    public bool IsFilingReady => filter == Filters.Ready;
+    public bool IsFilingReopened => filter == Filters.Reopened;
+    public bool IsFilingDuplicates => filter == Filters.Duplicates;
+    public bool IsFilingNoItem => filter == Filters.NoItem;
+    public bool IsFilingNoFolder => filter == Filters.NoFolder;
+    public bool IsFilingReturned => filter == Filters.Returned;
+
+    /// <summary>The due counts are about the items, so they hide while filing.</summary>
+    public bool ShowDueChips => HasDueChips && !IsFiling;
+
+    /// <summary>The Filing button: into Filing (its first tab with something in it), or back to the open items.</summary>
+    public void ToggleFiling() =>
+        Filter = IsFiling ? Filters.Open
+            : FilingCount(Filters.Attention) > 0 || FilingCount(Filters.NoFolder) == 0 ? Filters.Attention
+            : Filters.NoFolder;
 
     /// <summary>Discipline code to show, "" for all, or Disciplines.NoneCode for folders without one.</summary>
     public string DisciplineFilter
@@ -2327,7 +2410,16 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         : IsPlaceholder && Rows.Count == 0 ? "Select Choose CA folder… to track this project's RFIs and Submittals against its CA folder."
         : !HasCaFolder && Rows.Count == 0 ? "Choose this project's CA folder in Edit project."
         : !IsConnected && Rows.Count == 0 ? "Link this project to its Helix or Procore project (Link… above), then Sync, to compare its items."
-        : Rows.Count == 0 && Filter == Filters.Attention && !HasPersonFilter && DueFilter == DueFilter.Any ? "Nothing needs attention here."
+        : Rows.Count == 0 && IsFiling ? Filter switch
+        {
+            Filters.Ready => "No folders are ready to return.",
+            Filters.Reopened => "No folders in Returned are back with you.",
+            Filters.Duplicates => "No item has more than one folder.",
+            Filters.NoItem => "Every folder has its Helix or Procore item.",
+            Filters.NoFolder => "Every open item has a folder.",
+            Filters.Returned => "Nothing is in the Returned folder.",
+            _ => "Nothing to look at: the folders match the items."
+        }
         : Rows.Count == 0 && HasActiveFilters ? "No items match the filters above."
         : Rows.Count == 0 ? "No items here."
         : "";
@@ -3644,6 +3736,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         OnPropertyChanged(nameof(SubmittalTabText));
         OnPropertyChanged(nameof(BothTabText));
         UpdateDueCounts();
+        UpdateFilingCounts();
         RaiseViews();
         ScheduleViewStateSave();
         ScheduleBadges();
@@ -3789,15 +3882,22 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         Filters.Ready => "ready",
         Filters.NoFolder => "with no folder",
         Filters.Returned => "in Returned",
+        Filters.Reopened => "back with you",
+        Filters.Duplicates => "with two folders",
+        Filters.NoItem => "with no item",
         _ => "open"
     };
 
     private bool MatchesType(RowViewModel row) =>
         SelectedType == ItemTypeChoices.Both || string.Equals(row.Row.ItemType, SelectedType, StringComparison.OrdinalIgnoreCase);
 
+    /// <summary>
+    /// The list's filters. Filing is about folders, not who has an item or when it's due, so those two filters
+    /// don't apply there (an item ready to return is, by the rule, with no one from your company).
+    /// </summary>
     private bool Matches(RowViewModel row) =>
-        MatchesDiscipline(row) && MatchesFilter(row) && MatchesPerson(row)
-        && ItemTiming.MatchesDue(row.Row.Item, DueFilter, DueWithinDays, DateTime.Today);
+        MatchesDiscipline(row) && MatchesFilter(row)
+        && (IsFiling || (MatchesPerson(row) && ItemTiming.MatchesDue(row.Row.Item, DueFilter, DueWithinDays, DateTime.Today)));
 
     private bool MatchesPerson(RowViewModel row)
     {
@@ -3824,7 +3924,15 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     /// </summary>
     private int CompareRows(RowViewModel left, RowViewModel right)
     {
-        if (groupBy is GroupModes.Urgency)
+        if (groupBy is GroupModes.Urgency && IsFiling)
+        {
+            var byProject = string.Compare(left.ProjectName, right.ProjectName, StringComparison.CurrentCultureIgnoreCase);
+            if (byProject != 0)
+            {
+                return byProject;
+            }
+        }
+        else if (groupBy is GroupModes.Urgency)
         {
             var byUrgency = left.Urgency.CompareTo(right.Urgency);
             if (byUrgency != 0)
@@ -3963,6 +4071,9 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         Filters.Ready => row.Status == RowStatus.ReadyToReturn,
         Filters.NoFolder => row.Status == RowStatus.NoFolder,
         Filters.Returned => row.Row.Folder?.Location == FolderLocation.Returned,
+        Filters.Reopened => row.Status == RowStatus.Reopened,
+        Filters.Duplicates => row.Status is RowStatus.Duplicate or RowStatus.Ambiguous,
+        Filters.NoItem => row.Status == RowStatus.NotInProvider,
         _ => row.Row.NeedsAttention
     };
 

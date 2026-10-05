@@ -557,6 +557,8 @@
                     <StackPanel>
                         <DockPanel LastChildFill="True">
                             <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
+                                <Button Content="{Binding FilingButtonText}" Click="Filing_Click" Margin="0,0,8,0" IsEnabled="{Binding HasProject}"
+                                        ToolTip="{Binding FilingButtonToolTip}" />
                                 <Grid Margin="0,0,8,0" Visibility="{Binding HasSetupChip, Converter={StaticResource Visible}}">
                                     <Button x:Name="SetupButton" Content="{Binding SetupIssuesText}" Click="Setup_Click" Padding="10,5"
                                             Background="{DynamicResource WarningSoftBrush}" Foreground="{DynamicResource WarningBrush}"
@@ -597,7 +599,7 @@
 
                         <!-- How many are overdue, due today, due soon, and in all (as the list is filtered). Each is the
                              Due filter: click one to show just those, click it again for all. -->
-                        <WrapPanel Margin="0,8,0,0" Visibility="{Binding HasDueChips, Converter={StaticResource Visible}}">
+                        <WrapPanel Margin="0,8,0,0" Visibility="{Binding ShowDueChips, Converter={StaticResource Visible}}">
                             <Button Style="{StaticResource DueChip}" Content="{Binding AllChipText}" Tag="{Binding IsDueAnyFilter}"
                                     CommandParameter="Any" Click="DueChip_Click" ToolTip="Show them all, whenever they're due" />
                             <Button Style="{StaticResource DueChip}" Content="{Binding OverdueChipText}" Tag="{Binding IsDueOverdueFilter}"
@@ -688,16 +690,31 @@
                     </StackPanel>
 
                     <ComboBox x:Name="ShowBox" SelectionChanged="Show_Changed" MinWidth="100" Margin="0,0,6,6" AutomationProperties.Name="Show"
-                              ToolTip="Which items to list: open ones, all of them, or one of the folder views">
+                              ToolTip="Open items, or all of them (folder housekeeping is under Filing)"
+                              Visibility="{Binding IsNotFiling, Converter={StaticResource Visible}}">
                         <ComboBoxItem Content="Open items" Tag="open" IsSelected="True" />
                         <ComboBoxItem Content="All items" Tag="all" />
-                        <ComboBoxItem Content="Needs attention" Tag="attention" />
-                        <ComboBoxItem Content="Ready to return" Tag="ready" />
-                        <ComboBoxItem Content="No folder" Tag="nofolder" />
-                        <ComboBoxItem Content="In Returned folder" Tag="returned" />
                     </ComboBox>
 
-                    <Grid Margin="0,0,6,6">
+                    <!-- Filing's tabs, in place of Show, In court and Due (which don't apply to folder housekeeping). -->
+                    <WrapPanel Visibility="{Binding IsFiling, Converter={StaticResource Visible}}">
+                        <Button Style="{StaticResource DueChip}" Content="{Binding FilingAttentionText}" Tag="{Binding IsFilingAttention}" Margin="0,0,6,6"
+                                CommandParameter="attention" Click="FilingTab_Click" ToolTip="Every folder below that needs a look" />
+                        <Button Style="{StaticResource DueChip}" Content="{Binding FilingReadyText}" Tag="{Binding IsFilingReady}" Margin="0,0,6,6"
+                                CommandParameter="ready" Click="FilingTab_Click" ToolTip="Returned by the rule, but the folder is still in the active folder: Move to Returned" />
+                        <Button Style="{StaticResource DueChip}" Content="{Binding FilingReopenedText}" Tag="{Binding IsFilingReopened}" Margin="0,0,6,6"
+                                CommandParameter="reopened" Click="FilingTab_Click" ToolTip="The folder is in Returned, but the item is back with your company: Move back to active" />
+                        <Button Style="{StaticResource DueChip}" Content="{Binding FilingDuplicatesText}" Tag="{Binding IsFilingDuplicates}" Margin="0,0,6,6"
+                                CommandParameter="duplicates" Click="FilingTab_Click" ToolTip="More than one folder for an item, or a folder that matches several items" />
+                        <Button Style="{StaticResource DueChip}" Content="{Binding FilingNoItemText}" Tag="{Binding IsFilingNoItem}" Margin="0,0,6,6"
+                                CommandParameter="noitem" Click="FilingTab_Click" ToolTip="Folders with no Helix or Procore item" />
+                        <Button Style="{StaticResource DueChip}" Content="{Binding FilingNoFolderText}" Tag="{Binding IsFilingNoFolder}" Margin="0,0,6,6"
+                                CommandParameter="nofolder" Click="FilingTab_Click" ToolTip="Open items with no folder yet (Download makes one)" />
+                        <Button Style="{StaticResource DueChip}" Content="{Binding FilingReturnedText}" Tag="{Binding IsFilingReturned}" Margin="0,0,6,6"
+                                CommandParameter="returned" Click="FilingTab_Click" ToolTip="Every folder in the Returned folder" />
+                    </WrapPanel>
+
+                    <Grid Margin="0,0,6,6" Visibility="{Binding IsNotFiling, Converter={StaticResource Visible}}">
                         <Button x:Name="PersonButton" Click="PersonButton_Click" HorizontalContentAlignment="Stretch"
                                 Padding="10,5" Background="{DynamicResource InputBackground}" AutomationProperties.Name="Ball in court"
                                 ToolTip="Who has the item now. Check one or more people.">
@@ -756,7 +773,7 @@
                         </Popup>
                     </Grid>
 
-                    <StackPanel Orientation="Horizontal" Margin="0,0,6,6">
+                    <StackPanel Orientation="Horizontal" Margin="0,0,6,6" Visibility="{Binding IsNotFiling, Converter={StaticResource Visible}}">
                         <ComboBox x:Name="DueBox" SelectionChanged="Due_Changed" MinWidth="100" AutomationProperties.Name="Due"
                                   ToolTip="When the items are due (the counts under the project's name set this too)">
                             <ComboBoxItem Content="Any due date" Tag="Any" IsSelected="True" />

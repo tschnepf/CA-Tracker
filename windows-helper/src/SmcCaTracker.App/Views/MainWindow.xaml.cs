@@ -97,6 +97,10 @@ public partial class MainWindow : Window
                 case nameof(MainViewModel.ShowItemDetails):
                     OnShowItemDetailsChanged();
                     break;
+                case nameof(MainViewModel.IsFiling):
+                case nameof(MainViewModel.IsMultiProject):
+                    ApplyItemGrouping();
+                    break;
             }
         };
         SettingsView.BackRequested += (_, _) => ShowProjects();
@@ -198,10 +202,28 @@ public partial class MainWindow : Window
         }
     }
 
+    /// <summary>Filing: into folder housekeeping, or back to the open items.</summary>
+    private void Filing_Click(object sender, RoutedEventArgs e)
+    {
+        viewModel.ToggleFiling();
+        ShowFilterChoices();
+        ApplyItemGrouping();
+    }
+
+    /// <summary>A Filing tab: show its folders.</summary>
+    private void FilingTab_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is Button { CommandParameter: string tab })
+        {
+            viewModel.Filter = tab;
+        }
+    }
+
     private void ClearFilters_Click(object sender, RoutedEventArgs e)
     {
         viewModel.ClearFilters();
         ShowFilterChoices();
+        ApplyItemGrouping();
     }
 
     private static IEnumerable<T> Descendants<T>(DependencyObject parent) where T : DependencyObject
@@ -511,6 +533,17 @@ public partial class MainWindow : Window
         }
 
         view.GroupDescriptions.Clear();
+        if (viewModel.GroupBy is GroupModes.Urgency && viewModel.IsFiling)
+        {
+            // When it's due means nothing for folders: Filing shows them by project when there are several.
+            if (viewModel.IsMultiProject)
+            {
+                view.GroupDescriptions.Add(new PropertyGroupDescription(nameof(RowViewModel.ProjectName)));
+            }
+
+            return;
+        }
+
         if (viewModel.GroupBy is GroupModes.Urgency)
         {
             view.GroupDescriptions.Add(new PropertyGroupDescription(nameof(RowViewModel.UrgencyText)));
