@@ -387,10 +387,10 @@ public partial class MainWindow : Window
     /// <summary>Columns you can turn off, with the name they are remembered by and their menu label.</summary>
     private IEnumerable<(DataGridColumn Column, string Name, string Label)> OptionalColumns() => new (DataGridColumn, string, string)[]
     {
+        (DaysTillDueColumn, nameof(DaysTillDueColumn), "Due"),
         (StatusColumn, nameof(StatusColumn), "Item status"),
         (CourtColumn, nameof(CourtColumn), "Ball in court"),
         (DaysInCourtColumn, nameof(DaysInCourtColumn), "Days in court"),
-        (DaysTillDueColumn, nameof(DaysTillDueColumn), "Due"),
         (FolderColumn, nameof(FolderColumn), "Folder"),
         (DisciplineColumn, nameof(DisciplineColumn), "Discipline"),
         (ResultColumn, nameof(ResultColumn), "Folder status")

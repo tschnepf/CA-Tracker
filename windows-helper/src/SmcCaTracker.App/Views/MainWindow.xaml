@@ -636,6 +636,31 @@
                             <DataGridTextColumn x:Name="TypeColumn" Header="Type" Binding="{Binding TypeSingular}" Width="85"
                                                 IsReadOnly="True" SortMemberPath="TypeLabel" />
                             <DataGridTextColumn x:Name="NumberColumn" Header="Number" Binding="{Binding Number}" Width="110" IsReadOnly="True" SortMemberPath="Number" />
+                            <!-- The date and how far off it is: "Sep 7 · 26 days overdue". Right after the number, so it
+                                 stays in view in a narrow window. (Named for the column it replaced, so a choice to hide
+                                 it is kept.) -->
+                            <DataGridTemplateColumn x:Name="DaysTillDueColumn" Header="Due" Width="160" SortMemberPath="DaysTillDue">
+                                <DataGridTemplateColumn.CellTemplate>
+                                    <DataTemplate>
+                                        <TextBlock Text="{Binding DueText}" VerticalAlignment="Center" ToolTip="{Binding DueToolTip}">
+                                            <TextBlock.Style>
+                                                <Style TargetType="TextBlock">
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding IsOverdue}" Value="True">
+                                                            <Setter Property="Foreground" Value="{DynamicResource DangerBrush}" />
+                                                            <Setter Property="FontWeight" Value="SemiBold" />
+                                                        </DataTrigger>
+                                                        <DataTrigger Binding="{Binding IsDueToday}" Value="True">
+                                                            <Setter Property="Foreground" Value="{DynamicResource WarningBrush}" />
+                                                            <Setter Property="FontWeight" Value="SemiBold" />
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </TextBlock.Style>
+                                        </TextBlock>
+                                    </DataTemplate>
+                                </DataGridTemplateColumn.CellTemplate>
+                            </DataGridTemplateColumn>
                             <!-- The item's title, or (grey italic) the folder's name when there's no item. -->
                             <DataGridTextColumn x:Name="TitleColumn" Header="Title" Binding="{Binding TitleText}" Width="300" IsReadOnly="True" SortMemberPath="Title">
                                 <DataGridTextColumn.ElementStyle>
@@ -665,30 +690,6 @@
                             </DataGridTextColumn>
                             <DataGridTextColumn x:Name="DaysInCourtColumn" Header="Days in court" Binding="{Binding DaysInCourtText}" Width="95" IsReadOnly="True"
                                                 SortMemberPath="DaysInCourt" />
-                            <!-- The date and how far off it is: "Sep 7 · 26 days overdue". (Named for the column it
-                                 replaced, so a choice to hide it is kept.) -->
-                            <DataGridTemplateColumn x:Name="DaysTillDueColumn" Header="Due" Width="160" SortMemberPath="DaysTillDue">
-                                <DataGridTemplateColumn.CellTemplate>
-                                    <DataTemplate>
-                                        <TextBlock Text="{Binding DueText}" VerticalAlignment="Center" ToolTip="{Binding DueToolTip}">
-                                            <TextBlock.Style>
-                                                <Style TargetType="TextBlock">
-                                                    <Style.Triggers>
-                                                        <DataTrigger Binding="{Binding IsOverdue}" Value="True">
-                                                            <Setter Property="Foreground" Value="{DynamicResource DangerBrush}" />
-                                                            <Setter Property="FontWeight" Value="SemiBold" />
-                                                        </DataTrigger>
-                                                        <DataTrigger Binding="{Binding IsDueToday}" Value="True">
-                                                            <Setter Property="Foreground" Value="{DynamicResource WarningBrush}" />
-                                                            <Setter Property="FontWeight" Value="SemiBold" />
-                                                        </DataTrigger>
-                                                    </Style.Triggers>
-                                                </Style>
-                                            </TextBlock.Style>
-                                        </TextBlock>
-                                    </DataTemplate>
-                                </DataGridTemplateColumn.CellTemplate>
-                            </DataGridTemplateColumn>
                             <DataGridTextColumn x:Name="FolderColumn" Header="Folder" Binding="{Binding FolderName}" Width="200" IsReadOnly="True" SortMemberPath="FolderName">
                                 <DataGridTextColumn.ElementStyle>
                                     <Style TargetType="TextBlock">
