@@ -914,7 +914,10 @@ public sealed class MainViewModel : ObservableObject, IDisposable
 
             result.Add(new WatchProject(project.ArchiveKey, project.ProviderArchiveKey == project.ArchiveKey ? null : project.ProviderArchiveKey,
                 project.Name, company.IsKnown ? company.DisplayName : null,
-                people.Select(entry => new WatchPerson(entry.Key, entry.Value.Company, entry.Value.Ours, entry.Value.Open, entry.Value.Overdue)).ToList()));
+                // Someone known to be with the project's company only by its id is shown with its name.
+                people.Select(entry => new WatchPerson(entry.Key,
+                    entry.Value.Company ?? (entry.Value.Ours && company.IsKnown ? company.DisplayName : null),
+                    entry.Value.Ours, entry.Value.Open, entry.Value.Overdue)).ToList()));
         }
 
         return result;
