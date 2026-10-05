@@ -743,6 +743,59 @@ public partial class MainWindow : Window
 
     private void SetupPopup_Closed(object? sender, EventArgs e) => setupPopupClosedAt = DateTime.UtcNow;
 
+    // ---- Watchlists ------------------------------------------------------------------------------
+
+    private void ShowWatchlist_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is FrameworkElement { DataContext: WatchlistItemViewModel item })
+        {
+            viewModel.ShowWatchlist(item.Watchlist);
+            ShowFilterChoices();
+        }
+    }
+
+    private void NewWatchlist_Click(object sender, RoutedEventArgs e) => EditWatchlist(null);
+
+    private void EditWatchlist_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is FrameworkElement { DataContext: WatchlistItemViewModel item })
+        {
+            EditWatchlist(item.Watchlist);
+        }
+    }
+
+    private void DeleteWatchlist_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is FrameworkElement { DataContext: WatchlistItemViewModel item }
+            && MessageBox.Show(this, $"Delete the watchlist \"{item.Name}\"? Only the watchlist goes; nothing in Helix, Procore or the CA folders changes.",
+                "Delete watchlist", MessageBoxButton.YesNo, MessageBoxImage.Question, MessageBoxResult.No) == MessageBoxResult.Yes)
+        {
+            viewModel.DeleteWatchlist(item.Watchlist);
+            ShowFilterChoices();
+        }
+    }
+
+    /// <summary>Makes a watchlist (starting with the selected projects) or edits one, then shows it.</summary>
+    private void EditWatchlist(SmcCaTracker.Core.Storage.Watchlist? existing)
+    {
+        var window = new WatchlistWindow(viewModel.WatchlistCandidates(), existing, viewModel.SelectedWatchKeys().ToHashSet(StringComparer.Ordinal)) { Owner = this };
+        if (window.ShowDialog() != true)
+        {
+            return;
+        }
+
+        if (window.Deleted && existing is not null)
+        {
+            viewModel.DeleteWatchlist(existing);
+        }
+        else if (window.Result is { } result)
+        {
+            viewModel.SaveWatchlist(result, existing);
+        }
+
+        ShowFilterChoices();
+    }
+
     /// <summary>My work: your open items in every linked project. The filter boxes follow.</summary>
     private void ShowMyWork_Click(object sender, RoutedEventArgs e)
     {

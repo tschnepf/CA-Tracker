@@ -1052,6 +1052,63 @@ public class PersonNamesTests
     }
 }
 
+public class WatchlistTests
+{
+    private static Watchlist Team() => new Watchlist
+    {
+        Name = " Electrical team ",
+        People = new Dictionary<string, List<string>>
+        {
+            ["project|riverside"] = new() { "Ana Ruiz", "raj patel", "Raj Patel (Strategic Mission Critical)", " " },
+            ["helix|northgate"] = new() { "Lee Chen" },
+            ["project|harbor"] = new()
+        }
+    }.Normalized();
+
+    [Fact]
+    public void APersonCountsOnlyOnTheProjectsTheyAreWatchedOn()
+    {
+        var team = Team();
+        Assert.True(team.Matches("project|riverside", new[] { "Raj Patel" }));
+        Assert.True(team.Matches("project|riverside", new[] { "Someone Else", "Ana Ruiz (Strategic Mission Critical)" }));
+        Assert.False(team.Matches("helix|northgate", new[] { "Raj Patel" }));
+        Assert.False(team.Matches("project|harbor", new[] { "Ana Ruiz" }));
+        Assert.False(team.Matches("project|elsewhere", new[] { "Ana Ruiz" }));
+    }
+
+    [Fact]
+    public void AWatchlistIsTidiedWhenRead()
+    {
+        var team = Team();
+        Assert.Equal("Electrical team", team.Name);
+        Assert.Equal(new[] { "Ana Ruiz", "raj patel" }, team.People["project|riverside"]);
+        Assert.Empty(team.People["project|harbor"]);
+        Assert.Equal(new[] { "Ana Ruiz", "Lee Chen", "raj patel" }, team.EveryPerson());
+        Assert.Equal("Watchlist", new Watchlist { Name = "  " }.Normalized().Name);
+    }
+
+    [Fact]
+    public void WatchlistNamesStayUnique()
+    {
+        var taken = new[] { "Electrical team", "Electrical team (2)" };
+        Assert.Equal("Electrical team (3)", Watchlist.UniqueName("Electrical team", taken));
+        Assert.Equal("Fire alarm", Watchlist.UniqueName(" Fire alarm ", taken));
+        Assert.Equal("Electrical team", Watchlist.UniqueName("Electrical team", taken, except: "Electrical team"));
+    }
+
+    [Fact]
+    public void WatchlistsAreKeptWithTheView()
+    {
+        var state = new ViewState { ActiveWatchlist = "Electrical team" };
+        state.Watchlists.Add(Team());
+        var json = System.Text.Json.JsonSerializer.Serialize(state, TrackerJson.Options);
+        var back = System.Text.Json.JsonSerializer.Deserialize<ViewState>(json, TrackerJson.Options)!;
+        Assert.Equal("Electrical team", back.ActiveWatchlist);
+        Assert.Equal(new[] { "Lee Chen" }, Assert.Single(back.Watchlists).People["helix|northgate"]);
+        Assert.Empty(System.Text.Json.JsonSerializer.Deserialize<ViewState>("{}", TrackerJson.Options)!.Watchlists);
+    }
+}
+
 public class DefaultPeopleTests
 {
     [Fact]

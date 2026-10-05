@@ -930,6 +930,68 @@ public sealed class ConnectionViewModel : ObservableObject
     public bool HasSyncMessage => !string.IsNullOrWhiteSpace(SyncMessage);
 }
 
+/// <summary>A watchlist in the project list's VIEWS: its name, what it covers, its counts, and whether it is showing.</summary>
+public sealed class WatchlistItemViewModel : ObservableObject
+{
+    private int open;
+    private int overdue;
+    private bool isActive;
+
+    public WatchlistItemViewModel(Watchlist watchlist)
+    {
+        Watchlist = watchlist;
+    }
+
+    public Watchlist Watchlist { get; }
+    public string Name => Watchlist.Name;
+
+    public string Summary
+    {
+        get
+        {
+            var people = Watchlist.EveryPerson().Count;
+            var projects = Watchlist.People.Count;
+            return $"{people} {(people == 1 ? "person" : "people")} · {projects} {(projects == 1 ? "project" : "projects")}";
+        }
+    }
+
+    public string OpenText => $"{open} open";
+    public bool HasOpen => open > 0;
+    public string OverdueText => $"{overdue} overdue";
+    public bool HasOverdue => overdue > 0;
+
+    /// <summary>The list is filtered by this watchlist.</summary>
+    public bool IsActive
+    {
+        get => isActive;
+        set => Set(ref isActive, value);
+    }
+
+    public void SetCounts(int openCount, int overdueCount)
+    {
+        if (open == openCount && overdue == overdueCount)
+        {
+            return;
+        }
+
+        open = openCount;
+        overdue = overdueCount;
+        foreach (var name in new[] { nameof(OpenText), nameof(HasOpen), nameof(OverdueText), nameof(HasOverdue) })
+        {
+            OnPropertyChanged(name);
+        }
+    }
+}
+
+/// <summary>Someone who can be watched on a project: their company, whether it is the project's company, and what they hold there now.</summary>
+public sealed record WatchPerson(string Name, string? Company, bool IsOurs, int Open, int Overdue);
+
+/// <summary>
+/// A project a watchlist can cover: its watchlist key (and the key it had before its CA folder was chosen, which
+/// older watchlists may use), its name and company, and the people who hold or are next on its open items.
+/// </summary>
+public sealed record WatchProject(string Key, string? OtherKey, string Name, string? CompanyName, IReadOnlyList<WatchPerson> People);
+
 /// <summary>One name (or "Anyone at &lt;company&gt;") in the Person filter.</summary>
 public sealed class PersonChoiceViewModel : ObservableObject
 {

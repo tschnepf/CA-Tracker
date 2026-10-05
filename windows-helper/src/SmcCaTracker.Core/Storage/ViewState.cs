@@ -53,6 +53,12 @@ public sealed class ViewState
     /// <summary>The item details pane beside the list is on (View → Item details).</summary>
     public bool ShowItemDetails { get; set; }
 
+    /// <summary>Your watchlists: which people to follow on which projects (see <see cref="Watchlist"/>).</summary>
+    public List<Watchlist> Watchlists { get; set; } = new();
+
+    /// <summary>The watchlist the list is filtered by, by name; null when Ball in court is set by hand.</summary>
+    public string? ActiveWatchlist { get; set; }
+
     /// <summary>Width of the project list, in pixels (drag the bar beside it).</summary>
     public double ProjectsPaneWidth { get; set; } = 290;
 
@@ -132,6 +138,7 @@ public sealed class ViewStateStore
             state.ArchivedProjects ??= new List<string>();
             state.FavoriteProjects ??= new List<string>();
             state.HiddenColumns ??= new List<string>();
+            state.Watchlists ??= new List<Watchlist>();
             return state;
         }
         catch (Exception error) when (error is JsonException or IOException or UnauthorizedAccessException)

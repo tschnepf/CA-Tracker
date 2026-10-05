@@ -537,10 +537,10 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     // The checks are remembered by name (and "anyone at your company"), not by the list's entries: the
     // list only has people holding something in the shown projects, and a check must keep filtering
     // when you switch to a project where that person holds nothing.
-    public bool HasPersonFilter => rememberCompany || rememberedPeople.Count > 0;
+    public bool HasPersonFilter => activeWatchlist is not null || rememberCompany || rememberedPeople.Count > 0;
 
     /// <summary>Exactly one person checked: every row is theirs, so the Ball in court column is hidden.</summary>
-    public bool IsOnePersonFilter => !rememberCompany && rememberedPeople.Count == 1;
+    public bool IsOnePersonFilter => activeWatchlist is null && !rememberCompany && rememberedPeople.Count == 1;
     public bool HasNoPersonChoices => PersonChoices.Count == 0;
 
     /// <summary>What the Ball in court button shows: Everyone, one or two names, or a count.</summary>
@@ -548,6 +548,11 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     {
         get
         {
+            if (activeWatchlist is { } list)
+            {
+                return $"{list.Name} (watchlist)";
+            }
+
             var names = rememberedPeople.OrderBy(name => name, StringComparer.CurrentCultureIgnoreCase).ToList();
             if (rememberCompany)
             {
@@ -590,7 +595,8 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         }
 
         peopleDefaulted = true;
-        var add = DefaultPeople.ToCheck(rememberedPeople, rememberCompany, names);
+        // A watchlist being shown counts as a choice already made.
+        var add = DefaultPeople.ToCheck(rememberedPeople, rememberCompany || activeWatchlist is not null, names);
         if (add.Count > 0)
         {
             AppLog.Info("view", $"Ball in court starts as you ({string.Join(", ", add)}).");
@@ -651,6 +657,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
             return;
         }
 
+        LeaveWatchlist();
         rememberedPeople.Clear();
         rememberedPeople.UnionWith(names);
         rememberCompany = false;
@@ -660,6 +667,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     /// <summary>Shows every overdue item in every linked project, whoever has it.</summary>
     public void ShowAllOverdue()
     {
+        LeaveWatchlist();
         rememberedPeople.Clear();
         rememberCompany = false;
         ShowView(DueFilter.Overdue);
@@ -691,7 +699,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     {
         foreach (var name in new[]
                  {
-                     nameof(IsMyWorkActive), nameof(IsAllOverdueActive), nameof(CanShowMyWork), nameof(MyWorkToolTip),
+                     nameof(IsMyWorkActive), nameof(IsAllOverdueActive), nameof(CanShowMyWork), nameof(MyWorkToolTip), nameof(HasActiveWatchlist),
                      nameof(ProjectTitle), nameof(ProjectSubtitle), nameof(HasProjectSubtitle)
                  })
         {
@@ -721,6 +729,197 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         }
     }
 
+    // ---- Watchlists: the people to follow on each project ------------------------------------
+
+    private readonly List<Watchlist> watchlists = new();
+    private Watchlist? activeWatchlist;
+
+    /// <summary>The watchlists in the project list's VIEWS, A–Z.</summary>
+    public ObservableCollection<WatchlistItemViewModel> WatchlistItems { get; } = new();
+    public bool HasWatchlists => WatchlistItems.Count > 0;
+    public bool HasNoWatchlists => WatchlistItems.Count == 0;
+    public bool HasActiveWatchlist => activeWatchlist is not null;
+
+    /// <summary>The key a watchlist knows a project by: its own, or its Helix/Procore project's (from before it had a CA folder).</summary>
+    private static string? WatchKey(Watchlist list, ProjectViewModel project) =>
+        list.People.ContainsKey(project.ArchiveKey) ? project.ArchiveKey
+        : project.ProviderArchiveKey is { } provider && list.People.ContainsKey(provider) ? provider
+        : null;
+
+    /// <summary>Someone watched on the row's project holds it.</summary>
+    private static bool Watched(Watchlist list, RowViewModel row) =>
+        WatchKey(list, row.Project) is { } key && list.Matches(key, row.HolderNames);
+
+    private List<ProjectViewModel> WatchlistProjects(Watchlist list) =>
+        ViewProjects().Where(project => WatchKey(list, project) is not null).ToList();
+
+    /// <summary>The watchlist is what the list shows: its projects, filtered by it.</summary>
+    private bool IsWatchlistShowing(out Watchlist list)
+    {
+        list = activeWatchlist!;
+        if (activeWatchlist is null)
+        {
+            return false;
+        }
+
+        var projects = WatchlistProjects(activeWatchlist);
+        return projects.Count > 0 && projects.Count == selectedProjects.Count && projects.All(selectedProjects.Contains);
+    }
+
+    private void RebuildWatchlistItems()
+    {
+        WatchlistItems.Clear();
+        foreach (var list in watchlists.OrderBy(list => list.Name, StringComparer.CurrentCultureIgnoreCase))
+        {
+            WatchlistItems.Add(new WatchlistItemViewModel(list));
+        }
+
+        OnPropertyChanged(nameof(HasWatchlists));
+        OnPropertyChanged(nameof(HasNoWatchlists));
+        UpdateWatchlistCounts();
+    }
+
+    /// <summary>Each watchlist's counts: the open items its people hold on the projects they're watched on.</summary>
+    private void UpdateWatchlistCounts()
+    {
+        foreach (var item in WatchlistItems)
+        {
+            var rows = WatchlistProjects(item.Watchlist)
+                .SelectMany(project => badgeSources.TryGetValue(project.Id, out var source) ? source.Rows : new List<RowViewModel>())
+                .Where(row => row.Row.Item is { Closed: false } && Watched(item.Watchlist, row))
+                .ToList();
+            item.SetCounts(rows.Count, rows.Count(row => row.IsOverdue));
+            item.IsActive = ReferenceEquals(item.Watchlist, activeWatchlist);
+        }
+    }
+
+    /// <summary>Shows a watchlist: its projects, and on each the open items held by the people watched there.</summary>
+    public void ShowWatchlist(Watchlist list)
+    {
+        activeWatchlist = list;
+        OnPropertyChanged(nameof(HasActiveWatchlist));
+        rememberedPeople.Clear();
+        rememberCompany = false;
+        filter = Filters.Open;
+        dueFilter = DueFilter.Any;
+        disciplineFilter = "";
+        foreach (var name in new[] { nameof(Filter), nameof(DueFilter), nameof(IsDueWithin), nameof(DisciplineFilter) })
+        {
+            OnPropertyChanged(name);
+        }
+
+        RebuildPersonOptions();
+        var projects = WatchlistProjects(list);
+        if (projects.Count > 0)
+        {
+            SetSelectedProjects(projects, SelectedProject is { } current && projects.Contains(current) ? current : projects[0]);
+        }
+
+        UpdateWatchlistCounts();
+        RebuildRows();
+        ScheduleViewStateSave();
+    }
+
+    /// <summary>People are being chosen another way: the list stops following the watchlist.</summary>
+    private void LeaveWatchlist()
+    {
+        if (activeWatchlist is null)
+        {
+            return;
+        }
+
+        activeWatchlist = null;
+        foreach (var item in WatchlistItems)
+        {
+            item.IsActive = false;
+        }
+
+        OnPropertyChanged(nameof(HasActiveWatchlist));
+        UpdateColumnsSoon();
+    }
+
+    /// <summary>Raised so the window shows or hides the Ball in court column (it shows while a watchlist is followed).</summary>
+    private void UpdateColumnsSoon() => OnPropertyChanged(nameof(PersonFilterText));
+
+    /// <summary>Saves a watchlist made or edited in the watchlist window, and shows it.</summary>
+    public void SaveWatchlist(Watchlist edited, Watchlist? original)
+    {
+        var list = edited.Normalized();
+        list.Name = Watchlist.UniqueName(list.Name, watchlists.Select(other => other.Name), except: original?.Name);
+        var index = original is null ? -1 : watchlists.IndexOf(original);
+        if (index >= 0)
+        {
+            watchlists[index] = list;
+        }
+        else
+        {
+            watchlists.Add(list);
+        }
+
+        if (original is not null && ReferenceEquals(original, activeWatchlist))
+        {
+            activeWatchlist = list;
+        }
+
+        RebuildWatchlistItems();
+        ShowWatchlist(list);
+    }
+
+    public void DeleteWatchlist(Watchlist list)
+    {
+        watchlists.Remove(list);
+        if (ReferenceEquals(list, activeWatchlist))
+        {
+            activeWatchlist = null;
+            OnPropertyChanged(nameof(HasActiveWatchlist));
+            RebuildPersonOptions();
+            RebuildRows();
+        }
+
+        RebuildWatchlistItems();
+        ScheduleViewStateSave();
+    }
+
+    /// <summary>The selected projects' watchlist keys, to start a new watchlist with.</summary>
+    public IReadOnlyList<string> SelectedWatchKeys() =>
+        selectedProjects.Where(project => project.IsConnected && !project.IsArchived).Select(project => project.ArchiveKey).ToList();
+
+    /// <summary>
+    /// What a watchlist can cover: every linked project with the people who hold or are next on its open items
+    /// (current and upcoming holders), what each holds now, and whether they're with the project's company.
+    /// </summary>
+    public IReadOnlyList<WatchProject> WatchlistCandidates()
+    {
+        var result = new List<WatchProject>();
+        foreach (var project in ViewProjects().OrderBy(project => project.Name, StringComparer.CurrentCultureIgnoreCase))
+        {
+            var rows = badgeSources.TryGetValue(project.Id, out var source) ? source.Rows : new List<RowViewModel>();
+            var company = rows.FirstOrDefault()?.Comparison.Company ?? CompanyIdentity.For(project.Project, project.Snapshot);
+            var people = new Dictionary<string, (string? Company, bool Ours, int Open, int Overdue)>(StringComparer.OrdinalIgnoreCase);
+            foreach (var row in rows.Where(row => row.Row.Item is { Closed: false }))
+            {
+                foreach (var holder in row.Row.Item!.Holders.Where(holder => !string.IsNullOrWhiteSpace(holder.Name)
+                             && (string.Equals(holder.State, "current", StringComparison.OrdinalIgnoreCase)
+                                 || string.Equals(holder.State, "upcoming", StringComparison.OrdinalIgnoreCase))))
+                {
+                    var name = PersonNames.WithoutCompany(holder.Name);
+                    var bracketed = PersonNames.CompanyIn(holder.Name);
+                    var ours = company.Matches(holder.CompanyId, holder.Company) || company.Matches(null, bracketed);
+                    var holds = string.Equals(holder.State, "current", StringComparison.OrdinalIgnoreCase);
+                    people.TryGetValue(name, out var entry);
+                    people[name] = (entry.Company ?? holder.Company ?? bracketed, entry.Ours || ours,
+                        entry.Open + (holds ? 1 : 0), entry.Overdue + (holds && row.IsOverdue ? 1 : 0));
+                }
+            }
+
+            result.Add(new WatchProject(project.ArchiveKey, project.ProviderArchiveKey == project.ArchiveKey ? null : project.ProviderArchiveKey,
+                project.Name, company.IsKnown ? company.DisplayName : null,
+                people.Select(entry => new WatchPerson(entry.Key, entry.Value.Company, entry.Value.Ours, entry.Value.Open, entry.Value.Overdue)).ToList()));
+        }
+
+        return result;
+    }
+
     /// <summary>"Just you" in the Ball in court list: only your own names checked.</summary>
     public bool CanShowOnlyYou => YourNames().Count > 0;
 
@@ -732,6 +931,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
             return;
         }
 
+        LeaveWatchlist();
         rememberedPeople.Clear();
         rememberedPeople.UnionWith(names);
         rememberCompany = false;
@@ -750,6 +950,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
 
     public void ClearPeople()
     {
+        LeaveWatchlist();
         rememberedPeople.Clear();
         rememberCompany = false;
         suppressPersonEvents = true;
@@ -777,6 +978,8 @@ public sealed class MainViewModel : ObservableObject, IDisposable
             return;
         }
 
+        // Choosing people by hand replaces the watchlist (its people aren't checked in the list).
+        LeaveWatchlist();
         if (sender is PersonChoiceViewModel choice)
         {
             // Remembered by name, so a check survives switching projects and restarting.
@@ -1761,7 +1964,8 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     public bool CanCancelRefresh => refreshingMany || SelectedProject is { } project
         && (headerRuns.ContainsKey(project) || project.ActiveRefresh is { IsFinished: false });
     public bool CanRefresh => HasProject && !IsRefreshing && !refreshStarting;
-    public string ProjectTitle => IsMyWorkActive ? "My work"
+    public string ProjectTitle => IsWatchlistShowing(out var shownList) ? shownList.Name
+        : IsMyWorkActive ? "My work"
         : IsAllOverdueActive ? "Overdue, all projects"
         : IsMultiProject ? $"{selectedProjects.Count} projects selected"
         : SelectedProject?.Name ?? "Choose or add a project";
@@ -1852,6 +2056,12 @@ public sealed class MainViewModel : ObservableObject, IDisposable
             if (IsMyWorkActive)
             {
                 return $"Your open items in all {selectedProjects.Count} linked projects. Select a project on the left to see just that one.";
+            }
+
+            if (IsWatchlistShowing(out var list))
+            {
+                var people = list.EveryPerson().Count;
+                return $"Watchlist: {people} {(people == 1 ? "person" : "people")} on {selectedProjects.Count} projects. Each person's items show only on the projects they're watched on.";
             }
 
             if (IsAllOverdueActive)
@@ -3498,6 +3708,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         }
 
         UpdateViewCounts();
+        UpdateWatchlistCounts();
     }
 
     /// <summary>What a project's count is of, for its badge ("12 open", "1 item", "3 ready").</summary>
@@ -3520,6 +3731,11 @@ public sealed class MainViewModel : ObservableObject, IDisposable
 
     private bool MatchesPerson(RowViewModel row)
     {
+        if (activeWatchlist is { } list)
+        {
+            return Watched(list, row);
+        }
+
         if (!HasPersonFilter)
         {
             return true;
@@ -3846,6 +4062,15 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         rememberCompany = view.AnyoneAtCompany;
         peopleDefaulted = view.PeopleDefaulted;
         showItemDetails = view.ShowItemDetails;
+        watchlists.Clear();
+        foreach (var list in (view.Watchlists ?? new List<Watchlist>()).Select(list => list.Normalized()))
+        {
+            list.Name = Watchlist.UniqueName(list.Name, watchlists.Select(other => other.Name));
+            watchlists.Add(list);
+        }
+
+        activeWatchlist = watchlists.FirstOrDefault(list => string.Equals(list.Name, view.ActiveWatchlist, StringComparison.OrdinalIgnoreCase));
+        RebuildWatchlistItems();
     }
 
     /// <summary>The item details pane beside the list (View → Item details); remembered.</summary>
@@ -3898,6 +4123,8 @@ public sealed class MainViewModel : ObservableObject, IDisposable
             AnyoneAtCompany = rememberCompany,
             PeopleDefaulted = peopleDefaulted,
             ShowItemDetails = showItemDetails,
+            Watchlists = watchlists.ToList(),
+            ActiveWatchlist = activeWatchlist?.Name,
             Due = dueFilter.ToString(),
             DueWithinDays = dueWithinDays,
             Discipline = disciplineFilter,
