@@ -640,6 +640,48 @@ public partial class MainWindow : Window
 
     private void ShowOnlyYou_Click(object sender, RoutedEventArgs e) => viewModel.ShowOnlyYou();
 
+    // The row whose box was clicked last (by key, so it survives the list being rebuilt).
+    private string? checkAnchorKey;
+
+    /// <summary>
+    /// A row's box. Shift-clicking it checks every row shown between it and the box clicked before (or
+    /// unchecks them, when this click unchecked it), so a run of items can be checked at once, e.g. to set
+    /// their discipline together.
+    /// </summary>
+    private void RowCheck_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not CheckBox { DataContext: RowViewModel row } box)
+        {
+            return;
+        }
+
+        if (Keyboard.Modifiers.HasFlag(ModifierKeys.Shift) && checkAnchorKey is not null)
+        {
+            var rows = viewModel.Rows;
+            var to = rows.IndexOf(row);
+            var from = -1;
+            for (var index = 0; index < rows.Count; index++)
+            {
+                if (rows[index].Key == checkAnchorKey)
+                {
+                    from = index;
+                    break;
+                }
+            }
+
+            if (from >= 0 && to >= 0)
+            {
+                var check = box.IsChecked == true;
+                for (var index = Math.Min(from, to); index <= Math.Max(from, to); index++)
+                {
+                    rows[index].IsChecked = check;
+                }
+            }
+        }
+
+        checkAnchorKey = row.Key;
+    }
+
     /// <summary>A due count in the header: show just those, or all of them again when it is already on.</summary>
     private void DueChip_Click(object sender, RoutedEventArgs e)
     {

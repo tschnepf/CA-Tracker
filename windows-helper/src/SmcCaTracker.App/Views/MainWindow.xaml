@@ -821,9 +821,9 @@
                                 <DataGridTemplateColumn.CellTemplate>
                                     <DataTemplate>
                                         <CheckBox IsChecked="{Binding IsChecked, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
-                                                  IsEnabled="{Binding CanSelect}" HorizontalAlignment="Center"
+                                                  IsEnabled="{Binding CanSelect}" HorizontalAlignment="Center" Click="RowCheck_Click"
                                                   AutomationProperties.Name="{Binding Number, StringFormat=Check {0}}"
-                                                  ToolTip="Check to download it, set its discipline, or include its folder in a move. Space checks the selected rows." />
+                                                  ToolTip="Check to download it, set its discipline, or include its folder in a move. Shift-click another box to check every row between; Space checks the selected rows." />
                                     </DataTemplate>
                                 </DataGridTemplateColumn.CellTemplate>
                             </DataGridTemplateColumn>
