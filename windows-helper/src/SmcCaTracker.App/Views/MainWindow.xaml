@@ -59,6 +59,68 @@
             </Style.Triggers>
         </Style>
 
+        <!-- A count in the project header that is also a filter (Tag bound to whether it is the one on). -->
+        <Style x:Key="DueChip" TargetType="Button">
+            <Setter Property="Foreground" Value="{DynamicResource TextPrimary}" />
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="BorderBrush" Value="{DynamicResource LineBrush}" />
+            <Setter Property="Padding" Value="11,3" />
+            <Setter Property="Margin" Value="0,0,6,0" />
+            <Setter Property="FontWeight" Value="SemiBold" />
+            <Setter Property="Cursor" Value="Hand" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="Chrome" Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="1" CornerRadius="13" Padding="{TemplateBinding Padding}">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" />
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Chrome" Property="BorderBrush" Value="{DynamicResource AccentBrush}" />
+                            </Trigger>
+                            <Trigger Property="IsKeyboardFocused" Value="True">
+                                <Setter TargetName="Chrome" Property="BorderBrush" Value="{DynamicResource AccentBrush}" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+            <Style.Triggers>
+                <DataTrigger Binding="{Binding Tag, RelativeSource={RelativeSource Self}}" Value="True">
+                    <Setter Property="Background" Value="{DynamicResource AccentSoftBrush}" />
+                    <Setter Property="BorderBrush" Value="{DynamicResource AccentBrush}" />
+                </DataTrigger>
+            </Style.Triggers>
+        </Style>
+
+        <!-- "Details ▾" / "Hide details ▴" in the project header. -->
+        <Style x:Key="DetailsToggle" TargetType="ToggleButton">
+            <Setter Property="Foreground" Value="{DynamicResource AccentBrush}" />
+            <Setter Property="Cursor" Value="Hand" />
+            <Setter Property="FontSize" Value="12" />
+            <Setter Property="Content" Value="Details ▾" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ToggleButton">
+                        <Border x:Name="Chrome" Background="Transparent" BorderBrush="Transparent" BorderThickness="1" CornerRadius="4" Padding="4,1">
+                            <ContentPresenter VerticalAlignment="Center" />
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsKeyboardFocused" Value="True">
+                                <Setter TargetName="Chrome" Property="BorderBrush" Value="{DynamicResource AccentBrush}" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+            <Style.Triggers>
+                <Trigger Property="IsChecked" Value="True">
+                    <Setter Property="Content" Value="Hide details ▴" />
+                </Trigger>
+            </Style.Triggers>
+        </Style>
+
         <Style x:Key="StatusPill" TargetType="Border">
             <Setter Property="CornerRadius" Value="10" />
             <Setter Property="Padding" Value="8,2" />
@@ -385,14 +447,38 @@
                     <RowDefinition Height="*" />
                 </Grid.RowDefinitions>
 
-                <!-- The selected project, kept compact so the item list gets the room. -->
+                <!-- The selected project, kept compact so the item list gets the room: its name and actions, counts by
+                     when items are due (each one a quick Due filter), when it was synced, and its CA folder and link
+                     under Details. Problems with the folder setup gather in one chip that opens them. -->
                 <Border Grid.Row="0" Style="{StaticResource Card}" Padding="16,12">
                     <StackPanel>
                         <DockPanel LastChildFill="True">
                             <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
-                                <Button Style="{StaticResource AccentButton}" Content="{Binding RefreshButtonText}" Click="Refresh_Click"
-                                        IsEnabled="{Binding CanRefresh}" MinWidth="150"
-                                        ToolTip="Reads every RFI and Submittal again and rescans the CA folder (F5)" />
+                                <Grid Margin="0,0,8,0" Visibility="{Binding HasSetupChip, Converter={StaticResource Visible}}">
+                                    <Button x:Name="SetupButton" Content="{Binding SetupIssuesText}" Click="Setup_Click" Padding="10,5"
+                                            Background="{DynamicResource WarningSoftBrush}" Foreground="{DynamicResource WarningBrush}"
+                                            BorderBrush="{DynamicResource WarningSoftBrush}" ToolTip="{Binding FolderWarning}" />
+                                    <Popup x:Name="SetupPopup" PlacementTarget="{Binding ElementName=SetupButton}" Placement="Bottom"
+                                           StaysOpen="False" AllowsTransparency="True" Closed="SetupPopup_Closed">
+                                        <Border Background="{DynamicResource SurfaceBackground}" BorderBrush="{DynamicResource LineBrush}"
+                                                BorderThickness="1" CornerRadius="6" Padding="12" Margin="0,2,0,0" MaxWidth="440">
+                                            <StackPanel>
+                                                <TextBlock Text="SETUP" Style="{StaticResource SectionTitle}" />
+                                                <TextBlock Text="{Binding FolderWarning}" Foreground="{DynamicResource WarningBrush}" TextWrapping="Wrap" />
+                                                <WrapPanel Margin="0,10,0,0">
+                                                    <Button Content="{Binding IncludeUnlabeledText}" Click="IncludeUnlabeled_Click" Margin="0,0,8,4"
+                                                            Visibility="{Binding CanIncludeUnlabeled, Converter={StaticResource Visible}}"
+                                                            ToolTip="Also count folders and items that say neither BB nor TFO as this part (Edit project → Base Build / Tenant Fit Out)" />
+                                                    <Button Content="Create missing folders…" Click="CreateFolders_Click" Margin="0,0,8,4"
+                                                            Visibility="{Binding CanCreateTypeFolders, Converter={StaticResource Visible}}" />
+                                                    <Button Content="Edit project…" Click="EditProject_Click" Margin="0,0,8,4" />
+                                                </WrapPanel>
+                                            </StackPanel>
+                                        </Border>
+                                    </Popup>
+                                </Grid>
+                                <Button Content="{Binding RefreshButtonText}" Click="Refresh_Click" IsEnabled="{Binding CanRefresh}"
+                                        ToolTip="Reads every RFI and Submittal again and rescans the CA folder (F5). CA Tracker also does this by itself in the background." />
                                 <Button Content="Cancel" Click="CancelRefresh_Click" Margin="8,0,0,0"
                                         ToolTip="Stops this sync (a background sync finishes by itself)"
                                         Visibility="{Binding CanCancelRefresh, Converter={StaticResource Visible}}" />
@@ -405,42 +491,65 @@
                                        VerticalAlignment="Center" ToolTip="{Binding ProjectTitle}" />
                         </DockPanel>
 
-                        <Grid Margin="0,8,0,0" IsEnabled="{Binding HasProject}">
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="76" />
-                                <ColumnDefinition Width="*" />
-                                <ColumnDefinition Width="Auto" />
-                            </Grid.ColumnDefinitions>
-                            <Grid.RowDefinitions>
-                                <RowDefinition Height="Auto" />
-                                <RowDefinition Height="Auto" />
-                            </Grid.RowDefinitions>
-                            <TextBlock Grid.Row="0" Text="CA folder" VerticalAlignment="Center" Foreground="{DynamicResource TextSecondary}" />
-                            <TextBlock Grid.Row="0" Grid.Column="1" Text="{Binding CaFolderText}" VerticalAlignment="Center"
-                                       TextTrimming="CharacterEllipsis" ToolTip="{Binding CaFolderText}" />
-                            <Button Grid.Row="0" Grid.Column="2" Style="{StaticResource LinkButton}" Content="Open in Explorer"
-                                    Click="OpenCaFolder_Click" IsEnabled="{Binding HasCaFolder}" Margin="8,0,0,0" />
-                            <TextBlock Grid.Row="1" Text="Linked to" VerticalAlignment="Center" Foreground="{DynamicResource TextSecondary}" />
-                            <TextBlock Grid.Row="1" Grid.Column="1" Text="{Binding ConnectionText}" VerticalAlignment="Center"
-                                       TextTrimming="CharacterEllipsis" ToolTip="{Binding ConnectionText}" />
-                            <Button Grid.Row="1" Grid.Column="2" Style="{StaticResource LinkButton}" Content="_Link…" Click="Connect_Click"
-                                    Margin="8,0,0,0" IsEnabled="{Binding CanEditConnection}"
-                                    ToolTip="Choose the Helix or Procore project this CA folder belongs to" />
-                        </Grid>
+                        <!-- How many are overdue, due today, due soon, and in all (as the list is filtered). Each is the
+                             Due filter: click one to show just those, click it again for all. -->
+                        <WrapPanel Margin="0,8,0,0" Visibility="{Binding HasDueChips, Converter={StaticResource Visible}}">
+                            <Button Style="{StaticResource DueChip}" Content="{Binding AllChipText}" Tag="{Binding IsDueAnyFilter}"
+                                    CommandParameter="Any" Click="DueChip_Click" ToolTip="Show them all, whenever they're due" />
+                            <Button Style="{StaticResource DueChip}" Content="{Binding OverdueChipText}" Tag="{Binding IsDueOverdueFilter}"
+                                    CommandParameter="Overdue" Click="DueChip_Click" Foreground="{DynamicResource DangerBrush}"
+                                    Visibility="{Binding HasOverdueChip, Converter={StaticResource Visible}}" ToolTip="Show only the overdue ones (click again for all)" />
+                            <Button Style="{StaticResource DueChip}" Content="{Binding DueTodayChipText}" Tag="{Binding IsDueTodayFilter}"
+                                    CommandParameter="DueToday" Click="DueChip_Click" Foreground="{DynamicResource WarningBrush}"
+                                    Visibility="{Binding HasDueTodayChip, Converter={StaticResource Visible}}" ToolTip="Show only the ones due today (click again for all)" />
+                            <Button Style="{StaticResource DueChip}" Content="{Binding DueSoonChipText}" Tag="{Binding IsDueSoonFilter}"
+                                    CommandParameter="DueWithin" Click="DueChip_Click"
+                                    Visibility="{Binding HasDueSoonChip, Converter={StaticResource Visible}}"
+                                    ToolTip="Show only the ones due from today on, within the days set beside Due (click again for all)" />
+                        </WrapPanel>
 
-                        <!-- When the items and the CA folder were last read (a failed sync says why, in full). -->
-                        <TextBlock Text="{Binding TimestampText}" Margin="0,6,0,0" FontSize="12" TextWrapping="Wrap">
-                            <TextBlock.Style>
-                                <Style TargetType="TextBlock">
-                                    <Setter Property="Foreground" Value="{DynamicResource TextSecondary}" />
-                                    <Style.Triggers>
-                                        <DataTrigger Binding="{Binding LastSyncFailed}" Value="True">
-                                            <Setter Property="Foreground" Value="{DynamicResource DangerBrush}" />
-                                        </DataTrigger>
-                                    </Style.Triggers>
-                                </Style>
-                            </TextBlock.Style>
-                        </TextBlock>
+                        <!-- When the items and the CA folder were last read (a failed sync says why, in full), and Details. -->
+                        <DockPanel Margin="0,6,0,0" Visibility="{Binding CanShowProjectDetails, Converter={StaticResource Visible}}">
+                            <ToggleButton x:Name="DetailsToggle" DockPanel.Dock="Right" Style="{StaticResource DetailsToggle}" Margin="8,0,0,0"
+                                          VerticalAlignment="Top" ToolTip="The CA folder, and the Helix or Procore project it is linked to" />
+                            <TextBlock Text="{Binding TimestampText}" FontSize="12" TextWrapping="Wrap" VerticalAlignment="Center">
+                                <TextBlock.Style>
+                                    <Style TargetType="TextBlock">
+                                        <Setter Property="Foreground" Value="{DynamicResource TextSecondary}" />
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding LastSyncFailed}" Value="True">
+                                                <Setter Property="Foreground" Value="{DynamicResource DangerBrush}" />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </TextBlock.Style>
+                            </TextBlock>
+                        </DockPanel>
+                        <Border Visibility="{Binding CanShowProjectDetails, Converter={StaticResource Visible}}">
+                            <Grid Margin="0,6,0,0" IsEnabled="{Binding HasProject}"
+                                  Visibility="{Binding IsChecked, ElementName=DetailsToggle, Converter={StaticResource Visible}}">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="76" />
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                </Grid.RowDefinitions>
+                                <TextBlock Grid.Row="0" Text="CA folder" VerticalAlignment="Center" Foreground="{DynamicResource TextSecondary}" />
+                                <TextBlock Grid.Row="0" Grid.Column="1" Text="{Binding CaFolderText}" VerticalAlignment="Center"
+                                           TextTrimming="CharacterEllipsis" ToolTip="{Binding CaFolderText}" />
+                                <Button Grid.Row="0" Grid.Column="2" Style="{StaticResource LinkButton}" Content="Open in Explorer"
+                                        Click="OpenCaFolder_Click" IsEnabled="{Binding HasCaFolder}" Margin="8,0,0,0" />
+                                <TextBlock Grid.Row="1" Text="Linked to" VerticalAlignment="Center" Foreground="{DynamicResource TextSecondary}" />
+                                <TextBlock Grid.Row="1" Grid.Column="1" Text="{Binding ConnectionText}" VerticalAlignment="Center"
+                                           TextTrimming="CharacterEllipsis" ToolTip="{Binding ConnectionText}" />
+                                <Button Grid.Row="1" Grid.Column="2" Style="{StaticResource LinkButton}" Content="_Link…" Click="Connect_Click"
+                                        Margin="8,0,0,0" IsEnabled="{Binding CanEditConnection}"
+                                        ToolTip="Choose the Helix or Procore project this CA folder belongs to" />
+                            </Grid>
+                        </Border>
 
                         <TextBlock Text="{Binding RefreshMessage}" TextWrapping="Wrap" Margin="0,6,0,0"
                                    Visibility="{Binding HasRefreshMessage, Converter={StaticResource Visible}}">
@@ -458,17 +567,6 @@
 
                         <TextBlock Text="{Binding ProjectSubtitle}" Style="{StaticResource Muted}" Margin="0,4,0,0" FontSize="12"
                                    Visibility="{Binding HasProjectSubtitle, Converter={StaticResource Visible}}" />
-                        <DockPanel Margin="0,6,0,0" Visibility="{Binding HasFolderWarning, Converter={StaticResource Visible}}">
-                            <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
-                                <Button Content="{Binding IncludeUnlabeledText}" Click="IncludeUnlabeled_Click" Margin="8,0,0,0"
-                                        Visibility="{Binding CanIncludeUnlabeled, Converter={StaticResource Visible}}"
-                                        ToolTip="Also count folders and items that say neither BB nor TFO as this part (Edit project → Base Build / Tenant Fit Out)" />
-                                <Button Content="Create missing folders…" Click="CreateFolders_Click" Margin="8,0,0,0"
-                                        Visibility="{Binding CanCreateTypeFolders, Converter={StaticResource Visible}}" />
-                            </StackPanel>
-                            <TextBlock Text="{Binding FolderWarning}" Foreground="{DynamicResource WarningBrush}"
-                                       TextWrapping="Wrap" VerticalAlignment="Center" />
-                        </DockPanel>
                     </StackPanel>
                 </Border>
 

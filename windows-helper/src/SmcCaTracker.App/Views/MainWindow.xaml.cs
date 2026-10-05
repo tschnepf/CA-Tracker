@@ -584,6 +584,32 @@ public partial class MainWindow : Window
 
     private void ShowOnlyYou_Click(object sender, RoutedEventArgs e) => viewModel.ShowOnlyYou();
 
+    /// <summary>A due count in the header: show just those, or all of them again when it is already on.</summary>
+    private void DueChip_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is Button { CommandParameter: string tag } && Enum.TryParse<DueFilter>(tag, out var due))
+        {
+            viewModel.DueFilter = viewModel.DueFilter == due ? DueFilter.Any : due;
+            ShowFilterChoices();
+        }
+    }
+
+    private DateTime setupPopupClosedAt;
+
+    /// <summary>The setup chip opens the setup problems, with what can be done about them.</summary>
+    private void Setup_Click(object sender, RoutedEventArgs e)
+    {
+        // A click on the chip while the list is open closes it (the click outside); don't reopen it.
+        if (DateTime.UtcNow - setupPopupClosedAt < TimeSpan.FromMilliseconds(250))
+        {
+            return;
+        }
+
+        SetupPopup.IsOpen = !SetupPopup.IsOpen;
+    }
+
+    private void SetupPopup_Closed(object? sender, EventArgs e) => setupPopupClosedAt = DateTime.UtcNow;
+
     /// <summary>My work: your open items in every linked project. The filter boxes follow.</summary>
     private void ShowMyWork_Click(object sender, RoutedEventArgs e)
     {
@@ -775,6 +801,7 @@ public partial class MainWindow : Window
 
     private async void EditProject_Click(object sender, RoutedEventArgs e)
     {
+        SetupPopup.IsOpen = false;
         if (viewModel.SelectedProject is null)
         {
             return;
@@ -888,6 +915,7 @@ public partial class MainWindow : Window
 
     private async void CreateFolders_Click(object sender, RoutedEventArgs e)
     {
+        SetupPopup.IsOpen = false;
         if (viewModel.Comparison is not null)
         {
             await PreviewAndRunAsync(OperationPlanner.PlanCreateTypeFolders(viewModel.Comparison));
@@ -897,6 +925,7 @@ public partial class MainWindow : Window
     /// <summary>The folder warning's button: count folders that say neither BB nor TFO as this part.</summary>
     private async void IncludeUnlabeled_Click(object sender, RoutedEventArgs e)
     {
+        SetupPopup.IsOpen = false;
         if (viewModel.SelectedProject is not { } project)
         {
             return;

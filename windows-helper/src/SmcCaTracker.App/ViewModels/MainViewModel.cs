@@ -814,6 +814,10 @@ public sealed class MainViewModel : ObservableObject, IDisposable
                 {
                     RebuildRows();
                 }
+                else
+                {
+                    UpdateDueCounts();
+                }
 
                 ScheduleViewStateSave();
             }
@@ -1856,31 +1860,75 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         }
     }
 
-    public string FolderWarning
+    /// <summary>Problems with the CA folder setup (missing type folders, folders hidden by the BB/TFO split).</summary>
+    private List<string> SetupProblems()
     {
-        get
+        if (comparison is null || !HasCaFolder)
         {
-            if (comparison is null || !HasCaFolder)
-            {
-                return "";
-            }
+            return new List<string>();
+        }
 
-            var problems = comparison.Types.Values
-                .Select(type => type.Scan.Error ?? (type.Scan.TypeFolderExists ? null : $"No \"{Path.GetFileName(type.Scan.TypeFolderPath)}\" folder in this CA folder."))
-                .Where(message => message is not null)
-                .Distinct()
-                .ToList();
-            var hidden = HiddenByPhaseCount;
-            if (hidden > 0)
-            {
-                problems.Add($"{hidden} folder{(hidden == 1 ? " is" : "s are")} hidden because {(hidden == 1 ? "its name says" : "their names say")} neither BB nor TFO.");
-            }
+        var problems = comparison.Types.Values
+            .Select(type => type.Scan.Error ?? (type.Scan.TypeFolderExists ? null : $"No \"{Path.GetFileName(type.Scan.TypeFolderPath)}\" folder in this CA folder."))
+            .Where(message => message is not null)
+            .Distinct()
+            .ToList();
+        var hidden = HiddenByPhaseCount;
+        if (hidden > 0)
+        {
+            problems.Add($"{hidden} folder{(hidden == 1 ? " is" : "s are")} hidden because {(hidden == 1 ? "its name says" : "their names say")} neither BB nor TFO.");
+        }
 
-            return string.Join("  ", problems);
+        return problems.OfType<string>().ToList();
+    }
+
+    public string FolderWarning => string.Join("  ", SetupProblems());
+    public bool HasFolderWarning => FolderWarning.Length > 0;
+
+    /// <summary>The header's setup chip, "⚠ 1 setup issue" (one project at a time: the problems are its own).</summary>
+    public bool HasSetupChip => HasFolderWarning && !IsMultiProject;
+    public string SetupIssuesText => SetupProblems().Count == 1 ? "⚠ 1 setup issue" : $"⚠ {SetupProblems().Count} setup issues";
+
+    /// <summary>The CA folder and link (Details) describe one project, so they hide when several are shown.</summary>
+    public bool CanShowProjectDetails => HasProject && !IsMultiProject;
+
+    // ---- The header's counts by when items are due (each a quick Due filter) ----------------
+
+    private (int Overdue, int Today, int Soon, int All) dueCounts;
+
+    /// <summary>Counts the list as filtered, except for the Due filter itself, so each chip says what it would show.</summary>
+    private void UpdateDueCounts()
+    {
+        var rows = allRows.Where(MatchesType).Where(row => MatchesDiscipline(row) && MatchesFilter(row) && MatchesPerson(row)).ToList();
+        dueCounts = (
+            rows.Count(row => row.IsOverdue),
+            rows.Count(row => row.IsDueToday),
+            rows.Count(row => row.DaysTillDue is { } days && days >= 0 && days <= DueWithinDays),
+            rows.Count);
+        foreach (var name in new[]
+                 {
+                     nameof(HasDueChips), nameof(AllChipText), nameof(IsDueAnyFilter),
+                     nameof(OverdueChipText), nameof(HasOverdueChip), nameof(IsDueOverdueFilter),
+                     nameof(DueTodayChipText), nameof(HasDueTodayChip), nameof(IsDueTodayFilter),
+                     nameof(DueSoonChipText), nameof(HasDueSoonChip), nameof(IsDueSoonFilter)
+                 })
+        {
+            OnPropertyChanged(name);
         }
     }
 
-    public bool HasFolderWarning => FolderWarning.Length > 0;
+    public bool HasDueChips => HasProject && (dueCounts.All > 0 || DueFilter != DueFilter.Any);
+    public string AllChipText => $"{dueCounts.All} {MatchingNoun(dueCounts.All)}";
+    public bool IsDueAnyFilter => DueFilter == DueFilter.Any;
+    public string OverdueChipText => $"{dueCounts.Overdue} overdue";
+    public bool HasOverdueChip => dueCounts.Overdue > 0 || DueFilter == DueFilter.Overdue;
+    public bool IsDueOverdueFilter => DueFilter == DueFilter.Overdue;
+    public string DueTodayChipText => $"{dueCounts.Today} due today";
+    public bool HasDueTodayChip => dueCounts.Today > 0 || DueFilter == DueFilter.DueToday;
+    public bool IsDueTodayFilter => DueFilter == DueFilter.DueToday;
+    public string DueSoonChipText => $"{dueCounts.Soon} due within {DueWithinDays} days";
+    public bool HasDueSoonChip => dueCounts.Soon > 0 || DueFilter == DueFilter.DueWithin;
+    public bool IsDueSoonFilter => DueFilter == DueFilter.DueWithin;
 
     /// <summary>Folders the Base Build / Tenant Fit Out split hides because their names say neither part.</summary>
     private int HiddenByPhaseCount => comparison is null || !HasCaFolder || comparison.Project.Scope is not { IsSplit: true }
@@ -3260,6 +3308,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         OnPropertyChanged(nameof(RfiTabText));
         OnPropertyChanged(nameof(SubmittalTabText));
         OnPropertyChanged(nameof(BothTabText));
+        UpdateDueCounts();
         RaiseViews();
         ScheduleViewStateSave();
         ScheduleBadges();
@@ -3579,6 +3628,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
                      nameof(ProjectTitle), nameof(CaFolderText), nameof(ConnectionText), nameof(RefreshButtonText),
                      nameof(DataTimestampText), nameof(FolderTimestampText), nameof(TimestampText), nameof(ProjectSubtitle), nameof(HasProjectSubtitle),
                      nameof(CompanyText), nameof(FolderWarning), nameof(HasFolderWarning), nameof(CanCreateTypeFolders),
+                     nameof(HasSetupChip), nameof(SetupIssuesText), nameof(CanShowProjectDetails), nameof(HasDueChips),
                      nameof(LastSyncFailed), nameof(CanIncludeUnlabeled), nameof(IncludeUnlabeledText), nameof(MarkReturnedToolTip),
                      nameof(HasActiveFilters),
                      nameof(IsPlaceholder), nameof(CanEditConnection), nameof(EditButtonText),
