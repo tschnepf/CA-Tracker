@@ -756,6 +756,44 @@ public partial class MainWindow : Window
 
     private void NewWatchlist_Click(object sender, RoutedEventArgs e) => EditWatchlist(null);
 
+    private TeamBoardWindow? teamBoard;
+
+    private void TeamBoard_Click(object sender, RoutedEventArgs e) => OpenTeamBoard(null);
+
+    private void WatchlistBoard_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is FrameworkElement { DataContext: WatchlistItemViewModel item })
+        {
+            OpenTeamBoard(item.Watchlist);
+        }
+    }
+
+    /// <summary>The team board (one at a time), on a watchlist: the one asked for, the one showing, or the first.</summary>
+    private void OpenTeamBoard(SmcCaTracker.Core.Storage.Watchlist? list)
+    {
+        list ??= viewModel.WatchlistItems.FirstOrDefault(item => item.IsActive)?.Watchlist;
+        if (teamBoard is not null)
+        {
+            if (list is not null)
+            {
+                teamBoard.ShowWatchlist(list);
+            }
+
+            teamBoard.Activate();
+            return;
+        }
+
+        teamBoard = new TeamBoardWindow(viewModel, list) { Owner = this };
+        teamBoard.PairChosen += (projectKey, person) =>
+        {
+            viewModel.ShowPersonOnProject(projectKey, person);
+            ShowFilterChoices();
+            Activate();
+        };
+        teamBoard.Closed += (_, _) => teamBoard = null;
+        teamBoard.Show();
+    }
+
     private void EditWatchlist_Click(object sender, RoutedEventArgs e)
     {
         if (sender is FrameworkElement { DataContext: WatchlistItemViewModel item })

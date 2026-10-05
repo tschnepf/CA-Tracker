@@ -349,6 +349,9 @@
                         <DockPanel Margin="6,10,2,4">
                             <Button DockPanel.Dock="Right" Style="{StaticResource LinkButton}" Content="+ New" Click="NewWatchlist_Click" Padding="4,0"
                                     ToolTip="Make a watchlist: the people you follow on each project" AutomationProperties.Name="New watchlist" />
+                            <Button DockPanel.Dock="Right" Style="{StaticResource LinkButton}" Content="Board" Click="TeamBoard_Click" Padding="4,0"
+                                    Margin="0,0,4,0" Visibility="{Binding HasWatchlists, Converter={StaticResource Visible}}"
+                                    ToolTip="Team board: each watchlist's people by project, with their overdue and open counts" AutomationProperties.Name="Team board" />
                             <TextBlock Text="WATCHLISTS" Style="{StaticResource SectionTitle}" Margin="0" VerticalAlignment="Center" />
                         </DockPanel>
                         <TextBlock Style="{StaticResource Muted}" FontSize="11.5" Margin="6,0,4,4"
@@ -362,6 +365,7 @@
                                             ToolTip="The open items its people hold on the projects they're watched on. Right-click to edit or delete it.">
                                         <Button.ContextMenu>
                                             <ContextMenu>
+                                                <MenuItem Header="Team board…" Click="WatchlistBoard_Click" />
                                                 <MenuItem Header="Edit…" Click="EditWatchlist_Click" />
                                                 <MenuItem Header="Delete…" Click="DeleteWatchlist_Click" />
                                             </ContextMenu>

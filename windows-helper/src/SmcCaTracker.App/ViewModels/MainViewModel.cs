@@ -880,6 +880,72 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         ScheduleViewStateSave();
     }
 
+    /// <summary>The watchlists, A–Z (for the team board's choice).</summary>
+    public IReadOnlyList<Watchlist> Watchlists => watchlists.OrderBy(list => list.Name, StringComparer.CurrentCultureIgnoreCase).ToList();
+
+    /// <summary>Raised when the counts are worked out again (after a sync, a folder change or a filter), so the team board can follow.</summary>
+    public event Action? CountsUpdated;
+
+    /// <summary>
+    /// A watchlist as a grid: its people down the side, its projects across, and in each watched pair the open
+    /// items that person holds there now (as the list counts them), with totals.
+    /// </summary>
+    public TeamBoard TeamBoardFor(Watchlist list)
+    {
+        var projects = WatchlistProjects(list);
+        var items = projects.ToDictionary(project => project, project =>
+            (badgeSources.TryGetValue(project.Id, out var source) ? source.Rows : new List<RowViewModel>())
+                .Where(row => row.Row.Item is { Closed: false })
+                .ToList());
+        var people = list.EveryPerson().Select(name =>
+        {
+            var cells = projects.Select(project =>
+            {
+                var key = WatchKey(list, project)!;
+                if (!list.People[key].Contains(name, StringComparer.OrdinalIgnoreCase))
+                {
+                    return null;
+                }
+
+                var held = items[project].Where(row => row.HolderNames.Contains(name, StringComparer.OrdinalIgnoreCase))
+                    .OrderBy(row => row.DaysTillDue ?? int.MaxValue)
+                    .Select(row => new BoardItem(project.Name, row.TypeSingular, row.Number, row.Title, row.DueText, row.DaysTillDue, row.IsOverdue))
+                    .ToList();
+                return new BoardCell(held.Count, held.Count(item => item.IsOverdue), held);
+            }).ToList();
+            return new BoardPerson(name, cells, cells.Sum(cell => cell?.Open ?? 0), cells.Sum(cell => cell?.Overdue ?? 0));
+        }).ToList();
+        var columns = projects.Select((project, index) => new BoardProject(project.ArchiveKey, project.Name,
+            people.Sum(person => person.Cells[index]?.Open ?? 0), people.Sum(person => person.Cells[index]?.Overdue ?? 0))).ToList();
+        return new TeamBoard(list.Name, columns, people);
+    }
+
+    /// <summary>One person's items on one project (a team board cell): that project, that person, open items.</summary>
+    public void ShowPersonOnProject(string projectKey, string name)
+    {
+        var project = Projects.FirstOrDefault(candidate => candidate.ArchiveKey == projectKey);
+        if (project is null)
+        {
+            return;
+        }
+
+        LeaveWatchlist();
+        rememberedPeople.Clear();
+        rememberedPeople.Add(name);
+        rememberCompany = false;
+        filter = Filters.Open;
+        dueFilter = DueFilter.Any;
+        disciplineFilter = "";
+        foreach (var property in new[] { nameof(Filter), nameof(DueFilter), nameof(IsDueWithin), nameof(DisciplineFilter) })
+        {
+            OnPropertyChanged(property);
+        }
+
+        RebuildPersonOptions();
+        SetSelectedProjects(new[] { project }, project);
+        RebuildRows();
+    }
+
     /// <summary>The selected projects' watchlist keys, to start a new watchlist with.</summary>
     public IReadOnlyList<string> SelectedWatchKeys() =>
         selectedProjects.Where(project => project.IsConnected && !project.IsArchived).Select(project => project.ArchiveKey).ToList();
@@ -3712,6 +3778,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
 
         UpdateViewCounts();
         UpdateWatchlistCounts();
+        CountsUpdated?.Invoke();
     }
 
     /// <summary>What a project's count is of, for its badge ("12 open", "1 item", "3 ready").</summary>

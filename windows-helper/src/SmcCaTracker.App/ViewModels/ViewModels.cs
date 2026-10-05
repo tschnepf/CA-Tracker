@@ -992,6 +992,34 @@ public sealed record WatchPerson(string Name, string? Company, bool IsOurs, int 
 /// </summary>
 public sealed record WatchProject(string Key, string? OtherKey, string Name, string? CompanyName, IReadOnlyList<WatchPerson> People);
 
+/// <summary>An item on the team board: where it is, what it is, and when it's due.</summary>
+public sealed record BoardItem(string Project, string Kind, string Number, string Title, string DueText, int? DaysTillDue, bool IsOverdue);
+
+/// <summary>A person on a project on the team board: what they hold there now (only for pairs the watchlist follows).</summary>
+public sealed record BoardCell(int Open, int Overdue, IReadOnlyList<BoardItem> Items)
+{
+    public bool IsWatched => true;
+    public bool HasOverdue => Overdue > 0;
+    public string Text => Open == 0 ? "nothing now" : Overdue > 0 ? $"{Overdue} overdue · {Open} open" : $"{Open} open";
+}
+
+/// <summary>A person on the team board: a cell per project (null where they aren't watched), and their totals.</summary>
+public sealed record BoardPerson(string Name, IReadOnlyList<BoardCell?> Cells, int Open, int Overdue)
+{
+    public bool HasOverdue => Overdue > 0;
+    public string TotalText => Open == 0 ? "nothing now" : Overdue > 0 ? $"{Overdue} overdue · {Open} open" : $"{Open} open";
+}
+
+/// <summary>A project column on the team board, by its watchlist key, with its totals.</summary>
+public sealed record BoardProject(string Key, string Name, int Open, int Overdue);
+
+/// <summary>A watchlist as a grid of people by project.</summary>
+public sealed record TeamBoard(string Name, IReadOnlyList<BoardProject> Projects, IReadOnlyList<BoardPerson> People)
+{
+    public int Open => People.Sum(person => person.Open);
+    public int Overdue => People.Sum(person => person.Overdue);
+}
+
 /// <summary>One name (or "Anyone at &lt;company&gt;") in the Person filter.</summary>
 public sealed class PersonChoiceViewModel : ObservableObject
 {
