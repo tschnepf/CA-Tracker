@@ -2522,6 +2522,16 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         : $"Move {checks.Ready} to Returned…";
     public bool CanMoveBack => checks.MoveBack > 0;
     public string MoveBackText => checks.MoveBack == 0 ? "Move back to active…" : $"Move {checks.MoveBack} back to active…";
+
+    /// <summary>
+    /// Items back with your company whose folders are in Returned, in the projects shown (whatever the filters):
+    /// "↩ 2 back with you" offers to move them back with a new R folder.
+    /// </summary>
+    public IReadOnlyList<RowViewModel> ReopenedRows() =>
+        allRows.Where(row => row.Status == RowStatus.Reopened && row.Row.CanMoveBack).ToList();
+
+    public bool HasReopened => allRows.Any(row => row.Status == RowStatus.Reopened && row.Row.CanMoveBack);
+    public string ReopenedText => $"↩ {ReopenedRows().DistinctBy(row => row.Row.Folder!.FullPath, StringComparer.OrdinalIgnoreCase).Count()} back with you";
     public bool CanSetDiscipline => checks.Discipline > 0;
     public string SetDisciplineText => checks.Discipline == 0 ? "Set discipline…" : $"Set discipline of {checks.Discipline}…";
     public bool CanDownloadChecked => checks.Download > 0;
@@ -3729,6 +3739,8 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         OnPropertyChanged(nameof(ReadyShownCount));
         OnPropertyChanged(nameof(HasReadyShown));
         OnPropertyChanged(nameof(CheckReadyText));
+        OnPropertyChanged(nameof(HasReopened));
+        OnPropertyChanged(nameof(ReopenedText));
         OnPropertyChanged(nameof(HasEmptyText));
         OnPropertyChanged(nameof(HasActiveFilters));
         RaiseChecks();

@@ -63,6 +63,14 @@ public static partial class DownloadNaming
         return found;
     }
 
+    /// <summary>The revision a folder's whole name stands for ("R2", "R02", "Rev 2", "Revision 2"), or null.</summary>
+    public static int? RevisionOfFolder(string? name)
+    {
+        var trimmed = (name ?? "").Trim();
+        var match = RevisionPattern().Match(trimmed);
+        return match.Success && match.Index == 0 && match.Length == trimmed.Length ? int.Parse(match.Groups[1].Value) : null;
+    }
+
     /// <summary>
     /// The subfolder of an existing item folder that a revision's files go into: an existing folder for
     /// the same revision ("R2", "R02", "Rev 2", "Revision 2") if there is one, otherwise "R2".
@@ -75,9 +83,7 @@ public static partial class DownloadNaming
             {
                 foreach (var directory in new DirectoryInfo(itemFolder).EnumerateDirectories())
                 {
-                    var match = RevisionPattern().Match(directory.Name.Trim());
-                    if (match.Success && match.Index == 0 && match.Length == directory.Name.Trim().Length
-                        && int.Parse(match.Groups[1].Value) == revision)
+                    if (RevisionOfFolder(directory.Name) == revision)
                     {
                         return directory.FullName;
                     }

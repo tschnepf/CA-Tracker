@@ -557,6 +557,12 @@
                     <StackPanel>
                         <DockPanel LastChildFill="True">
                             <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
+                                <!-- Items back with you whose folders are in Returned: bring them back with a new R folder. -->
+                                <Button Content="{Binding ReopenedText}" Click="Reopened_Click" Margin="0,0,8,0" Padding="10,5"
+                                        Background="{DynamicResource WarningSoftBrush}" Foreground="{DynamicResource WarningBrush}"
+                                        BorderBrush="{DynamicResource WarningSoftBrush}"
+                                        Visibility="{Binding HasReopened, Converter={StaticResource Visible}}"
+                                        ToolTip="These items are back with your company, but their folders are in Returned. This moves each folder back and makes a new R folder in it for the new round (R0 for what it holds and R1 the first time; the next number after that). A preview shows every step first." />
                                 <Button Content="{Binding FilingButtonText}" Click="Filing_Click" Margin="0,0,8,0" IsEnabled="{Binding HasProject}"
                                         ToolTip="{Binding FilingButtonToolTip}" />
                                 <Grid Margin="0,0,8,0" Visibility="{Binding HasSetupChip, Converter={StaticResource Visible}}">
