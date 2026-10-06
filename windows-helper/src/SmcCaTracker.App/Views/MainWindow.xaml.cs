@@ -1238,23 +1238,20 @@ public partial class MainWindow : Window
             Operations = plans.SelectMany(plan => plan.Operations).ToList()
         };
 
-    /// <summary>
-    /// Every folder change goes through here: preview, explicit confirmation, then run. False when there was nothing
-    /// to change or the preview was cancelled.
-    /// </summary>
-    private async Task<bool> PreviewAndRunAsync(OperationPlan plan)
+    /// <summary>Every folder change goes through here: preview, explicit confirmation, then run.</summary>
+    private async Task PreviewAndRunAsync(OperationPlan plan)
     {
         if (plan.Operations.Count == 0)
         {
             ShowInfo("There is nothing to change.");
-            return false;
+            return;
         }
 
         var preview = new PreviewWindow(plan, null) { Owner = this };
         if (preview.ShowDialog() != true)
         {
             viewModel.StatusMessage = "Cancelled — nothing was changed.";
-            return false;
+            return;
         }
 
         viewModel.IsBusy = true;
@@ -1274,92 +1271,6 @@ public partial class MainWindow : Window
         new PreviewWindow(plan, results) { Owner = this }.ShowDialog();
         // The app just changed folders: list them again rather than waiting for the background check.
         await viewModel.RecheckFoldersAsync();
-        return true;
-    }
-
-    /// <summary>
-    /// Before downloading items that are back with you while their folders are in Returned, asks whether to bring
-    /// each folder back with a new R folder for this round (as "back with you" does, after its preview), so the new
-    /// files go in that R folder instead of loose in Returned. Answering No downloads into the folders where they are;
-    /// null (Cancel, or the preview cancelled) downloads nothing.
-    /// </summary>
-    private async Task<IReadOnlyList<DownloadRequest>?> OfferReopenAsync(IReadOnlyList<(RowViewModel Row, DownloadRequest Request)> items)
-    {
-        var reopened = items
-            .Where(item => item.Row.Status == RowStatus.Reopened && item.Row.Row.CanMoveBack && item.Row.Row.Folder is not null)
-            .DistinctBy(item => item.Row.Row.Folder!.FullPath, StringComparer.OrdinalIgnoreCase)
-            .ToList();
-        if (reopened.Count == 0)
-        {
-            return items.Select(item => item.Request).ToList();
-        }
-
-        var one = reopened.Count == 1;
-        var what = one
-            ? $"{reopened[0].Row.TypeSingular} {reopened[0].Row.Number} is back with you, but its folder is in Returned."
-            : $"{reopened.Count} of these items are back with you, but their folders are in Returned.";
-        var answer = MessageBox.Show(this,
-            $"{what}\n\n"
-            + $"Move {(one ? "it" : "them")} back first, with a new R folder for this round? What {(one ? "the folder holds" : "each folder holds")} now goes in R0 "
-            + "and the new files in R1 the first time; after that, the next R number. A preview shows every step first.\n\n"
-            + $"Yes: preview the move, then download into the new R folder{(one ? "" : "s")}.\n"
-            + $"No: download into the folder{(one ? "" : "s")} where {(one ? "it is" : "they are")} now.",
-            "Back with you", MessageBoxButton.YesNoCancel, MessageBoxImage.Question, MessageBoxResult.Yes);
-        if (answer == MessageBoxResult.No)
-        {
-            return items.Select(item => item.Request).ToList();
-        }
-
-        if (answer != MessageBoxResult.Yes)
-        {
-            return null;
-        }
-
-        var plan = Merge(reopened.GroupBy(item => item.Row.Comparison)
-            .Select(group => OperationPlanner.PlanReopen(group.Select(item => item.Row.Row), group.Key))
-            .ToList());
-        if (!await PreviewAndRunAsync(plan))
-        {
-            viewModel.StatusMessage = "Cancelled — nothing was moved or downloaded.";
-            return null;
-        }
-
-        // Each folder where it is now, with its new R folder; a folder whose move didn't happen stays where it was.
-        return items.Select(item =>
-        {
-            var source = item.Row.Row.Folder?.FullPath;
-            var move = item.Row.Status != RowStatus.Reopened || source is null ? null
-                : plan.Operations.FirstOrDefault(operation => operation.Kind == OperationKind.MoveFolder
-                    && string.Equals(operation.SourcePath, source, StringComparison.OrdinalIgnoreCase));
-            if (move is null || !Directory.Exists(move.DestinationPath))
-            {
-                return item.Request;
-            }
-
-            var round = plan.Operations.LastOrDefault(operation => operation.Kind == OperationKind.CreateFolder
-                && string.Equals(Path.GetDirectoryName(operation.DestinationPath), move.DestinationPath, StringComparison.OrdinalIgnoreCase));
-            return item.Request with
-            {
-                ExistingFolder = move.DestinationPath,
-                SaveInto = round is not null && Directory.Exists(round.DestinationPath) ? round.DestinationPath : null
-            };
-        }).ToList();
-    }
-
-    /// <summary>Download for one row (its button, its ▾ menu, the details pane).</summary>
-    private async Task DownloadRowAsync(RowViewModel row)
-    {
-        var request = viewModel.DownloadRequestFor(row);
-        if (request is null)
-        {
-            ShowInfo("Downloading is available for Helix items. Procore isn't supported yet.");
-            return;
-        }
-
-        if (await OfferReopenAsync(new[] { (row, request) }) is { } requests)
-        {
-            ShowDownloadWindow(requests);
-        }
     }
 
     private void OpenRowFolder_Click(object sender, RoutedEventArgs e)
@@ -1376,15 +1287,15 @@ public partial class MainWindow : Window
     /// Downloads the checked items: one download window lists them all, each with its files and where they
     /// go, and saves every checked file in one go. While it is open, Download brings it back to the front.
     /// </summary>
-    private async void DownloadChecked_Click(object sender, RoutedEventArgs e) => await OpenCheckedItemsAsync(verify: false);
+    private void DownloadChecked_Click(object sender, RoutedEventArgs e) => OpenCheckedItems(verify: false);
 
     /// <summary>
     /// Checks the checked items' folders against Helix in the same window: each says whether its folder has
     /// every file Helix has for it, with the missing ones checked so Download gets them.
     /// </summary>
-    private async void VerifyChecked_Click(object sender, RoutedEventArgs e) => await OpenCheckedItemsAsync(verify: true);
+    private void VerifyChecked_Click(object sender, RoutedEventArgs e) => OpenCheckedItems(verify: true);
 
-    private async Task OpenCheckedItemsAsync(bool verify)
+    private void OpenCheckedItems(bool verify)
     {
         if (batchWindow is not null)
         {
@@ -1399,13 +1310,10 @@ public partial class MainWindow : Window
             return;
         }
 
-        var items = rows.Select(row => (Row: row, Request: viewModel.DownloadRequestFor(row)))
-            .Where(item => item.Request is not null)
-            .Select(item => (item.Row, Request: item.Request!))
-            .GroupBy(item => $"{item.Request.ProjectId}|{item.Request.ItemType}|{item.Request.ItemId}")
+        var requests = rows.Select(viewModel.DownloadRequestFor).OfType<DownloadRequest>()
+            .GroupBy(request => $"{request.ProjectId}|{request.ItemType}|{request.ItemId}")
             .Select(group => group.First())
             .ToList();
-        var requests = items.Select(item => item.Request).ToList();
         var notHelix = rows.Count - requests.Count;
         if (requests.Count == 0)
         {
@@ -1416,24 +1324,6 @@ public partial class MainWindow : Window
         if (notHelix > 0)
         {
             ShowInfo($"{notHelix} checked item{(notHelix == 1 ? " is" : "s are")} from Procore and will be skipped (Procore downloads aren't supported yet).");
-        }
-
-        if (!verify)
-        {
-            // Items back with you whose folders are in Returned: offer to bring them back with a new R folder first.
-            if (await OfferReopenAsync(items) is not { } ready)
-            {
-                return;
-            }
-
-            requests = ready.ToList();
-        }
-
-        if (batchWindow is not null)
-        {
-            // Opened meanwhile (the question and preview wait for an answer).
-            batchWindow.Activate();
-            return;
         }
 
         batchWindow = ShowDownloadWindow(requests, verify);
@@ -1450,12 +1340,21 @@ public partial class MainWindow : Window
         return window;
     }
 
-    private async void DownloadRow_Click(object sender, RoutedEventArgs e)
+    private void DownloadRow_Click(object sender, RoutedEventArgs e)
     {
-        if (sender is FrameworkElement { DataContext: RowViewModel row })
+        if (sender is not FrameworkElement { DataContext: RowViewModel row })
         {
-            await DownloadRowAsync(row);
+            return;
         }
+
+        var request = viewModel.DownloadRequestFor(row);
+        if (request is null)
+        {
+            ShowInfo("Downloading is available for Helix items. Procore isn't supported yet.");
+            return;
+        }
+
+        ShowDownloadWindow(new[] { request });
     }
 
     /// <summary>A row's Verify: does its folder have every file Helix has for the item?</summary>
@@ -1647,7 +1546,11 @@ public partial class MainWindow : Window
                     await OpenItemAsync(row);
                     break;
                 case "download":
-                    await DownloadRowAsync(row);
+                    if (viewModel.DownloadRequestFor(row) is { } request)
+                    {
+                        ShowDownloadWindow(new[] { request });
+                    }
+
                     break;
                 case "verify":
                     if (viewModel.DownloadRequestFor(row) is { } check)
