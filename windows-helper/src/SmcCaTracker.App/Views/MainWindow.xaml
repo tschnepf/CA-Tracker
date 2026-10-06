@@ -344,6 +344,52 @@
                                 <TextBlock Text="Overdue, all projects" FontWeight="SemiBold" VerticalAlignment="Center" />
                             </DockPanel>
                         </Button>
+
+                        <!-- Watchlists: the people you follow on each project. Click one to show it; right-click to edit or delete. -->
+                        <DockPanel Margin="6,10,2,4">
+                            <Button DockPanel.Dock="Right" Style="{StaticResource LinkButton}" Content="+ New" Click="NewWatchlist_Click" Padding="4,0"
+                                    ToolTip="Make a watchlist: the people you follow on each project" AutomationProperties.Name="New watchlist" />
+                            <Button DockPanel.Dock="Right" Style="{StaticResource LinkButton}" Content="Board" Click="TeamBoard_Click" Padding="4,0"
+                                    Margin="0,0,4,0" Visibility="{Binding HasWatchlists, Converter={StaticResource Visible}}"
+                                    ToolTip="Team board: each watchlist's people by project, with their overdue and open counts" AutomationProperties.Name="Team board" />
+                            <TextBlock Text="WATCHLISTS" Style="{StaticResource SectionTitle}" Margin="0" VerticalAlignment="Center" />
+                        </DockPanel>
+                        <TextBlock Style="{StaticResource Muted}" FontSize="11.5" Margin="6,0,4,4"
+                                   Visibility="{Binding HasNoWatchlists, Converter={StaticResource Visible}}"
+                                   Text="Follow chosen people on chosen projects: + New." />
+                        <ItemsControl ItemsSource="{Binding WatchlistItems}" Focusable="False">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <Button Style="{StaticResource ViewButton}" Click="ShowWatchlist_Click" Tag="{Binding IsActive}"
+                                            AutomationProperties.Name="{Binding Name}"
+                                            ToolTip="The open items its people hold on the projects they're watched on. Right-click to edit or delete it.">
+                                        <Button.ContextMenu>
+                                            <ContextMenu>
+                                                <MenuItem Header="Team board…" Click="WatchlistBoard_Click" />
+                                                <MenuItem Header="Edit…" Click="EditWatchlist_Click" />
+                                                <MenuItem Header="Delete…" Click="DeleteWatchlist_Click" />
+                                            </ContextMenu>
+                                        </Button.ContextMenu>
+                                        <DockPanel>
+                                            <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
+                                                <Border Background="{DynamicResource DangerSoftBrush}" CornerRadius="9" Padding="7,1" Margin="0,0,4,0"
+                                                        Visibility="{Binding HasOverdue, Converter={StaticResource Visible}}">
+                                                    <TextBlock Text="{Binding OverdueText}" FontSize="11.5" FontWeight="SemiBold" Foreground="{DynamicResource DangerBrush}" />
+                                                </Border>
+                                                <Border Background="{DynamicResource AccentSoftBrush}" CornerRadius="9" Padding="7,1"
+                                                        Visibility="{Binding HasOpen, Converter={StaticResource Visible}}">
+                                                    <TextBlock Text="{Binding OpenText}" FontSize="11.5" FontWeight="SemiBold" />
+                                                </Border>
+                                            </StackPanel>
+                                            <StackPanel>
+                                                <TextBlock Text="{Binding Name}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
+                                                <TextBlock Text="{Binding Summary}" FontSize="11.5" Foreground="{DynamicResource TextSecondary}" />
+                                            </StackPanel>
+                                        </DockPanel>
+                                    </Button>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
                     </StackPanel>
                     <!-- New project, and Settings (which opens in place of the projects, with its own way back). -->
                     <Grid DockPanel.Dock="Bottom" Margin="4,8,4,2">
@@ -511,6 +557,8 @@
                     <StackPanel>
                         <DockPanel LastChildFill="True">
                             <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
+                                <Button Content="{Binding FilingButtonText}" Click="Filing_Click" Margin="0,0,8,0" IsEnabled="{Binding HasProject}"
+                                        ToolTip="{Binding FilingButtonToolTip}" />
                                 <Grid Margin="0,0,8,0" Visibility="{Binding HasSetupChip, Converter={StaticResource Visible}}">
                                     <Button x:Name="SetupButton" Content="{Binding SetupIssuesText}" Click="Setup_Click" Padding="10,5"
                                             Background="{DynamicResource WarningSoftBrush}" Foreground="{DynamicResource WarningBrush}"
@@ -551,7 +599,7 @@
 
                         <!-- How many are overdue, due today, due soon, and in all (as the list is filtered). Each is the
                              Due filter: click one to show just those, click it again for all. -->
-                        <WrapPanel Margin="0,8,0,0" Visibility="{Binding HasDueChips, Converter={StaticResource Visible}}">
+                        <WrapPanel Margin="0,8,0,0" Visibility="{Binding ShowDueChips, Converter={StaticResource Visible}}">
                             <Button Style="{StaticResource DueChip}" Content="{Binding AllChipText}" Tag="{Binding IsDueAnyFilter}"
                                     CommandParameter="Any" Click="DueChip_Click" ToolTip="Show them all, whenever they're due" />
                             <Button Style="{StaticResource DueChip}" Content="{Binding OverdueChipText}" Tag="{Binding IsDueOverdueFilter}"
@@ -642,16 +690,31 @@
                     </StackPanel>
 
                     <ComboBox x:Name="ShowBox" SelectionChanged="Show_Changed" MinWidth="100" Margin="0,0,6,6" AutomationProperties.Name="Show"
-                              ToolTip="Which items to list: open ones, all of them, or one of the folder views">
+                              ToolTip="Open items, or all of them (folder housekeeping is under Filing)"
+                              Visibility="{Binding IsNotFiling, Converter={StaticResource Visible}}">
                         <ComboBoxItem Content="Open items" Tag="open" IsSelected="True" />
                         <ComboBoxItem Content="All items" Tag="all" />
-                        <ComboBoxItem Content="Needs attention" Tag="attention" />
-                        <ComboBoxItem Content="Ready to return" Tag="ready" />
-                        <ComboBoxItem Content="No folder" Tag="nofolder" />
-                        <ComboBoxItem Content="In Returned folder" Tag="returned" />
                     </ComboBox>
 
-                    <Grid Margin="0,0,6,6">
+                    <!-- Filing's tabs, in place of Show, In court and Due (which don't apply to folder housekeeping). -->
+                    <WrapPanel Visibility="{Binding IsFiling, Converter={StaticResource Visible}}">
+                        <Button Style="{StaticResource DueChip}" Content="{Binding FilingAttentionText}" Tag="{Binding IsFilingAttention}" Margin="0,0,6,6"
+                                CommandParameter="attention" Click="FilingTab_Click" ToolTip="Every folder below that needs a look" />
+                        <Button Style="{StaticResource DueChip}" Content="{Binding FilingReadyText}" Tag="{Binding IsFilingReady}" Margin="0,0,6,6"
+                                CommandParameter="ready" Click="FilingTab_Click" ToolTip="Returned by the rule, but the folder is still in the active folder: Move to Returned" />
+                        <Button Style="{StaticResource DueChip}" Content="{Binding FilingReopenedText}" Tag="{Binding IsFilingReopened}" Margin="0,0,6,6"
+                                CommandParameter="reopened" Click="FilingTab_Click" ToolTip="The folder is in Returned, but the item is back with your company: Move back to active" />
+                        <Button Style="{StaticResource DueChip}" Content="{Binding FilingDuplicatesText}" Tag="{Binding IsFilingDuplicates}" Margin="0,0,6,6"
+                                CommandParameter="duplicates" Click="FilingTab_Click" ToolTip="More than one folder for an item, or a folder that matches several items" />
+                        <Button Style="{StaticResource DueChip}" Content="{Binding FilingNoItemText}" Tag="{Binding IsFilingNoItem}" Margin="0,0,6,6"
+                                CommandParameter="noitem" Click="FilingTab_Click" ToolTip="Folders with no Helix or Procore item" />
+                        <Button Style="{StaticResource DueChip}" Content="{Binding FilingNoFolderText}" Tag="{Binding IsFilingNoFolder}" Margin="0,0,6,6"
+                                CommandParameter="nofolder" Click="FilingTab_Click" ToolTip="Open items with no folder yet (Download makes one)" />
+                        <Button Style="{StaticResource DueChip}" Content="{Binding FilingReturnedText}" Tag="{Binding IsFilingReturned}" Margin="0,0,6,6"
+                                CommandParameter="returned" Click="FilingTab_Click" ToolTip="Every folder in the Returned folder" />
+                    </WrapPanel>
+
+                    <Grid Margin="0,0,6,6" Visibility="{Binding IsNotFiling, Converter={StaticResource Visible}}">
                         <Button x:Name="PersonButton" Click="PersonButton_Click" HorizontalContentAlignment="Stretch"
                                 Padding="10,5" Background="{DynamicResource InputBackground}" AutomationProperties.Name="Ball in court"
                                 ToolTip="Who has the item now. Check one or more people.">
@@ -682,6 +745,9 @@
                                     <TextBlock DockPanel.Dock="Top" Style="{StaticResource Muted}" FontSize="12" Margin="2,0,0,6"
                                                Text="No one has open items here yet. Sync to read them."
                                                Visibility="{Binding HasNoPersonChoices, Converter={StaticResource Visible}}" />
+                                    <TextBlock DockPanel.Dock="Top" Style="{StaticResource Muted}" FontSize="12" Margin="2,0,0,6" MaxWidth="300"
+                                               Text="A watchlist is showing. Checking people here shows them instead; Everyone clears it."
+                                               Visibility="{Binding HasActiveWatchlist, Converter={StaticResource Visible}}" />
                                     <ScrollViewer MaxHeight="380" VerticalScrollBarVisibility="Auto">
                                         <ItemsControl x:Name="PersonChoiceList" ItemsSource="{Binding PersonChoices}">
                                             <ItemsControl.ItemTemplate>
@@ -707,7 +773,7 @@
                         </Popup>
                     </Grid>
 
-                    <StackPanel Orientation="Horizontal" Margin="0,0,6,6">
+                    <StackPanel Orientation="Horizontal" Margin="0,0,6,6" Visibility="{Binding IsNotFiling, Converter={StaticResource Visible}}">
                         <ComboBox x:Name="DueBox" SelectionChanged="Due_Changed" MinWidth="100" AutomationProperties.Name="Due"
                                   ToolTip="When the items are due (the counts under the project's name set this too)">
                             <ComboBoxItem Content="Any due date" Tag="Any" IsSelected="True" />

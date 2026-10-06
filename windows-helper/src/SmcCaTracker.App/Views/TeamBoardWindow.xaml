@@ -1,0 +1,39 @@
+<Window x:Class="SmcCaTracker.App.Views.TeamBoardWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Team board — CA Tracker"
+        Width="1100" Height="640" MinWidth="640" MinHeight="380"
+        WindowStartupLocation="CenterOwner"
+        Style="{StaticResource AppWindow}">
+    <Grid Margin="16">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+
+        <DockPanel>
+            <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
+                <TextBlock x:Name="CopiedText" Foreground="{DynamicResource SuccessBrush}" VerticalAlignment="Center" Margin="0,0,10,0" />
+                <Button Content="Copy as list" Click="Copy_Click"
+                        ToolTip="Copy each person's open items, project by project and soonest due first, as text to paste into an email or a chat" />
+            </StackPanel>
+            <TextBlock Text="Team board" FontSize="18" FontWeight="SemiBold" VerticalAlignment="Center" Margin="0,0,14,0" />
+            <ComboBox x:Name="WatchlistBox" MinWidth="220" HorizontalAlignment="Left" SelectionChanged="Watchlist_Changed"
+                      AutomationProperties.Name="Watchlist" DisplayMemberPath="Name" />
+        </DockPanel>
+
+        <TextBlock x:Name="SummaryText" Grid.Row="1" Margin="0,8,0,10" Foreground="{DynamicResource TextSecondary}" TextWrapping="Wrap" />
+
+        <Grid Grid.Row="2">
+            <DataGrid x:Name="BoardGrid" IsReadOnly="True" SelectionMode="Single" RowHeight="40" FrozenColumnCount="1"
+                      HorizontalScrollBarVisibility="Auto" AutomationProperties.Name="People by project" />
+            <TextBlock x:Name="EmptyText" Style="{StaticResource Muted}" HorizontalAlignment="Center" VerticalAlignment="Center"
+                       TextAlignment="Center" MaxWidth="460" Visibility="Collapsed" />
+        </Grid>
+
+        <TextBlock Grid.Row="3" Margin="0,10,0,0" Style="{StaticResource Muted}" FontSize="12"
+                   Text="Click a count to see those items in the list. — means the watchlist doesn't follow that person on that project. Edit the watchlist from its right-click menu in the project list." />
+    </Grid>
+</Window>

@@ -97,6 +97,10 @@ public partial class MainWindow : Window
                 case nameof(MainViewModel.ShowItemDetails):
                     OnShowItemDetailsChanged();
                     break;
+                case nameof(MainViewModel.IsFiling):
+                case nameof(MainViewModel.IsMultiProject):
+                    ApplyItemGrouping();
+                    break;
             }
         };
         SettingsView.BackRequested += (_, _) => ShowProjects();
@@ -198,10 +202,28 @@ public partial class MainWindow : Window
         }
     }
 
+    /// <summary>Filing: into folder housekeeping, or back to the open items.</summary>
+    private void Filing_Click(object sender, RoutedEventArgs e)
+    {
+        viewModel.ToggleFiling();
+        ShowFilterChoices();
+        ApplyItemGrouping();
+    }
+
+    /// <summary>A Filing tab: show its folders.</summary>
+    private void FilingTab_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is Button { CommandParameter: string tab })
+        {
+            viewModel.Filter = tab;
+        }
+    }
+
     private void ClearFilters_Click(object sender, RoutedEventArgs e)
     {
         viewModel.ClearFilters();
         ShowFilterChoices();
+        ApplyItemGrouping();
     }
 
     private static IEnumerable<T> Descendants<T>(DependencyObject parent) where T : DependencyObject
@@ -511,6 +533,17 @@ public partial class MainWindow : Window
         }
 
         view.GroupDescriptions.Clear();
+        if (viewModel.GroupBy is GroupModes.Urgency && viewModel.IsFiling)
+        {
+            // When it's due means nothing for folders: Filing shows them by project when there are several.
+            if (viewModel.IsMultiProject)
+            {
+                view.GroupDescriptions.Add(new PropertyGroupDescription(nameof(RowViewModel.ProjectName)));
+            }
+
+            return;
+        }
+
         if (viewModel.GroupBy is GroupModes.Urgency)
         {
             view.GroupDescriptions.Add(new PropertyGroupDescription(nameof(RowViewModel.UrgencyText)));
@@ -742,6 +775,97 @@ public partial class MainWindow : Window
     }
 
     private void SetupPopup_Closed(object? sender, EventArgs e) => setupPopupClosedAt = DateTime.UtcNow;
+
+    // ---- Watchlists ------------------------------------------------------------------------------
+
+    private void ShowWatchlist_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is FrameworkElement { DataContext: WatchlistItemViewModel item })
+        {
+            viewModel.ShowWatchlist(item.Watchlist);
+            ShowFilterChoices();
+        }
+    }
+
+    private void NewWatchlist_Click(object sender, RoutedEventArgs e) => EditWatchlist(null);
+
+    private TeamBoardWindow? teamBoard;
+
+    private void TeamBoard_Click(object sender, RoutedEventArgs e) => OpenTeamBoard(null);
+
+    private void WatchlistBoard_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is FrameworkElement { DataContext: WatchlistItemViewModel item })
+        {
+            OpenTeamBoard(item.Watchlist);
+        }
+    }
+
+    /// <summary>The team board (one at a time), on a watchlist: the one asked for, the one showing, or the first.</summary>
+    private void OpenTeamBoard(SmcCaTracker.Core.Storage.Watchlist? list)
+    {
+        list ??= viewModel.WatchlistItems.FirstOrDefault(item => item.IsActive)?.Watchlist;
+        if (teamBoard is not null)
+        {
+            if (list is not null)
+            {
+                teamBoard.ShowWatchlist(list);
+            }
+
+            teamBoard.Activate();
+            return;
+        }
+
+        teamBoard = new TeamBoardWindow(viewModel, list) { Owner = this };
+        teamBoard.PairChosen += (projectKey, person) =>
+        {
+            viewModel.ShowPersonOnProject(projectKey, person);
+            ShowFilterChoices();
+            Activate();
+        };
+        teamBoard.Closed += (_, _) => teamBoard = null;
+        teamBoard.Show();
+    }
+
+    private void EditWatchlist_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is FrameworkElement { DataContext: WatchlistItemViewModel item })
+        {
+            EditWatchlist(item.Watchlist);
+        }
+    }
+
+    private void DeleteWatchlist_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is FrameworkElement { DataContext: WatchlistItemViewModel item }
+            && MessageBox.Show(this, $"Delete the watchlist \"{item.Name}\"? Only the watchlist goes; nothing in Helix, Procore or the CA folders changes.",
+                "Delete watchlist", MessageBoxButton.YesNo, MessageBoxImage.Question, MessageBoxResult.No) == MessageBoxResult.Yes)
+        {
+            viewModel.DeleteWatchlist(item.Watchlist);
+            ShowFilterChoices();
+        }
+    }
+
+    /// <summary>Makes a watchlist (starting with the selected projects) or edits one, then shows it.</summary>
+    private void EditWatchlist(SmcCaTracker.Core.Storage.Watchlist? existing)
+    {
+        var window = new WatchlistWindow(viewModel.WatchlistCandidates(), existing, viewModel.SelectedWatchKeys().ToHashSet(StringComparer.Ordinal)) { Owner = this };
+        if (window.ShowDialog() != true)
+        {
+            return;
+        }
+
+        if (window.Deleted && existing is not null)
+        {
+            viewModel.DeleteWatchlist(existing);
+        }
+        else if (window.Result is { } result)
+        {
+            viewModel.SaveWatchlist(result, existing);
+        }
+
+        ShowFilterChoices();
+    }
 
     /// <summary>My work: your open items in every linked project. The filter boxes follow.</summary>
     private void ShowMyWork_Click(object sender, RoutedEventArgs e)
