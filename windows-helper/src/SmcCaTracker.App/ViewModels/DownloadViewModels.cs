@@ -10,6 +10,10 @@ namespace SmcCaTracker.App.ViewModels;
 /// <summary>What to download and where it would go by default.</summary>
 /// <param name="ExistingFolder">The item's matched folder, if it already has one.</param>
 /// <param name="ParentFolder">Where a new "&lt;number&gt; - &lt;name&gt;" folder goes (the project's RFI or Submittal folder).</param>
+/// <param name="SaveInto">
+/// The new R folder made in <paramref name="ExistingFolder"/> as the item came back to you: its files go there.
+/// Files anywhere in the item's folder (the last round's, in R0) still count as already saved.
+/// </param>
 public sealed record DownloadRequest(
     string ItemType,
     string ItemId,
@@ -18,7 +22,8 @@ public sealed record DownloadRequest(
     string Title,
     string ProjectName,
     string? ExistingFolder,
-    string? ParentFolder);
+    string? ParentFolder,
+    string? SaveInto = null);
 
 /// <summary>One file offered for download.</summary>
 public sealed class DownloadFileViewModel : ObservableObject
@@ -112,9 +117,10 @@ public sealed class DownloadItemViewModel : ObservableObject
         FolderName = DownloadNaming.FolderName(request.Number, request.Title, request.ProjectName);
         Revision = DownloadNaming.Revision(request.Title, request.Number);
         Heading = $"{(request.ItemType == ItemTypes.Submittal ? "Submittal" : "RFI")} {request.Number} · {request.Title}";
-        Destination = request.ExistingFolder is not null
-            ? WithRevision(request.ExistingFolder)
-            : string.IsNullOrWhiteSpace(request.ParentFolder) ? null : WithRevision(Path.Combine(request.ParentFolder, FolderName));
+        Destination = request.SaveInto
+            ?? (request.ExistingFolder is not null
+                ? WithRevision(request.ExistingFolder)
+                : string.IsNullOrWhiteSpace(request.ParentFolder) ? null : WithRevision(Path.Combine(request.ParentFolder, FolderName)));
     }
 
     public DownloadRequest Request { get; }
@@ -206,6 +212,8 @@ public sealed class DownloadItemViewModel : ObservableObject
 
     public string DestinationNote =>
         Destination is null ? ""
+        : Request.SaveInto is { } round && string.Equals(Destination, round, StringComparison.OrdinalIgnoreCase)
+            ? $"Back with you: this round's files go in {Path.GetFileName(round)}"
         : inRevisionFolder ? $"Revision {Revision}: its files go in the revision subfolder"
         : Directory.Exists(Destination) ? "Existing folder; files there are never replaced"
         : "New folder";
