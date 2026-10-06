@@ -78,6 +78,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     private readonly HashSet<string> rememberedPeople = new(StringComparer.OrdinalIgnoreCase);
     private bool rememberCompany;
     private bool peopleDefaulted;
+    private bool showItemDetails;
     private bool viewStateReady;
     private readonly Dictionary<string, ProjectComparison> comparisons = new(StringComparer.Ordinal);
     private List<RowViewModel> allRows = new();
@@ -137,6 +138,18 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         // The last session's selection, filters and sort (applied before the first compare).
         savedView = store.View;
         ApplySavedView(savedView);
+
+        // The sync pill follows each site's state, a background sync's included.
+        foreach (var connection in Connections)
+        {
+            connection.PropertyChanged += (_, args) =>
+            {
+                if (args.PropertyName is nameof(ConnectionViewModel.State) or nameof(ConnectionViewModel.LastSyncedText))
+                {
+                    RaiseSyncPill();
+                }
+            };
+        }
         viewStateTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
         viewStateTimer.Tick += (_, _) =>
         {
@@ -589,6 +602,125 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         ScheduleViewStateSave();
     }
 
+    // ---- Views across projects: My work, Overdue -------------------------------------------
+
+    /// <summary>The projects the views look across: every project in your list linked to Helix or Procore, except archived ones.</summary>
+    private List<ProjectViewModel> ViewProjects() => Projects.Where(project => project.IsConnected && !project.IsArchived).ToList();
+
+    private bool ShowsEveryViewProject
+    {
+        get
+        {
+            var all = ViewProjects();
+            return all.Count > 1 && all.Count == selectedProjects.Count && all.All(selectedProjects.Contains);
+        }
+    }
+
+    /// <summary>My work is showing: every linked project, your open items, no other filter.</summary>
+    public bool IsMyWorkActive => ShowsEveryViewProject && Filter == Filters.Open && DueFilter == DueFilter.Any
+        && DisciplineFilter.Length == 0 && !rememberCompany && YourNames() is { Count: > 0 } you && rememberedPeople.SetEquals(you);
+
+    /// <summary>Overdue, all projects is showing: every linked project, overdue items, whoever has them.</summary>
+    public bool IsAllOverdueActive => ShowsEveryViewProject && Filter == Filters.Open && DueFilter == DueFilter.Overdue
+        && DisciplineFilter.Length == 0 && !HasPersonFilter;
+
+    /// <summary>My work needs your name, from the Helix or Procore sign-in.</summary>
+    public bool CanShowMyWork => YourNames().Count > 0;
+
+    public string MyWorkToolTip => CanShowMyWork
+        ? "Your open items in every linked project, by when they're due"
+        : "Sign in to Helix or Procore (Settings → Connections) so CA Tracker knows your name";
+
+    private int myWorkOpen;
+    private int myWorkOverdue;
+    private int allOverdue;
+
+    public string MyWorkOpenText => $"{myWorkOpen} open";
+    public bool HasMyWorkOpen => myWorkOpen > 0;
+    public string MyWorkOverdueText => $"{myWorkOverdue} overdue";
+    public bool HasMyWorkOverdue => myWorkOverdue > 0;
+    public string AllOverdueText => allOverdue.ToString();
+    public bool HasAllOverdue => allOverdue > 0;
+
+    /// <summary>Shows your open items in every linked project.</summary>
+    public void ShowMyWork()
+    {
+        var names = YourNames();
+        if (names.Count == 0)
+        {
+            return;
+        }
+
+        rememberedPeople.Clear();
+        rememberedPeople.UnionWith(names);
+        rememberCompany = false;
+        ShowView(DueFilter.Any);
+    }
+
+    /// <summary>Shows every overdue item in every linked project, whoever has it.</summary>
+    public void ShowAllOverdue()
+    {
+        rememberedPeople.Clear();
+        rememberCompany = false;
+        ShowView(DueFilter.Overdue);
+    }
+
+    private void ShowView(DueFilter due)
+    {
+        var projects = ViewProjects();
+        if (projects.Count == 0)
+        {
+            return;
+        }
+
+        // Set together, so the list is rebuilt once.
+        filter = Filters.Open;
+        dueFilter = due;
+        disciplineFilter = "";
+        foreach (var name in new[] { nameof(Filter), nameof(DueFilter), nameof(IsDueWithin), nameof(DisciplineFilter) })
+        {
+            OnPropertyChanged(name);
+        }
+
+        RebuildPersonOptions();
+        SetSelectedProjects(projects, SelectedProject is { } current && projects.Contains(current) ? current : projects[0]);
+        RebuildRows();
+    }
+
+    private void RaiseViews()
+    {
+        foreach (var name in new[]
+                 {
+                     nameof(IsMyWorkActive), nameof(IsAllOverdueActive), nameof(CanShowMyWork), nameof(MyWorkToolTip),
+                     nameof(ProjectTitle), nameof(ProjectSubtitle), nameof(HasProjectSubtitle)
+                 })
+        {
+            OnPropertyChanged(name);
+        }
+    }
+
+    /// <summary>The views' counts, from every linked project's rows, counted as the list shows them.</summary>
+    private void UpdateViewCounts()
+    {
+        var you = YourNames().ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var open = ViewProjects()
+            .SelectMany(project => badgeSources.TryGetValue(project.Id, out var source) ? source.Rows : new List<RowViewModel>())
+            .Where(row => row.Row.Item is { Closed: false })
+            .ToList();
+        var mine = open.Where(row => row.HolderNames.Any(you.Contains)).ToList();
+        myWorkOpen = mine.Count;
+        myWorkOverdue = mine.Count(row => row.IsOverdue);
+        allOverdue = open.Count(row => row.IsOverdue);
+        foreach (var name in new[]
+                 {
+                     nameof(MyWorkOpenText), nameof(HasMyWorkOpen), nameof(MyWorkOverdueText), nameof(HasMyWorkOverdue),
+                     nameof(AllOverdueText), nameof(HasAllOverdue)
+                 })
+        {
+            OnPropertyChanged(name);
+        }
+    }
+
     /// <summary>"Just you" in the Ball in court list: only your own names checked.</summary>
     public bool CanShowOnlyYou => YourNames().Count > 0;
 
@@ -693,6 +825,10 @@ public sealed class MainViewModel : ObservableObject, IDisposable
                 if (IsDueWithin)
                 {
                     RebuildRows();
+                }
+                else
+                {
+                    UpdateDueCounts();
                 }
 
                 ScheduleViewStateSave();
@@ -895,6 +1031,44 @@ public sealed class MainViewModel : ObservableObject, IDisposable
 
     public bool IsAnySyncing => Connections.Any(connection => connection.IsSyncing);
 
+    // ---- The sync pill: how syncing stands, in one place ------------------------------------
+
+    /// <summary>For the pill's mark and colour: syncing, signin, failed, synced or idle.</summary>
+    public string SyncPillState =>
+        Connections.Any(connection => connection.IsBusy) ? "syncing"
+        : Connections.Any(connection => connection.WantsSignIn && connection.NeedsSignIn) ? "signin"
+        : Connections.Any(connection => connection.IsSignedIn && connection.FailedCount > 0) ? "failed"
+        : Connections.Any(connection => connection.HasSynced) ? "synced"
+        : "idle";
+
+    public string SyncPillText => SyncPillState switch
+    {
+        "syncing" => "Syncing…",
+        "signin" => "Sign-in needed",
+        "failed" => Connections.Sum(connection => connection.FailedCount) is var failed && failed == 1 ? "1 not read" : $"{Connections.Sum(connection => connection.FailedCount)} not read",
+        "synced" => LastSyncedAt is { } at ? $"Synced {(at.ToLocalTime().Date == DateTime.Today ? at.ToLocalTime().ToString("h:mm tt") : at.ToLocalTime().ToString("MMM d"))}" : "Synced",
+        _ => "Not synced yet"
+    };
+
+    /// <summary>Each site's state, and what the pill's menu does.</summary>
+    public string SyncPillToolTip => string.Join(Environment.NewLine,
+        Connections.Select(connection => $"{connection.Label}: {connection.StateText}{(connection.LastSyncedText.Length > 0 ? $" · {connection.LastSyncedText}" : "")}")
+            .Append("Helix and Procore are synced in the background. Click to sync now, sync one site, or open Connections."));
+
+    /// <summary>The pill menu's first item: sync everything now, or stop the sync that is running.</summary>
+    public string SyncNowText => IsAnySyncing ? "Stop syncing" : "Sync all now";
+
+    /// <summary>When a project's items were last read, the latest of all.</summary>
+    private DateTimeOffset? LastSyncedAt => Projects.Select(project => project.Snapshot?.ScannedAt).Where(at => at is not null).Max();
+
+    private void RaiseSyncPill()
+    {
+        foreach (var name in new[] { nameof(SyncPillState), nameof(SyncPillText), nameof(SyncPillToolTip), nameof(SyncNowText) })
+        {
+            OnPropertyChanged(name);
+        }
+    }
+
     /// <summary>The header's button: Sync all, or Stop while a sync it started runs.</summary>
     public string SyncAllText => IsAnySyncing ? "Stop syncing" : "Sync all";
 
@@ -998,6 +1172,9 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         OnPropertyChanged(nameof(CanSignOutOfBrowser));
         OnPropertyChanged(nameof(IsSignedOutOfBrowser));
         OnPropertyChanged(nameof(CanShowOnlyYou));
+        OnPropertyChanged(nameof(CanShowMyWork));
+        OnPropertyChanged(nameof(MyWorkToolTip));
+        RaiseSyncPill();
         DefaultPeopleToYou();
     }
 
@@ -1030,6 +1207,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         connection.StopRequested = false;
         OnPropertyChanged(nameof(IsAnySyncing));
         OnPropertyChanged(nameof(SyncAllText));
+        RaiseSyncPill();
         try
         {
             string? found = null;
@@ -1069,6 +1247,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
             OnPropertyChanged(nameof(IsAnySyncing));
             OnPropertyChanged(nameof(SyncAllText));
             RefreshAccounts();
+            RaiseSyncPill();
         }
     }
 
@@ -1582,8 +1761,9 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     public bool CanCancelRefresh => refreshingMany || SelectedProject is { } project
         && (headerRuns.ContainsKey(project) || project.ActiveRefresh is { IsFinished: false });
     public bool CanRefresh => HasProject && !IsRefreshing && !refreshStarting;
-    public string ProjectTitle => IsMultiProject
-        ? $"{selectedProjects.Count} projects selected"
+    public string ProjectTitle => IsMyWorkActive ? "My work"
+        : IsAllOverdueActive ? "Overdue, all projects"
+        : IsMultiProject ? $"{selectedProjects.Count} projects selected"
         : SelectedProject?.Name ?? "Choose or add a project";
     public string CaFolderText => HasCaFolder ? SelectedProject!.Project.CaFolder : "No CA folder chosen";
     public string ConnectionText
@@ -1669,9 +1849,19 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     {
         get
         {
+            if (IsMyWorkActive)
+            {
+                return $"Your open items in all {selectedProjects.Count} linked projects. Select a project on the left to see just that one.";
+            }
+
+            if (IsAllOverdueActive)
+            {
+                return $"Overdue items in all {selectedProjects.Count} linked projects, whoever has them.";
+            }
+
             if (IsMultiProject)
             {
-                return $"Showing items from all {selectedProjects.Count} selected projects. The CA folder and link above are for {SelectedProject?.Name}; Edit project… edits it.";
+                return $"Showing items from the {selectedProjects.Count} selected projects. Select just one to see its CA folder and link, or to edit it.";
             }
 
             var snapshot = SelectedProject?.Snapshot;
@@ -1723,31 +1913,78 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         }
     }
 
-    public string FolderWarning
+    /// <summary>Problems with the CA folder setup (missing type folders, folders hidden by the BB/TFO split).</summary>
+    private List<string> SetupProblems()
     {
-        get
+        if (comparison is null || !HasCaFolder)
         {
-            if (comparison is null || !HasCaFolder)
-            {
-                return "";
-            }
+            return new List<string>();
+        }
 
-            var problems = comparison.Types.Values
-                .Select(type => type.Scan.Error ?? (type.Scan.TypeFolderExists ? null : $"No \"{Path.GetFileName(type.Scan.TypeFolderPath)}\" folder in this CA folder."))
-                .Where(message => message is not null)
-                .Distinct()
-                .ToList();
-            var hidden = HiddenByPhaseCount;
-            if (hidden > 0)
-            {
-                problems.Add($"{hidden} folder{(hidden == 1 ? " is" : "s are")} hidden because {(hidden == 1 ? "its name says" : "their names say")} neither BB nor TFO.");
-            }
+        var problems = comparison.Types.Values
+            .Select(type => type.Scan.Error ?? (type.Scan.TypeFolderExists ? null : $"No \"{Path.GetFileName(type.Scan.TypeFolderPath)}\" folder in this CA folder."))
+            .Where(message => message is not null)
+            .Distinct()
+            .ToList();
+        var hidden = HiddenByPhaseCount;
+        if (hidden > 0)
+        {
+            problems.Add($"{hidden} folder{(hidden == 1 ? " is" : "s are")} hidden because {(hidden == 1 ? "its name says" : "their names say")} neither BB nor TFO.");
+        }
 
-            return string.Join("  ", problems);
+        return problems.OfType<string>().ToList();
+    }
+
+    public string FolderWarning => string.Join("  ", SetupProblems());
+    public bool HasFolderWarning => FolderWarning.Length > 0;
+
+    /// <summary>The header's setup chip, "⚠ 1 setup issue" (one project at a time: the problems are its own).</summary>
+    public bool HasSetupChip => HasFolderWarning && !IsMultiProject;
+    public string SetupIssuesText => SetupProblems().Count == 1 ? "⚠ 1 setup issue" : $"⚠ {SetupProblems().Count} setup issues";
+
+    /// <summary>The CA folder and link (Details) describe one project, so they hide when several are shown.</summary>
+    public bool CanShowProjectDetails => HasProject && !IsMultiProject;
+
+    /// <summary>Edit project / Choose CA folder acts on one project: hidden while several are shown (My work, Ctrl-click).</summary>
+    public bool CanEditProject => HasProject && !IsMultiProject;
+
+    // ---- The header's counts by when items are due (each a quick Due filter) ----------------
+
+    private (int Overdue, int Today, int Soon, int All) dueCounts;
+
+    /// <summary>Counts the list as filtered, except for the Due filter itself, so each chip says what it would show.</summary>
+    private void UpdateDueCounts()
+    {
+        var rows = allRows.Where(MatchesType).Where(row => MatchesDiscipline(row) && MatchesFilter(row) && MatchesPerson(row)).ToList();
+        dueCounts = (
+            rows.Count(row => row.IsOverdue),
+            rows.Count(row => row.IsDueToday),
+            rows.Count(row => row.DaysTillDue is { } days && days >= 0 && days <= DueWithinDays),
+            rows.Count);
+        foreach (var name in new[]
+                 {
+                     nameof(HasDueChips), nameof(AllChipText), nameof(IsDueAnyFilter),
+                     nameof(OverdueChipText), nameof(HasOverdueChip), nameof(IsDueOverdueFilter),
+                     nameof(DueTodayChipText), nameof(HasDueTodayChip), nameof(IsDueTodayFilter),
+                     nameof(DueSoonChipText), nameof(HasDueSoonChip), nameof(IsDueSoonFilter)
+                 })
+        {
+            OnPropertyChanged(name);
         }
     }
 
-    public bool HasFolderWarning => FolderWarning.Length > 0;
+    public bool HasDueChips => HasProject && (dueCounts.All > 0 || DueFilter != DueFilter.Any);
+    public string AllChipText => $"{dueCounts.All} {MatchingNoun(dueCounts.All)}";
+    public bool IsDueAnyFilter => DueFilter == DueFilter.Any;
+    public string OverdueChipText => $"{dueCounts.Overdue} overdue";
+    public bool HasOverdueChip => dueCounts.Overdue > 0 || DueFilter == DueFilter.Overdue;
+    public bool IsDueOverdueFilter => DueFilter == DueFilter.Overdue;
+    public string DueTodayChipText => $"{dueCounts.Today} due today";
+    public bool HasDueTodayChip => dueCounts.Today > 0 || DueFilter == DueFilter.DueToday;
+    public bool IsDueTodayFilter => DueFilter == DueFilter.DueToday;
+    public string DueSoonChipText => $"{dueCounts.Soon} due within {DueWithinDays} days";
+    public bool HasDueSoonChip => dueCounts.Soon > 0 || DueFilter == DueFilter.DueWithin;
+    public bool IsDueSoonFilter => DueFilter == DueFilter.DueWithin;
 
     /// <summary>Folders the Base Build / Tenant Fit Out split hides because their names say neither part.</summary>
     private int HiddenByPhaseCount => comparison is null || !HasCaFolder || comparison.Project.Scope is not { IsSplit: true }
@@ -3103,7 +3340,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         var count = allRows.Count(row => (itemType == ItemTypeChoices.Both
                 || string.Equals(row.Row.ItemType, itemType, StringComparison.OrdinalIgnoreCase))
             && Matches(row));
-        return count == 0 ? label : Filter == Filters.Open ? $"{label} ({count} open)" : $"{label} ({count})";
+        return count == 0 ? label : $"{label} ({count})";
     }
 
     private void RebuildRows()
@@ -3127,6 +3364,8 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         OnPropertyChanged(nameof(RfiTabText));
         OnPropertyChanged(nameof(SubmittalTabText));
         OnPropertyChanged(nameof(BothTabText));
+        UpdateDueCounts();
+        RaiseViews();
         ScheduleViewStateSave();
         ScheduleBadges();
     }
@@ -3247,12 +3486,18 @@ public sealed class MainViewModel : ObservableObject, IDisposable
             project.OverdueCount = matching.Count(row => row.IsOverdue);
             project.MatchingNoun = MatchingNoun(matching.Count);
             project.MatchingCount = matching.Count;
+            var next = matching.Where(row => row.DaysTillDue >= 0).MinBy(row => row.DaysTillDue);
+            project.NextDueText = next?.Row.Item?.DueAt is not { } due ? ""
+                : next.DaysTillDue == 0 ? "next due today"
+                : $"next due {due.ToLocalTime():MMM d}";
         }
 
         foreach (var gone in badgeSources.Keys.Where(id => Projects.All(project => project.Id != id)).ToList())
         {
             badgeSources.Remove(gone);
         }
+
+        UpdateViewCounts();
     }
 
     /// <summary>What a project's count is of, for its badge ("12 open", "1 item", "3 ready").</summary>
@@ -3443,6 +3688,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
                      nameof(ProjectTitle), nameof(CaFolderText), nameof(ConnectionText), nameof(RefreshButtonText),
                      nameof(DataTimestampText), nameof(FolderTimestampText), nameof(TimestampText), nameof(ProjectSubtitle), nameof(HasProjectSubtitle),
                      nameof(CompanyText), nameof(FolderWarning), nameof(HasFolderWarning), nameof(CanCreateTypeFolders),
+                     nameof(HasSetupChip), nameof(SetupIssuesText), nameof(CanShowProjectDetails), nameof(CanEditProject), nameof(HasDueChips),
                      nameof(LastSyncFailed), nameof(CanIncludeUnlabeled), nameof(IncludeUnlabeledText), nameof(MarkReturnedToolTip),
                      nameof(HasActiveFilters),
                      nameof(IsPlaceholder), nameof(CanEditConnection), nameof(EditButtonText),
@@ -3599,6 +3845,20 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         rememberedPeople.UnionWith(view.People.Select(PersonNames.WithoutCompany).Where(name => name.Length > 0));
         rememberCompany = view.AnyoneAtCompany;
         peopleDefaulted = view.PeopleDefaulted;
+        showItemDetails = view.ShowItemDetails;
+    }
+
+    /// <summary>The item details pane beside the list (View → Item details); remembered.</summary>
+    public bool ShowItemDetails
+    {
+        get => showItemDetails;
+        set
+        {
+            if (Set(ref showItemDetails, value))
+            {
+                ScheduleViewStateSave();
+            }
+        }
     }
 
     /// <summary>Called by the window once it has restored the saved view; changes are saved from then on.</summary>
@@ -3637,6 +3897,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
             People = rememberedPeople.OrderBy(name => name, StringComparer.CurrentCultureIgnoreCase).ToList(),
             AnyoneAtCompany = rememberCompany,
             PeopleDefaulted = peopleDefaulted,
+            ShowItemDetails = showItemDetails,
             Due = dueFilter.ToString(),
             DueWithinDays = dueWithinDays,
             Discipline = disciplineFilter,

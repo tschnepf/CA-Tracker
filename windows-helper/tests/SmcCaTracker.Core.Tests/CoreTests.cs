@@ -1080,6 +1080,93 @@ public class DefaultPeopleTests
     }
 }
 
+public class NewestFileTests
+{
+    private sealed record Attachment(string Name, DateTimeOffset? UploadedAt);
+
+    [Fact]
+    public void TheNewestIsTheOneUploadedLast()
+    {
+        var question = new Attachment("Question.pdf", DateTimeOffset.Parse("2026-08-28T15:00:00Z"));
+        var response = new Attachment("Response.pdf", DateTimeOffset.Parse("2026-09-16T15:00:00Z"));
+        var undated = new Attachment("Sketch.pdf", null);
+
+        Assert.Same(response, NewestFile.Pick(new[] { question, response, undated }, file => file.UploadedAt));
+        Assert.Same(undated, NewestFile.Pick(new[] { undated }, file => file.UploadedAt));
+        Assert.Null(NewestFile.Pick(Array.Empty<Attachment>(), file => file.UploadedAt));
+    }
+
+    [Fact]
+    public void TheCopyInTheItemsFolderIsFound()
+    {
+        using var temp = new TempFolder();
+        var item = temp.Make("000252 - BMS panel");
+        var uploaded = DateTimeOffset.Now.AddDays(-2);
+
+        // Saved by a download: the dated name.
+        var saved = Path.Combine(item, "2026-09-16 Response.pdf");
+        File.WriteAllText(saved, "x");
+        Assert.Equal(saved, NewestFile.LocalCopy(item, "Response.pdf", "2026-09-16 Response.pdf", uploaded));
+
+        // Saved by hand under its Helix name since it was uploaded: found too.
+        File.Delete(saved);
+        var byHand = Path.Combine(temp.Make("000252 - BMS panel", "R1"), "response.pdf");
+        File.WriteAllText(byHand, "x");
+        Assert.Equal(byHand, NewestFile.LocalCopy(item, "Response.pdf", "2026-09-16 Response.pdf", uploaded));
+
+        // An older file of the same name (an earlier revision's) isn't this one.
+        File.SetLastWriteTimeUtc(byHand, uploaded.UtcDateTime.AddDays(-30));
+        Assert.Null(NewestFile.LocalCopy(item, "Response.pdf", "2026-09-16 Response.pdf", uploaded));
+
+        Assert.Null(NewestFile.LocalCopy(Path.Combine(temp.Root, "missing"), "Response.pdf", "Response.pdf", uploaded));
+        Assert.Null(NewestFile.LocalCopy(null, "Response.pdf", "Response.pdf", uploaded));
+    }
+
+    [Fact]
+    public void CopiesFromHelixAreKeptInTheAppsFolder()
+    {
+        var path = NewestFile.CachePath(@"C:\Data\opened", "Aligned CMH03", "000252", "CMH03 - BMS panel", "2026-09-16 Response.pdf");
+        Assert.Equal(@"C:\Data\opened\Aligned CMH03\000252 - BMS panel\2026-09-16 Response.pdf", path);
+    }
+
+    [Fact]
+    public void AKeptCopyIsReusedOnlyWhenItIsStillTheSameFile()
+    {
+        using var temp = new TempFolder();
+        var path = Path.Combine(temp.Root, "Response.pdf");
+        Assert.False(NewestFile.IsCurrentCopy(path, null));
+        File.WriteAllText(path, "x");
+        Assert.True(NewestFile.IsCurrentCopy(path, DateTimeOffset.Now.AddDays(-1)));
+        Assert.False(NewestFile.IsCurrentCopy(path, DateTimeOffset.Now.AddDays(1)));
+    }
+}
+
+public class FolderFilesTests
+{
+    [Fact]
+    public void TheFolderIsListedNewestFirstWithoutHiddenFiles()
+    {
+        using var temp = new TempFolder();
+        var item = temp.Make("000252 - BMS panel");
+        var question = Path.Combine(item, "Question.pdf");
+        var response = Path.Combine(temp.Make("000252 - BMS panel", "R1"), "Response.pdf");
+        var partial = Path.Combine(item, "Markup.pdf.1234.partial");
+        var hidden = Path.Combine(item, "desktop.ini");
+        foreach (var path in new[] { question, response, partial, hidden })
+        {
+            File.WriteAllText(path, "x");
+        }
+
+        File.SetAttributes(hidden, FileAttributes.Hidden | FileAttributes.System);
+        File.SetLastWriteTime(question, DateTime.Now.AddDays(-10));
+        File.SetLastWriteTime(response, DateTime.Now.AddDays(-1));
+
+        var files = FolderFiles.List(item, 40);
+        Assert.Equal(new[] { Path.Combine("R1", "Response.pdf"), "Question.pdf" }, files.Select(file => file.RelativePath));
+        Assert.Single(FolderFiles.List(item, 1));
+    }
+}
+
 public class DownloadNamingTests
 {
     [Theory]

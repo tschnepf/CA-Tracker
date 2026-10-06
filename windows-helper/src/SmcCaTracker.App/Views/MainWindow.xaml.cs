@@ -36,7 +36,7 @@ public partial class MainWindow : Window
 
         // The discipline filter offers the company's disciplines (or the defaults).
         DisciplineBox.Items.Clear();
-        DisciplineBox.Items.Add(new ComboBoxItem { Content = "All", Tag = "", IsSelected = true });
+        DisciplineBox.Items.Add(new ComboBoxItem { Content = "All disciplines", Tag = "", IsSelected = true });
         foreach (var discipline in SmcCaTracker.Core.Comparison.Disciplines.All)
         {
             DisciplineBox.Items.Add(new ComboBoxItem { Content = discipline.Label, Tag = discipline.Code });
@@ -70,6 +70,7 @@ public partial class MainWindow : Window
             viewModel.Dispose();
         };
         ItemPanel.CloseRequested += (_, _) => ShowItemPanel(false);
+        InitDetailsPanel();
         // Coming back to the app (e.g. from Explorer): check the CA folders straight away.
         Activated += (_, _) => viewModel.CheckFoldersSoon();
         GroupProjectList();
@@ -92,6 +93,9 @@ public partial class MainWindow : Window
                     break;
                 case nameof(MainViewModel.PersonFilterText):
                     UpdateColumns();
+                    break;
+                case nameof(MainViewModel.ShowItemDetails):
+                    OnShowItemDetailsChanged();
                     break;
             }
         };
@@ -171,6 +175,7 @@ public partial class MainWindow : Window
         ApplyItemGrouping();
         UpdateSortArrows();
         UpdateColumns();
+        OnShowItemDetailsChanged();
         viewModel.ViewStateRestored();
     }
 
@@ -396,6 +401,57 @@ public partial class MainWindow : Window
         (ResultColumn, nameof(ResultColumn), "Folder status")
     };
 
+    /// <summary>
+    /// View: the grouping, the sort and the columns, in one menu. The choices go through the (hidden) Group
+    /// and Sort boxes, so they work as before and are remembered the same way.
+    /// </summary>
+    private void ViewButton_Click(object sender, RoutedEventArgs e)
+    {
+        var menu = new ContextMenu { PlacementTarget = ViewButton, Placement = System.Windows.Controls.Primitives.PlacementMode.Bottom };
+
+        void Heading(string text) => menu.Items.Add(new MenuItem { Header = text, IsEnabled = false });
+
+        void Choices(ComboBox box)
+        {
+            foreach (var choice in box.Items.OfType<ComboBoxItem>()
+                         .Where(choice => choice.Visibility == Visibility.Visible || ReferenceEquals(choice, box.SelectedItem)))
+            {
+                var item = new MenuItem { Header = choice.Content, IsCheckable = true, IsChecked = ReferenceEquals(choice, box.SelectedItem) };
+                item.Click += (_, _) => box.SelectedItem = choice;
+                menu.Items.Add(item);
+            }
+        }
+
+        var details = new MenuItem { Header = "Item details on the right", IsCheckable = true, IsChecked = viewModel.ShowItemDetails };
+        details.Click += (_, _) => viewModel.ShowItemDetails = details.IsChecked;
+        menu.Items.Add(details);
+        menu.Items.Add(new Separator());
+        Heading("Group by");
+        Choices(GroupBox);
+        menu.Items.Add(new Separator());
+        Heading("Sort by (or click a column heading)");
+        Choices(SortBox);
+        menu.Items.Add(new Separator());
+        Heading("Columns");
+        foreach (var (_, name, label) in OptionalColumns())
+        {
+            var item = new MenuItem { Header = label, IsCheckable = true, StaysOpenOnClick = true, IsChecked = !viewModel.IsColumnHidden(name) };
+            if (name == nameof(CourtColumn) && viewModel.IsOnePersonFilter)
+            {
+                item.Header = "Ball in court (hidden while one person is checked)";
+            }
+
+            item.Click += (_, _) =>
+            {
+                viewModel.SetColumnHidden(name, !item.IsChecked);
+                UpdateColumns();
+            };
+            menu.Items.Add(item);
+        }
+
+        menu.IsOpen = true;
+    }
+
     /// <summary>Right-click any column heading: a checked item per column you can turn off.</summary>
     private void InitColumnsMenu()
     {
@@ -518,12 +574,47 @@ public partial class MainWindow : Window
         }
     }
 
+    // The rows selected when a button in a row was last pressed (see SetRowDiscipline_Click).
+    private List<RowViewModel>? selectionAtPress;
+
+    private void ItemsGrid_PreviewMouseLeftButtonDown(object sender, MouseButtonEventArgs e) =>
+        selectionAtPress = e.OriginalSource is DependencyObject source && IsInButton(source)
+            ? ItemsGrid.SelectedItems.OfType<RowViewModel>().ToList()
+            : null;
+
+    // A right-click keeps the selection as it is, so its menu uses the selection itself.
+    private void ItemsGrid_PreviewMouseRightButtonDown(object sender, MouseButtonEventArgs e) => selectionAtPress = null;
+
+    /// <summary>
+    /// A row's Set (or Set discipline… in its menus). On a row that is one of several checked rows it sets
+    /// them all; on one of several selected (highlighted) rows, all of those; otherwise just this row.
+    /// </summary>
     private async void SetRowDiscipline_Click(object sender, RoutedEventArgs e)
     {
-        if (sender is FrameworkElement { DataContext: RowViewModel row } && row.CanSelect)
+        if (sender is not FrameworkElement { DataContext: RowViewModel row } || !row.CanSelect)
         {
-            await ChooseDisciplineAsync(new[] { row }, row.Row.Folder?.Name ?? $"{row.Number} - {row.Title}");
+            return;
         }
+
+        var checkedRows = viewModel.CheckedRows().Where(other => other.CanSelect).ToList();
+        if (row.IsChecked && checkedRows.Count > 1)
+        {
+            await ChooseDisciplineAsync(checkedRows, $"{checkedRows.Count} checked items");
+            return;
+        }
+
+        // Pressing a button in a row selects just that row before the click arrives, so this uses the rows
+        // that were selected when the button (Set, or the ▾ whose menu this came from) was pressed.
+        var selectedRows = (selectionAtPress ?? ItemsGrid.SelectedItems.OfType<RowViewModel>().ToList())
+            .Where(other => other.CanSelect).ToList();
+        selectionAtPress = null;
+        if (selectedRows.Count > 1 && selectedRows.Contains(row))
+        {
+            await ChooseDisciplineAsync(selectedRows, $"{selectedRows.Count} selected items");
+            return;
+        }
+
+        await ChooseDisciplineAsync(new[] { row }, row.Row.Folder?.Name ?? $"{row.Number} - {row.Title}");
     }
 
     private async void SetTickedDiscipline_Click(object sender, RoutedEventArgs e)
@@ -583,6 +674,88 @@ public partial class MainWindow : Window
     private void ClearPeople_Click(object sender, RoutedEventArgs e) => viewModel.ClearPeople();
 
     private void ShowOnlyYou_Click(object sender, RoutedEventArgs e) => viewModel.ShowOnlyYou();
+
+    // The row whose box was clicked last (by key, so it survives the list being rebuilt).
+    private string? checkAnchorKey;
+
+    /// <summary>
+    /// A row's box. Shift-clicking it checks every row shown between it and the box clicked before (or
+    /// unchecks them, when this click unchecked it), so a run of items can be checked at once, e.g. to set
+    /// their discipline together.
+    /// </summary>
+    private void RowCheck_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not CheckBox { DataContext: RowViewModel row } box)
+        {
+            return;
+        }
+
+        if (Keyboard.Modifiers.HasFlag(ModifierKeys.Shift) && checkAnchorKey is not null)
+        {
+            var rows = viewModel.Rows;
+            var to = rows.IndexOf(row);
+            var from = -1;
+            for (var index = 0; index < rows.Count; index++)
+            {
+                if (rows[index].Key == checkAnchorKey)
+                {
+                    from = index;
+                    break;
+                }
+            }
+
+            if (from >= 0 && to >= 0)
+            {
+                var check = box.IsChecked == true;
+                for (var index = Math.Min(from, to); index <= Math.Max(from, to); index++)
+                {
+                    rows[index].IsChecked = check;
+                }
+            }
+        }
+
+        checkAnchorKey = row.Key;
+    }
+
+    /// <summary>A due count in the header: show just those, or all of them again when it is already on.</summary>
+    private void DueChip_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is Button { CommandParameter: string tag } && Enum.TryParse<DueFilter>(tag, out var due))
+        {
+            viewModel.DueFilter = viewModel.DueFilter == due ? DueFilter.Any : due;
+            ShowFilterChoices();
+        }
+    }
+
+    private DateTime setupPopupClosedAt;
+
+    /// <summary>The setup chip opens the setup problems, with what can be done about them.</summary>
+    private void Setup_Click(object sender, RoutedEventArgs e)
+    {
+        // A click on the chip while the list is open closes it (the click outside); don't reopen it.
+        if (DateTime.UtcNow - setupPopupClosedAt < TimeSpan.FromMilliseconds(250))
+        {
+            return;
+        }
+
+        SetupPopup.IsOpen = !SetupPopup.IsOpen;
+    }
+
+    private void SetupPopup_Closed(object? sender, EventArgs e) => setupPopupClosedAt = DateTime.UtcNow;
+
+    /// <summary>My work: your open items in every linked project. The filter boxes follow.</summary>
+    private void ShowMyWork_Click(object sender, RoutedEventArgs e)
+    {
+        viewModel.ShowMyWork();
+        ShowFilterChoices();
+    }
+
+    /// <summary>Overdue, all projects: every overdue item in every linked project.</summary>
+    private void ShowAllOverdue_Click(object sender, RoutedEventArgs e)
+    {
+        viewModel.ShowAllOverdue();
+        ShowFilterChoices();
+    }
 
     private void Due_Changed(object sender, SelectionChangedEventArgs e)
     {
@@ -761,6 +934,7 @@ public partial class MainWindow : Window
 
     private async void EditProject_Click(object sender, RoutedEventArgs e)
     {
+        SetupPopup.IsOpen = false;
         if (viewModel.SelectedProject is null)
         {
             return;
@@ -874,6 +1048,7 @@ public partial class MainWindow : Window
 
     private async void CreateFolders_Click(object sender, RoutedEventArgs e)
     {
+        SetupPopup.IsOpen = false;
         if (viewModel.Comparison is not null)
         {
             await PreviewAndRunAsync(OperationPlanner.PlanCreateTypeFolders(viewModel.Comparison));
@@ -883,6 +1058,7 @@ public partial class MainWindow : Window
     /// <summary>The folder warning's button: count folders that say neither BB nor TFO as this part.</summary>
     private async void IncludeUnlabeled_Click(object sender, RoutedEventArgs e)
     {
+        SetupPopup.IsOpen = false;
         if (viewModel.SelectedProject is not { } project)
         {
             return;
@@ -1043,6 +1219,59 @@ public partial class MainWindow : Window
         ShowDownloadWindow(new[] { request }, verify: true);
     }
 
+    /// <summary>A row's Open Online: the item in the built-in Helix page, or a Procore item in your web browser.</summary>
+    private async void OpenRow_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is FrameworkElement { DataContext: RowViewModel { HasItem: true } row })
+        {
+            await OpenItemAsync(row);
+        }
+    }
+
+    /// <summary>A row's ▾: what isn't on its buttons, under the button.</summary>
+    private void RowMenu_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is FrameworkElement { DataContext: RowViewModel row } button && FindResource("RowMoreMenu") is ContextMenu menu)
+        {
+            menu.DataContext = row;
+            menu.PlacementTarget = button;
+            menu.Placement = System.Windows.Controls.Primitives.PlacementMode.Bottom;
+            menu.IsOpen = true;
+        }
+    }
+
+    private void OpenNewestFile_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is FrameworkElement { DataContext: RowViewModel row })
+        {
+            OpenNewestFile(row);
+        }
+    }
+
+    /// <summary>
+    /// Opens the newest file Helix has for a row's item: the copy in its folder when it's there, otherwise a copy
+    /// from Helix kept in the app's folder (the CA folder isn't changed). An item with no files opens in Helix.
+    /// </summary>
+    private void OpenNewestFile(RowViewModel row)
+    {
+        if (viewModel.DownloadRequestFor(row) is not { } request)
+        {
+            return;
+        }
+
+        var window = new OpenFileWindow(request, viewModel.Paths) { Owner = this };
+        window.FileOpened += message => viewModel.StatusMessage = message;
+        window.NoFiles += async () =>
+        {
+            viewModel.StatusMessage = $"{row.TypeSingular} {row.Number} has no attachments in Helix, so it opens there instead.";
+            await OpenItemAsync(row);
+        };
+        // It uses the built-in browser's sign-in, like the Download window.
+        downloadWindowsOpen++;
+        window.Closed += (_, _) => downloadWindowsOpen--;
+        window.Show();
+    }
+
     private async void OpenRowLink_Click(object sender, RoutedEventArgs e)
     {
         if (sender is FrameworkElement { DataContext: RowViewModel row })
@@ -1076,25 +1305,175 @@ public partial class MainWindow : Window
         }
     }
 
-    /// <summary>Shows or hides the item panel beside the list (its width is kept while the app is open).</summary>
-    private void ShowItemPanel(bool show)
+    // ---- The panel beside the list: the Helix page, or the selected item's details -----------------
+
+    private enum PanelMode
     {
-        if (show == (ItemPanel.Visibility == Visibility.Visible))
+        None,
+        Details,
+        Helix
+    }
+
+    private PanelMode panelMode;
+
+    // Each mode keeps its own width while the app is open (drag the bar to change it).
+    private GridLength helixPanelWidth = new(0.9, GridUnitType.Star);
+    private GridLength detailsPanelWidth = new(360);
+
+    // The selected row, by key, so the details follow it when the list is rebuilt (a sync, a folder change).
+    private string? selectedRowKey;
+
+    /// <summary>Shows the Helix page beside the list, or when it closes, the details (if on) or nothing.</summary>
+    private void ShowItemPanel(bool show) =>
+        SetPanel(show ? PanelMode.Helix : viewModel.ShowItemDetails ? PanelMode.Details : PanelMode.None);
+
+    private void SetPanel(PanelMode mode)
+    {
+        if (mode == panelMode)
         {
             return;
         }
 
-        ItemPanel.Visibility = show ? Visibility.Visible : Visibility.Collapsed;
-        PanelSplitter.Visibility = ItemPanel.Visibility;
-        PanelSplitterColumn.Width = show ? new GridLength(10) : new GridLength(0);
-        ItemPanelColumn.Width = show ? itemPanelWidth : new GridLength(0);
-        if (!show)
+        if (panelMode != PanelMode.None && ItemPanelColumn.ActualWidth > 0)
         {
-            itemPanelWidth = ItemPanelColumn.ActualWidth > 0 ? new GridLength(ItemPanelColumn.ActualWidth / Math.Max(1, ListColumn.ActualWidth), GridUnitType.Star) : itemPanelWidth;
+            if (panelMode == PanelMode.Helix)
+            {
+                helixPanelWidth = new GridLength(ItemPanelColumn.ActualWidth / Math.Max(1, ListColumn.ActualWidth), GridUnitType.Star);
+            }
+            else
+            {
+                detailsPanelWidth = new GridLength(ItemPanelColumn.ActualWidth);
+            }
+        }
+
+        panelMode = mode;
+        ItemPanel.Visibility = mode == PanelMode.Helix ? Visibility.Visible : Visibility.Collapsed;
+        DetailsPanel.Visibility = mode == PanelMode.Details ? Visibility.Visible : Visibility.Collapsed;
+        PanelSplitter.Visibility = mode == PanelMode.None ? Visibility.Collapsed : Visibility.Visible;
+        PanelSplitterColumn.Width = mode == PanelMode.None ? new GridLength(0) : new GridLength(10);
+        ItemPanelColumn.Width = mode switch
+        {
+            PanelMode.Helix => helixPanelWidth,
+            PanelMode.Details => detailsPanelWidth,
+            _ => new GridLength(0)
+        };
+        if (mode == PanelMode.Details)
+        {
+            DetailsPanel.Show(SelectedRow());
         }
     }
 
-    private GridLength itemPanelWidth = new(0.9, GridUnitType.Star);
+    private RowViewModel? SelectedRow() => ItemsGrid.SelectedItem as RowViewModel;
+
+    private void InitDetailsPanel()
+    {
+        ItemsGrid.SelectionChanged += (_, _) =>
+        {
+            // A rebuilt list clears the selection for a moment; RestoreSelectedRow picks the row up again.
+            if (SelectedRow() is { } row)
+            {
+                selectedRowKey = row.Key;
+                if (panelMode == PanelMode.Details)
+                {
+                    DetailsPanel.Show(row);
+                }
+            }
+        };
+        viewModel.Rows.CollectionChanged += (_, _) =>
+            Dispatcher.InvokeAsync(RestoreSelectedRow, System.Windows.Threading.DispatcherPriority.Background);
+        DetailsPanel.CloseRequested += (_, _) => viewModel.ShowItemDetails = false;
+        DetailsPanel.ActionRequested += async (action, row) =>
+        {
+            switch (action)
+            {
+                case "open":
+                    await OpenItemAsync(row);
+                    break;
+                case "download":
+                    if (viewModel.DownloadRequestFor(row) is { } request)
+                    {
+                        ShowDownloadWindow(new[] { request });
+                    }
+
+                    break;
+                case "verify":
+                    if (viewModel.DownloadRequestFor(row) is { } check)
+                    {
+                        ShowDownloadWindow(new[] { check }, verify: true);
+                    }
+
+                    break;
+                case "folder":
+                    OpenInExplorer(row.Row.Folder?.FullPath);
+                    break;
+                case "newest":
+                    OpenNewestFile(row);
+                    break;
+                case "discipline":
+                    await ChooseDisciplineAsync(new[] { row }, row.Row.Folder?.Name ?? $"{row.Number} - {row.Title}");
+                    break;
+            }
+        };
+    }
+
+    /// <summary>After the list is rebuilt: select the row that was selected (its new copy), so the details stay on it.</summary>
+    private void RestoreSelectedRow()
+    {
+        if (SelectedRow() is { } selected)
+        {
+            if (panelMode == PanelMode.Details)
+            {
+                DetailsPanel.Show(selected);
+            }
+
+            return;
+        }
+
+        var again = selectedRowKey is null ? null : viewModel.Rows.FirstOrDefault(row => row.Key == selectedRowKey);
+        if (again is not null)
+        {
+            ItemsGrid.SelectedItem = again;
+        }
+        else if (panelMode == PanelMode.Details)
+        {
+            DetailsPanel.Show(null);
+        }
+    }
+
+    /// <summary>Item details turned on or off: show or hide them (the Helix page, when open, stays).</summary>
+    private void OnShowItemDetailsChanged()
+    {
+        ItemPanel.SetCloseLabel(viewModel.ShowItemDetails);
+        if (viewModel.ShowItemDetails && panelMode == PanelMode.None)
+        {
+            SetPanel(PanelMode.Details);
+        }
+        else if (!viewModel.ShowItemDetails && panelMode == PanelMode.Details)
+        {
+            SetPanel(PanelMode.None);
+        }
+    }
+
+    /// <summary>A row's "Show details": select it and show its details (closing the Helix page if it is open).</summary>
+    private async void ShowRowDetails_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not FrameworkElement { DataContext: RowViewModel row })
+        {
+            return;
+        }
+
+        ItemsGrid.SelectedItem = row;
+        viewModel.ShowItemDetails = true;
+        if (panelMode == PanelMode.Helix)
+        {
+            await ItemPanel.CloseItemAsync();
+        }
+        else
+        {
+            SetPanel(PanelMode.Details);
+            DetailsPanel.Show(row);
+        }
+    }
 
     /// <summary>Double-click a row: open its folder, or the item when it has no folder yet.</summary>
     private async void Grid_MouseDoubleClick(object sender, MouseButtonEventArgs e)

@@ -182,6 +182,11 @@ public sealed class ProjectViewModel : ObservableObject
                 lines.Add($"Hosted by {project.CompanyName} in {ProviderLabel}");
             }
 
+            if (snapshot is not null)
+            {
+                lines.Add($"Synced {Formatting.When(snapshot.ScannedAt)}");
+            }
+
             if (IsFavorite)
             {
                 lines.Add("★ Favorite (for you only). Right-click or ⋯ → Remove from favorites.");
@@ -201,6 +206,21 @@ public sealed class ProjectViewModel : ObservableObject
             }
 
             return string.Join(Environment.NewLine, lines);
+        }
+    }
+
+    private string nextDue = "";
+
+    /// <summary>"next due Oct 7": the soonest due date, today or later, among its items that match the list's filters.</summary>
+    public string NextDueText
+    {
+        get => nextDue;
+        set
+        {
+            if (Set(ref nextDue, value))
+            {
+                OnPropertyChanged(nameof(Subtitle));
+            }
         }
     }
 
@@ -340,9 +360,10 @@ public sealed class ProjectViewModel : ObservableObject
                 return $"{ProviderLabel}{CompanyPart} · waiting for the first sync";
             }
 
+            // When it was synced is in the tooltip (and the pill above the list); this says what's coming up.
             return snapshot is null
                 ? $"{part}{ProviderLabel} · not synced yet"
-                : $"{part}{ProviderLabel}{CompanyPart} · synced {Formatting.When(snapshot.ScannedAt)}";
+                : $"{part}{ProviderLabel}{CompanyPart}{(nextDue.Length > 0 ? $" · {nextDue}" : "")}";
         }
     }
 
@@ -559,6 +580,41 @@ public sealed class RowViewModel : ObservableObject
     };
     public bool HasFolder => Row.Folder is not null;
     public bool HasItem => Row.Item is not null;
+
+    /// <summary>Identifies the row across list rebuilds: its project, type, and folder or item.</summary>
+    public string Key => $"{Project.Id}|{Row.ItemType}|{Row.Folder?.FullPath ?? "item:" + Row.Item?.ItemId}";
+
+    /// <summary>The details pane's first line: "RFI 000252 · Aligned CMH03 · Helix".</summary>
+    public string DetailsCrumb => string.Join(" · ", new[] { HasItem ? $"{TypeSingular} {Number}" : $"{TypeSingular} folder", ProjectName, Project.ProviderLabel }
+        .Where(part => part.Length > 0));
+
+    /// <summary>Who has it now and for how long, for the details pane.</summary>
+    public string WithText => HolderNames.Count == 0 ? (Row.Item is null ? "—" : HolderText)
+        : DaysInCourt is null ? string.Join(", ", HolderNames)
+        : $"{string.Join(", ", HolderNames)} · {DaysInCourtText}";
+
+    /// <summary>Who has the next step (Helix's "upcoming" people), for the details pane.</summary>
+    public string NextText => Row.Item is not { Closed: false } item ? "" : string.Join(", ", item.Holders
+        .Where(holder => string.Equals(holder.State, "upcoming", StringComparison.OrdinalIgnoreCase) && !string.IsNullOrWhiteSpace(holder.Name))
+        .Select(holder => PersonNames.WithoutCompany(holder.Name))
+        .Distinct(StringComparer.OrdinalIgnoreCase));
+
+    public bool HasNext => NextText.Length > 0;
+
+    /// <summary>Where its folder is ("Submittals\Elec\000437 - …"), or that it has none.</summary>
+    public string FolderPathText => Row.Folder is null ? "No folder yet" : $"{LocationText}\\{Row.Folder.Name}";
+
+    /// <summary>Its folder status is worth a line in the details pane (more than "Open" or "No folder").</summary>
+    public bool HasFolderNote => Row.Status is not (RowStatus.Open or RowStatus.NoFolder);
+
+    /// <summary>Hover text for the row's Open Online: where the item opens (a folder with no item has nothing to open online).</summary>
+    public string OpenToolTip => CanDownload
+        ? "Open it in Helix, in the panel on the right"
+        : HasItem ? $"Open it in {Project.ProviderLabel} (in your web browser)"
+        : "No Helix or Procore item for this folder. ▾ → Open folder opens the folder.";
+
+    /// <summary>"Open in Helix" / "Open in Procore" in the row's menu.</summary>
+    public string OpenOnlineText => Project.ProviderLabel.Length > 0 ? $"Open in {Project.ProviderLabel}" : "Open online";
 
     /// <summary>Downloads work for Helix items only.</summary>
     public bool CanDownload => Row.Item is not null

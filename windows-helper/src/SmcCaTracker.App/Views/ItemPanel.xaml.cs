@@ -671,7 +671,21 @@ public partial class ItemPanel : UserControl
         SetStatus("");
     }
 
-    private async void Close_Click(object sender, RoutedEventArgs e)
+    /// <summary>With item details on, Close goes back to them (the item is closed the same way).</summary>
+    public void SetCloseLabel(bool backToDetails)
+    {
+        CloseButton.Content = backToDetails ? "← Details" : "Close";
+        CloseButton.ToolTip = backToDetails
+            ? "Close the item and go back to its details (CA Tracker checks the project once more for changes you made here)"
+            : "Close the item (CA Tracker checks the project once more for changes you made here)";
+    }
+
+    /// <summary>Closes the item as the Close button does.</summary>
+    public Task CloseItemAsync() => CloseAsync();
+
+    private async void Close_Click(object sender, RoutedEventArgs e) => await CloseAsync();
+
+    private async Task CloseAsync()
     {
         // The "didn't open within a minute" check for this item no longer applies: without this it
         // reopened the item in the hidden panel a minute after it was opened.
