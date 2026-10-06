@@ -6,6 +6,7 @@ using System.Windows.Threading;
 using SmcCaTracker.App.Services;
 using SmcCaTracker.Core.Central;
 using SmcCaTracker.Core.Comparison;
+using SmcCaTracker.Core.Operations;
 using SmcCaTracker.Core.Data;
 using SmcCaTracker.Core.Diagnostics;
 using SmcCaTracker.Core.Matching;
@@ -2658,8 +2659,15 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         var projectName = !string.IsNullOrWhiteSpace(project.Connection.ProjectName)
             ? project.Connection.ProjectName
             : row.Project.Snapshot?.ProjectName ?? "";
+
+        // Back with you while its folder is in Returned: a new round, which the download window saves in an R folder
+        // (moving the folder out of Returned first, if you leave that checked).
+        var moveBackTo = row.Status == RowStatus.Reopened && row.Row.CanMoveBack && row.Row.Folder is { } folder
+            && row.Comparison.For(row.Row.ItemType).Scan is { Error: null } typeScan
+                ? OperationPlanner.ActiveDestination(folder, typeScan)
+                : null;
         return new DownloadRequest(item.ItemType, item.ItemId, project.Connection.ProjectId, item.Number, item.Title,
-            projectName, row.Row.Folder?.FullPath, parent);
+            projectName, row.Row.Folder?.FullPath, parent, moveBackTo);
     }
 
     public IReadOnlyList<CatalogProject> KnownProviderProjects() => store.CatalogWithSnapshots();

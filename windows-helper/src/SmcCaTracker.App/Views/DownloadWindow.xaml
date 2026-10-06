@@ -138,6 +138,30 @@
                                             <TextBlock Text="{Binding DestinationNote}" Style="{StaticResource Muted}" FontSize="12" />
                                         </StackPanel>
                                     </DockPanel>
+
+                                    <!-- Back with you while its folder is in Returned: a new round. Its R folder (the number can be
+                                         changed), and what moves first; moves are previewed when Download is selected. -->
+                                    <Border Background="{DynamicResource AccentSoftBrush}" CornerRadius="6" Padding="10,8" Margin="0,0,0,8"
+                                            Visibility="{Binding IsNewRound, Converter={StaticResource Visible}}">
+                                        <StackPanel>
+                                            <StackPanel Orientation="Horizontal">
+                                                <TextBlock Text="Back with you: save the new files in R" VerticalAlignment="Center" FontWeight="SemiBold" />
+                                                <TextBox Text="{Binding RoundText, UpdateSourceTrigger=PropertyChanged}" Width="40" Margin="2,0,0,0"
+                                                         HorizontalContentAlignment="Center" VerticalContentAlignment="Center" MaxLength="2"
+                                                         AutomationProperties.Name="R folder number" ToolTip="The R folder the new files go in (R1, R2…)" />
+                                                <TextBlock Text="{Binding RoundNote}" Style="{StaticResource Muted}" FontSize="12" Margin="10,0,0,0" VerticalAlignment="Center" />
+                                            </StackPanel>
+                                            <CheckBox Content="{Binding MoveLooseIntoR0Text}" IsChecked="{Binding MoveLooseIntoR0, Mode=TwoWay}" Margin="0,8,0,0"
+                                                      Visibility="{Binding CanMoveLooseIntoR0, Converter={StaticResource Visible}}"
+                                                      ToolTip="What the folder holds outside R folders is the first round's: it goes in an R0 folder" />
+                                            <CheckBox Content="{Binding MoveOutOfReturnedText}" IsChecked="{Binding MoveOutOfReturned, Mode=TwoWay}" Margin="0,6,0,0"
+                                                      Visibility="{Binding CanMoveOutOfReturned, Converter={StaticResource Visible}}"
+                                                      ToolTip="{Binding MoveBackToolTip}" />
+                                            <TextBlock Text="Download shows these moves in a preview first; nothing moves until you confirm."
+                                                       Style="{StaticResource Muted}" FontSize="12" Margin="0,6,0,0"
+                                                       Visibility="{Binding HasRoundMoves, Converter={StaticResource Visible}}" />
+                                        </StackPanel>
+                                    </Border>
                                     <ItemsControl ItemsSource="{Binding Files}" Focusable="False">
                                         <ItemsControl.ItemTemplate>
                                             <DataTemplate DataType="{x:Type vm:DownloadFileViewModel}">

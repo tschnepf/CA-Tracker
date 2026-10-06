@@ -8,6 +8,7 @@ using Microsoft.Win32;
 using SmcCaTracker.App.Services;
 using SmcCaTracker.App.ViewModels;
 using SmcCaTracker.Core.Downloads;
+using SmcCaTracker.Core.Operations;
 using SmcCaTracker.Core.Storage;
 
 namespace SmcCaTracker.App.Views;
@@ -33,6 +34,9 @@ public partial class DownloadWindow : Window
     private bool downloading;
     private bool stopRequested;
     private bool downloadedOnce;
+
+    // Folders moved for new rounds by this Download (the main window then lists the folders again).
+    private bool foldersMoved;
 
     // Progress of the download in progress.
     private int filesDone;
@@ -355,16 +359,24 @@ public partial class DownloadWindow : Window
         }
 
         stopRequested = false;
+        foldersMoved = false;
         filesDone = 0;
         filesPlanned = items.Where(item => item.CanChangeFiles).Sum(item => item.CheckedCount);
         var saved = 0;
         var failed = 0;
         var needFolder = 0;
+        var cancelled = false;
         var folders = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         StatusText.SetResourceReference(System.Windows.Controls.TextBlock.ForegroundProperty, "TextSecondary");
         SetRunning(true);
         try
         {
+            if (!await MoveForNewRoundsAsync())
+            {
+                cancelled = true;
+                return;
+            }
+
             foreach (var item in items.ToList())
             {
                 if (stopRequested || closing.IsCancellationRequested)
@@ -403,6 +415,15 @@ public partial class DownloadWindow : Window
                     continue;
                 }
 
+                if (item.WaitsForMove)
+                {
+                    // Its folder was to move out of Returned first and hasn't: nothing is saved where it isn't yet.
+                    item.Message = "Its folder hasn't moved out of Returned yet. Select Download again, or uncheck moving it.";
+                    item.IsExpanded = true;
+                    filesPlanned -= selected.Count;
+                    continue;
+                }
+
                 var (itemSaved, itemFailed) = await DownloadItemAsync(item, selected);
                 saved += itemSaved;
                 failed += itemFailed;
@@ -422,19 +443,62 @@ public partial class DownloadWindow : Window
             ProgressPanel.Visibility = Visibility.Collapsed;
             if (!closing.IsCancellationRequested)
             {
-                SetStatus(Summary(saved, failed, needFolder, folders.Count, stopRequested));
+                SetStatus(cancelled ? "Cancelled — nothing was moved or saved." : Summary(saved, failed, needFolder, folders.Count, stopRequested));
                 if (failed > 0 || needFolder > 0)
                 {
                     StatusText.SetResourceReference(System.Windows.Controls.TextBlock.ForegroundProperty, "WarningBrush");
                 }
             }
 
-            if (saved > 0)
+            if (saved > 0 || foldersMoved)
             {
-                // Also when the window was closed part-way, so the main window sees the new files.
+                // Also when the window was closed part-way, so the main window sees the new files (and moved folders).
                 Downloaded?.Invoke(this, EventArgs.Empty);
             }
         }
+    }
+
+    /// <summary>
+    /// Items back with you whose folders move before their files are saved (out of Returned, the first round's
+    /// files into R0): one preview for all of them, with Cancel, then the moves. False when the preview was
+    /// cancelled, so nothing is saved.
+    /// </summary>
+    private async Task<bool> MoveForNewRoundsAsync()
+    {
+        foreach (var item in items.Where(item => item.IsNewRound && item.State is DownloadItemState.Waiting or DownloadItemState.Reading).ToList())
+        {
+            ShowProgress($"Waiting for Helix to list {item.Heading}");
+            await item.ReadDone.Task;
+        }
+
+        var moving = items.Where(item => item.CanChangeFiles && item.CheckedCount > 0 && item.HasRoundMoves).ToList();
+        if (moving.Count == 0)
+        {
+            return true;
+        }
+
+        var plans = moving.Select(item => item.RoundPlan()!).ToList();
+        var plan = new OperationPlan
+        {
+            Title = plans[0].Title,
+            Description = plans[0].Description,
+            Operations = plans.SelectMany(each => each.Operations).ToList()
+        };
+        if (new PreviewWindow(plan, null) { Owner = this }.ShowDialog() != true)
+        {
+            return false;
+        }
+
+        ShowProgress("Moving folders…");
+        var results = await Task.Run(() => new OperationExecutor(paths).Execute(plan));
+        foldersMoved = true;
+        new PreviewWindow(plan, results) { Owner = this }.ShowDialog();
+        foreach (var item in moving)
+        {
+            item.RoundDone();
+        }
+
+        return true;
     }
 
     private static string Summary(int saved, int failed, int needFolder, int folderCount, bool stopped)

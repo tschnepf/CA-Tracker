@@ -1211,6 +1211,103 @@ public class TextSearchTests
     }
 }
 
+public class NewRoundTests
+{
+    [Theory]
+    [InlineData(new int[0], null, 1)]
+    [InlineData(new[] { 0 }, null, 1)]
+    [InlineData(new[] { 0, 1 }, null, 2)]
+    [InlineData(new[] { 0, 1 }, 1, 2)]
+    [InlineData(new int[0], 3, 3)]
+    [InlineData(new[] { 0, 1, 2 }, 2, 3)]
+    public void TheNewRoundIsTheNextRFolder(int[] revisions, int? titleRevision, int expected)
+    {
+        Assert.Equal(expected, NewRound.SuggestNumber(revisions, titleRevision));
+    }
+
+    [Fact]
+    public void TheFirstRoundsFilesGoIntoR0AndTheFolderMovesOutOfReturned()
+    {
+        using var temp = new TempFolder();
+        var item = temp.Make("Submittals", "~Returned", "P000253 - Power Distribution");
+        var active = temp.Make("Submittals");
+        File.WriteAllText(Path.Combine(item, "Submittal.pdf"), "s");
+        File.WriteAllText(Path.Combine(item, "Response.docx"), "r");
+        Directory.CreateDirectory(Path.Combine(item, "Markups"));
+        var hidden = Path.Combine(item, "desktop.ini");
+        File.WriteAllText(hidden, "x");
+        File.SetAttributes(hidden, FileAttributes.Hidden | FileAttributes.System);
+
+        var (plan, round) = NewRound.Plan(item, active, looseIntoR0: true, number: 1);
+
+        // Planning changes nothing; the preview lists every step.
+        Assert.True(File.Exists(Path.Combine(item, "Submittal.pdf")));
+        Assert.Equal(new[] { OperationKind.MoveFolder, OperationKind.CreateFolder, OperationKind.MoveFolder, OperationKind.MoveFile, OperationKind.MoveFile, OperationKind.CreateFolder },
+            plan.Operations.Select(operation => operation.Kind));
+        Assert.All(plan.Operations, operation => Assert.False(operation.IsBlocked));
+        var moved = Path.Combine(active, "P000253 - Power Distribution");
+        Assert.Equal(Path.Combine(moved, "R1"), round);
+
+        var results = new OperationExecutor(new AppPaths(temp.Make("appdata"))).Execute(plan);
+        Assert.All(results, result => Assert.Equal(OperationOutcome.Done, result.Outcome));
+        Assert.False(Directory.Exists(item));
+        Assert.True(File.Exists(Path.Combine(moved, "R0", "Submittal.pdf")));
+        Assert.True(File.Exists(Path.Combine(moved, "R0", "Response.docx")));
+        Assert.True(Directory.Exists(Path.Combine(moved, "R0", "Markups")));
+        Assert.True(File.Exists(Path.Combine(moved, "desktop.ini")));
+        Assert.True(Directory.Exists(round));
+    }
+
+    [Fact]
+    public void LeftInReturnedTheRFolderIsMadeWhereTheFolderIs()
+    {
+        using var temp = new TempFolder();
+        var item = temp.Make("Submittals", "~Returned", "P000253 - Power Distribution");
+        File.WriteAllText(Path.Combine(item, "Submittal.pdf"), "s");
+
+        var (plan, round) = NewRound.Plan(item, moveBackTo: null, looseIntoR0: false, number: 1);
+
+        Assert.Equal(new[] { OperationKind.CreateFolder }, plan.Operations.Select(operation => operation.Kind));
+        Assert.Equal(Path.Combine(item, "R1"), round);
+    }
+
+    [Fact]
+    public void AnExistingRFolderIsUsedAsItIs()
+    {
+        using var temp = new TempFolder();
+        var item = temp.Make("Submittals", "~Returned", "P000253 - Power Distribution");
+        temp.Make("Submittals", "~Returned", "P000253 - Power Distribution", "R0");
+        temp.Make("Submittals", "~Returned", "P000253 - Power Distribution", "Rev 1");
+        File.WriteAllText(Path.Combine(item, "Late.pdf"), "l");
+
+        var (revisions, loose) = NewRound.Read(item);
+        Assert.Equal(new[] { 0, 1 }, revisions.OrderBy(number => number));
+        Assert.Equal(new[] { "Late.pdf" }, loose.Select(entry => entry.Name));
+
+        var (plan, round) = NewRound.Plan(item, moveBackTo: null, looseIntoR0: true, number: 1);
+
+        // R0 is there already, so only the loose file moves into it; "Rev 1" takes the new files.
+        Assert.Equal(new[] { OperationKind.MoveFile }, plan.Operations.Select(operation => operation.Kind));
+        Assert.Equal(Path.Combine(item, "R0", "Late.pdf"), plan.Operations[0].DestinationPath);
+        Assert.Equal(Path.Combine(item, "Rev 1"), round);
+    }
+
+    [Fact]
+    public void NothingElseHappensWhenTheFolderCantMoveOutOfReturned()
+    {
+        using var temp = new TempFolder();
+        var item = temp.Make("Submittals", "~Returned", "P000253 - Power Distribution");
+        var active = temp.Make("Submittals");
+        temp.Make("Submittals", "P000253 - Power Distribution");
+        File.WriteAllText(Path.Combine(item, "Submittal.pdf"), "s");
+
+        var (plan, _) = NewRound.Plan(item, active, looseIntoR0: true, number: 1);
+
+        Assert.Equal("A folder with the same name is already at the destination.", plan.Operations[0].BlockedReason);
+        Assert.All(plan.Operations.Skip(1), operation => Assert.Equal("Skipped with the move above.", operation.BlockedReason));
+    }
+}
+
 public class WatchlistTests
 {
     private static Watchlist Team() => new Watchlist
