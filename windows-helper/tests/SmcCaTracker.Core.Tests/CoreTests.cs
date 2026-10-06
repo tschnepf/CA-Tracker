@@ -1168,6 +1168,49 @@ public class PersonNamesTests
     }
 }
 
+public class TextSearchTests
+{
+    [Theory]
+    [InlineData("", true)]
+    [InlineData("   ", true)]
+    [InlineData("E-101", true)]
+    [InlineData("e-101", true)]
+    [InlineData("e101", true)]
+    [InlineData("101", true)]
+    [InlineData("lighting", true)]
+    [InlineData("FIXTURE light", true)]
+    [InlineData("Rev 2", true)]
+    [InlineData("Lighting Controls", true)]
+    [InlineData("E-102", false)]
+    [InlineData("lighting panels", false)]
+    [InlineData("-", true)]
+    public void EveryWordHasToBeInTheNumberTitleOrFolder(string search, bool expected)
+    {
+        Assert.Equal(expected, TextSearch.Matches(TextSearch.Words(search), "E-101 Rev 2",
+            "Light fixture schedule", "E-101 - Lighting Controls"));
+    }
+
+    [Theory]
+    [InlineData("033000", true)]
+    [InlineData("03 30 00", true)]
+    [InlineData("03.30.00-1", true)]
+    [InlineData("0330001", true)]
+    [InlineData("033001", false)]
+    public void SpacesAndDashesInTheNumberDontCount(string search, bool expected)
+    {
+        Assert.Equal(expected, TextSearch.Matches(TextSearch.Words(search), "03 30 00-1", "Concrete mix"));
+    }
+
+    [Fact]
+    public void SpacesAndDashesOnlyStopCountingInTheNumber()
+    {
+        // "e1" isn't in "Pipe 12" just because the words run together without the space.
+        Assert.False(TextSearch.Matches(TextSearch.Words("e1"), "RFI-7", "Pipe 12"));
+        Assert.True(TextSearch.Matches(TextSearch.Words("pipe"), null, null, "Pipe 12"));
+        Assert.False(TextSearch.Matches(TextSearch.Words("pipe"), null));
+    }
+}
+
 public class WatchlistTests
 {
     private static Watchlist Team() => new Watchlist

@@ -477,6 +477,47 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     public bool IsProjectSearchEmpty => projectSearch.Length == 0;
     public bool HasNoSearchResults => projectSearch.Trim().Length > 0 && !Projects.Any(IsShownInList);
 
+    private string itemSearch = "";
+    private string[] itemSearchWords = [];
+
+    /// <summary>
+    /// The search box above the list: only items whose number, title or folder name contains each word typed.
+    /// Just the list (and the RFIs / Submittals counts); the other counts don't change, and it isn't remembered.
+    /// </summary>
+    public string ItemSearch
+    {
+        get => itemSearch;
+        set
+        {
+            if (Set(ref itemSearch, value ?? ""))
+            {
+                itemSearchWords = TextSearch.Words(itemSearch);
+                OnPropertyChanged(nameof(HasItemSearch));
+                RebuildRows();
+            }
+        }
+    }
+
+    public bool HasItemSearch => itemSearchWords.Length > 0;
+
+    private bool MatchesSearch(RowViewModel row) =>
+        itemSearchWords.Length == 0
+        || TextSearch.Matches(itemSearchWords, row.Row.Item is null ? null : row.Number, row.Row.Item?.Title, row.Row.Folder?.Name);
+
+    /// <summary>Nothing shown contains what was typed, but items the filters hide do: "Search all items" shows them.</summary>
+    public bool HasHiddenSearchMatches => Rows.Count == 0 && HasItemSearch && allRows.Any(MatchesSearch);
+
+    /// <summary>"Clear filters" under an empty list; while searching, the search's own buttons take its place.</summary>
+    public bool CanClearFilters => HasActiveFilters && !HasItemSearch;
+
+    /// <summary>"Search all items": every item of either type, everyone's, any due date and discipline.</summary>
+    public void SearchAllItems()
+    {
+        ClearFilters();
+        Filter = Filters.All;
+        SelectedType = ItemTypeChoices.Both;
+    }
+
     /// <summary>Width of the project list (remembered).</summary>
     public double ProjectsPaneWidth
     {
@@ -2410,6 +2451,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         : IsPlaceholder && Rows.Count == 0 ? "Select Choose CA folder… to track this project's RFIs and Submittals against its CA folder."
         : !HasCaFolder && Rows.Count == 0 ? "Choose this project's CA folder in Edit project."
         : !IsConnected && Rows.Count == 0 ? "Link this project to its Helix or Procore project (Link… above), then Sync, to compare its items."
+        : Rows.Count == 0 && HasItemSearch ? SearchEmptyText()
         : Rows.Count == 0 && IsFiling ? Filter switch
         {
             Filters.Ready => "No folders are ready to return.",
@@ -2425,6 +2467,15 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         : "";
 
     public bool HasEmptyText => EmptyText.Length > 0;
+
+    private string SearchEmptyText()
+    {
+        var hidden = allRows.Count(MatchesSearch);
+        var search = itemSearch.Trim();
+        return hidden == 0 ? $"No item's number, title or folder contains \"{search}\"."
+            : hidden == 1 ? $"None of the items shown contain \"{search}\". One hidden by the filters above does."
+            : $"None of the items shown contain \"{search}\". {hidden} hidden by the filters above do.";
+    }
 
     /// <summary>Anything narrower than the default view (open items, everyone, any date, every discipline).</summary>
     public bool HasActiveFilters => Filter != Filters.Open || HasPersonFilter || DueFilter != DueFilter.Any || DisciplineFilter.Length > 0;
@@ -3720,7 +3771,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         var label = itemType == ItemTypeChoices.Both ? "Both" : ItemTypes.Plural(itemType);
         var count = allRows.Count(row => (itemType == ItemTypeChoices.Both
                 || string.Equals(row.Row.ItemType, itemType, StringComparison.OrdinalIgnoreCase))
-            && Matches(row));
+            && Matches(row) && MatchesSearch(row));
         return count == 0 ? label : $"{label} ({count})";
     }
 
@@ -3730,6 +3781,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         var visible = allRows
             .Where(MatchesType)
             .Where(Matches)
+            .Where(MatchesSearch)
             .OrderBy(row => row, Comparer<RowViewModel>.Create(CompareRows))
             .ToList();
         Rows.ReplaceAll(visible);
@@ -3743,6 +3795,8 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         OnPropertyChanged(nameof(ReopenedText));
         OnPropertyChanged(nameof(HasEmptyText));
         OnPropertyChanged(nameof(HasActiveFilters));
+        OnPropertyChanged(nameof(CanClearFilters));
+        OnPropertyChanged(nameof(HasHiddenSearchMatches));
         RaiseChecks();
         OnPropertyChanged(nameof(RfiTabText));
         OnPropertyChanged(nameof(SubmittalTabText));
@@ -4099,7 +4153,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
                      nameof(CompanyText), nameof(FolderWarning), nameof(HasFolderWarning), nameof(CanCreateTypeFolders),
                      nameof(HasSetupChip), nameof(SetupIssuesText), nameof(CanShowProjectDetails), nameof(CanEditProject), nameof(HasDueChips),
                      nameof(LastSyncFailed), nameof(CanIncludeUnlabeled), nameof(IncludeUnlabeledText), nameof(MarkReturnedToolTip),
-                     nameof(HasActiveFilters),
+                     nameof(HasActiveFilters), nameof(CanClearFilters), nameof(HasHiddenSearchMatches),
                      nameof(IsPlaceholder), nameof(CanEditConnection), nameof(EditButtonText),
                      nameof(RfiTabText), nameof(SubmittalTabText), nameof(BothTabText), nameof(IsMultiProject), nameof(EmptyText), nameof(HasEmptyText), nameof(Comparison)
                  })

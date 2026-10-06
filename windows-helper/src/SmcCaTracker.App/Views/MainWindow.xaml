@@ -682,11 +682,45 @@
                     </StackPanel>
                 </Border>
 
-                <!-- The type, then the filters, each saying what it is set to ("Open items", "Any due date"), and View
-                     (grouping, sort and columns). On one line in a wide window; they wrap together otherwise. -->
+                <!-- Find an item, the type, then the filters, each saying what it is set to ("Open items", "Any due date"),
+                     and View (grouping, sort and columns). On one line in a wide window; they wrap together otherwise. -->
                 <WrapPanel Grid.Row="1" Margin="0,10,0,4">
+                    <!-- Find an item (Ctrl+E): as you type, only items whose number, title or folder name contains it. -->
+                    <Grid Width="250" Margin="0,0,10,6">
+                        <TextBox x:Name="ItemSearchBox" Text="{Binding ItemSearch, UpdateSourceTrigger=PropertyChanged, Delay=150}"
+                                 Padding="8,5,28,5" VerticalContentAlignment="Center" AutomationProperties.Name="Find an item"
+                                 PreviewKeyDown="ItemSearch_PreviewKeyDown"
+                                 ToolTip="Shows only the items whose number, title or folder name contains what you type. Esc clears it; Down goes to the list." />
+                        <TextBlock Text="Find by number or title (Ctrl+E)" Foreground="{DynamicResource TextMuted}" Margin="11,0,0,0"
+                                   VerticalAlignment="Center" IsHitTestVisible="False">
+                            <TextBlock.Style>
+                                <Style TargetType="TextBlock">
+                                    <Setter Property="Visibility" Value="Collapsed" />
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding Text.Length, ElementName=ItemSearchBox}" Value="0">
+                                            <Setter Property="Visibility" Value="Visible" />
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </TextBlock.Style>
+                        </TextBlock>
+                        <Button Content="✕" Click="ClearItemSearch_Click" HorizontalAlignment="Right" VerticalAlignment="Center" Margin="0,0,3,0"
+                                Padding="6,1" FontSize="11" Foreground="{DynamicResource TextSecondary}" Focusable="False"
+                                AutomationProperties.Name="Clear the search" ToolTip="Clear the search (Esc)">
+                            <Button.Style>
+                                <Style TargetType="Button" BasedOn="{StaticResource LinkButton}">
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding Text.Length, ElementName=ItemSearchBox}" Value="0">
+                                            <Setter Property="Visibility" Value="Collapsed" />
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </Button.Style>
+                        </Button>
+                    </Grid>
+
                     <StackPanel Orientation="Horizontal" Margin="0,0,6,6">
-                        <RadioButton GroupName="Type" Style="{StaticResource SegmentButton}" Padding="9,5"
+                        <RadioButton x:Name="BothTypeButton" GroupName="Type" Style="{StaticResource SegmentButton}" Padding="9,5"
                                      Content="{Binding BothTabText}" Tag="all" IsChecked="True" Checked="Type_Checked"
                                      ToolTip="RFIs and Submittals in one list" />
                         <RadioButton GroupName="Type" Style="{StaticResource SegmentButton}" Padding="9,5"
@@ -1030,7 +1064,15 @@
                                 Visibility="{Binding HasEmptyText, Converter={StaticResource Visible}}">
                         <TextBlock Text="{Binding EmptyText}" Style="{StaticResource Muted}" FontSize="14" TextAlignment="Center" MaxWidth="520" />
                         <Button Content="Clear filters" Click="ClearFilters_Click" HorizontalAlignment="Center" Margin="0,10,0,0"
-                                Visibility="{Binding HasActiveFilters, Converter={StaticResource Visible}}" />
+                                Visibility="{Binding CanClearFilters, Converter={StaticResource Visible}}" />
+                        <!-- Searching: look past the filters, or stop searching. -->
+                        <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" Margin="0,10,0,0"
+                                    Visibility="{Binding HasItemSearch, Converter={StaticResource Visible}}">
+                            <Button Content="Search all items" Click="SearchAllItems_Click" Style="{StaticResource AccentButton}" Margin="0,0,8,0"
+                                    ToolTip="Every item of either type, open or closed, whoever has it, any due date and discipline"
+                                    Visibility="{Binding HasHiddenSearchMatches, Converter={StaticResource Visible}}" />
+                            <Button Content="Clear search" Click="ClearItemSearch_Click" />
+                        </StackPanel>
                     </StackPanel>
 
                     <!-- Actions on the checked items, shown while something is checked (or ready to return). Only

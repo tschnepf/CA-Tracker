@@ -1863,6 +1863,12 @@ public partial class MainWindow : Window
             ProjectSearchBox.Focus();
             ProjectSearchBox.SelectAll();
         }
+        else if (e.Key == Key.E && Keyboard.Modifiers == ModifierKeys.Control)
+        {
+            e.Handled = true;
+            ItemSearchBox.Focus();
+            ItemSearchBox.SelectAll();
+        }
         else if (e.Key == Key.Escape && ItemPanel.Visibility == Visibility.Visible && !PersonPopup.IsOpen
                  && Keyboard.FocusedElement is not TextBox)
         {
@@ -1872,6 +1878,76 @@ public partial class MainWindow : Window
     }
 
     /// <summary>Esc in "Find a project" clears it; Enter goes to the list.</summary>
+    /// <summary>Find an item: Esc clears it; Down or Enter goes to the first item in the list (Enter there opens it).</summary>
+    private void ItemSearch_PreviewKeyDown(object sender, KeyEventArgs e)
+    {
+        if (Keyboard.Modifiers != ModifierKeys.None)
+        {
+            return;
+        }
+
+        if (e.Key == Key.Escape && ItemSearchBox.Text.Length > 0)
+        {
+            e.Handled = true;
+            ClearItemSearch();
+        }
+        else if (e.Key is Key.Down or Key.Enter)
+        {
+            e.Handled = true;
+            // Filter now rather than after the typing pause, so the first item is the one the search found.
+            ItemSearchBox.GetBindingExpression(TextBox.TextProperty)?.UpdateSource();
+            FocusFirstItem();
+        }
+    }
+
+    private void FocusFirstItem()
+    {
+        if (ItemsGrid.Items.Count == 0)
+        {
+            return;
+        }
+
+        var first = ItemsGrid.Items[0];
+        ItemsGrid.SelectedItem = first;
+        ItemsGrid.ScrollIntoView(first);
+        ItemsGrid.UpdateLayout();
+        if (ItemsGrid.Columns.FirstOrDefault(column => column.Visibility == Visibility.Visible) is { } column)
+        {
+            ItemsGrid.CurrentCell = new DataGridCellInfo(first, column);
+        }
+
+        if (ItemsGrid.ItemContainerGenerator.ContainerFromItem(first) is DataGridRow row)
+        {
+            row.Focus();
+        }
+        else
+        {
+            ItemsGrid.Focus();
+        }
+    }
+
+    private void ClearItemSearch_Click(object sender, RoutedEventArgs e)
+    {
+        ClearItemSearch();
+        ItemSearchBox.Focus();
+    }
+
+    private void ClearItemSearch()
+    {
+        ItemSearchBox.Clear();
+        // Straight away, not after the typing pause.
+        ItemSearchBox.GetBindingExpression(TextBox.TextProperty)?.UpdateSource();
+    }
+
+    /// <summary>"Search all items": the search stays; the filters open up to every item.</summary>
+    private void SearchAllItems_Click(object sender, RoutedEventArgs e)
+    {
+        viewModel.SearchAllItems();
+        BothTypeButton.IsChecked = true;
+        ShowFilterChoices();
+        ApplyItemGrouping();
+    }
+
     private void ProjectSearch_KeyDown(object sender, KeyEventArgs e)
     {
         if (e.Key == Key.Escape && ProjectSearchBox.Text.Length > 0)
