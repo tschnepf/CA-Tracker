@@ -20,6 +20,8 @@ namespace SmcCaTracker.App.ViewModels;
 /// <summary>How the item list is split into sections.</summary>
 public static class GroupModes
 {
+    /// <summary>Overdue, due today, in the next 7 days, later, no due date, closed (the default).</summary>
+    public const string Urgency = "urgency";
     public const string None = "none";
     public const string Project = "project";
     public const string Type = "type";
@@ -75,12 +77,13 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     private readonly DispatcherTimer viewStateTimer;
     private readonly HashSet<string> rememberedPeople = new(StringComparer.OrdinalIgnoreCase);
     private bool rememberCompany;
+    private bool peopleDefaulted;
     private bool viewStateReady;
     private readonly Dictionary<string, ProjectComparison> comparisons = new(StringComparer.Ordinal);
     private List<RowViewModel> allRows = new();
     private string sortColumn = "Number";
     private bool sortDescending;
-    private string groupBy = GroupModes.ProjectAndType;
+    private string groupBy = GroupModes.Urgency;
     private bool refreshingMany;
     private bool stopMany;
     private readonly DispatcherTimer storeDebounce;
@@ -522,6 +525,9 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     // list only has people holding something in the shown projects, and a check must keep filtering
     // when you switch to a project where that person holds nothing.
     public bool HasPersonFilter => rememberCompany || rememberedPeople.Count > 0;
+
+    /// <summary>Exactly one person checked: every row is theirs, so the Ball in court column is hidden.</summary>
+    public bool IsOnePersonFilter => !rememberCompany && rememberedPeople.Count == 1;
     public bool HasNoPersonChoices => PersonChoices.Count == 0;
 
     /// <summary>What the Ball in court button shows: Everyone, one or two names, or a count.</summary>
@@ -545,6 +551,61 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     }
 
     private bool suppressPersonEvents;
+
+    /// <summary>The names you're signed in to Helix and Procore as (the same form as the ball-in-court names).</summary>
+    private List<string> YourNames() => new[] { store.Account(Providers.Helix)?.UserName, store.Account(Providers.Procore)?.UserName }
+        .Where(name => !string.IsNullOrWhiteSpace(name))
+        .Select(name => PersonNames.WithoutCompany(name))
+        .Distinct(StringComparer.OrdinalIgnoreCase)
+        .ToList();
+
+    /// <summary>
+    /// The first time your name is known, Ball in court starts as you (unless someone is already
+    /// checked). Only once, so choosing Everyone afterwards sticks.
+    /// </summary>
+    private void DefaultPeopleToYou()
+    {
+        if (peopleDefaulted || !viewStateReady)
+        {
+            return;
+        }
+
+        var names = YourNames();
+        if (names.Count == 0)
+        {
+            return;
+        }
+
+        peopleDefaulted = true;
+        var add = DefaultPeople.ToCheck(rememberedPeople, rememberCompany, names);
+        if (add.Count > 0)
+        {
+            AppLog.Info("view", $"Ball in court starts as you ({string.Join(", ", add)}).");
+            rememberedPeople.UnionWith(add);
+            RebuildPersonOptions();
+            RebuildRows();
+        }
+
+        ScheduleViewStateSave();
+    }
+
+    /// <summary>"Just you" in the Ball in court list: only your own names checked.</summary>
+    public bool CanShowOnlyYou => YourNames().Count > 0;
+
+    public void ShowOnlyYou()
+    {
+        var names = YourNames();
+        if (names.Count == 0)
+        {
+            return;
+        }
+
+        rememberedPeople.Clear();
+        rememberedPeople.UnionWith(names);
+        rememberCompany = false;
+        RebuildPersonOptions();
+        RebuildRows();
+    }
 
     /// <summary>Back to the default view: open items, everyone, any date, every discipline.</summary>
     public void ClearFilters()
@@ -936,6 +997,8 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         OnPropertyChanged(nameof(SignInBannerText));
         OnPropertyChanged(nameof(CanSignOutOfBrowser));
         OnPropertyChanged(nameof(IsSignedOutOfBrowser));
+        OnPropertyChanged(nameof(CanShowOnlyYou));
+        DefaultPeopleToYou();
     }
 
     /// <summary>Signed in to Helix or Procore (or the sign-in has expired): the sign-out buttons apply.</summary>
@@ -1716,9 +1779,20 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     }
 
     /// <summary>Hover text for Move to Returned: what "returned" means for this project.</summary>
-    public string MarkReturnedToolTip => CompanyText.Length > 0
-        ? $"{CompanyText} A preview shows every move before anything changes."
-        : "Moves the checked folders into the Returned folder. A preview shows every move before anything changes.";
+    public string MarkReturnedToolTip
+    {
+        get
+        {
+            var rule = CompanyText.Length > 0 ? CompanyText : "Moves the checked folders that are ready to return into the Returned folder.";
+            var others = checks.Returnable - checks.Ready;
+            var note = checks.Returnable == 0 ? ""
+                : checks.Ready == 0 ? " None of the checked folders is ready to return, so you're asked first."
+                : others == 1 ? " 1 checked folder isn't ready to return and stays where it is."
+                : others > 1 ? $" {others} checked folders aren't ready to return and stay where they are."
+                : "";
+            return $"{rule}{note} A preview shows every move before anything changes.";
+        }
+    }
 
     /// <summary>The selected project is a Helix/Procore project with no CA folder chosen yet.</summary>
     public bool IsPlaceholder => SelectedProject?.IsPlaceholder == true;
@@ -1748,9 +1822,9 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     public bool HasActiveFilters => Filter != Filters.Open || HasPersonFilter || DueFilter != DueFilter.Any || DisciplineFilter.Length > 0;
 
     /// <summary>What is checked, worked out once per change (checking every shown row is one change).</summary>
-    private sealed record CheckSummary(int Checked, int Hidden, int Returnable, int MoveBack, int Discipline, int Download)
+    private sealed record CheckSummary(int Checked, int Hidden, int Returnable, int Ready, int MoveBack, int Discipline, int Download)
     {
-        public static readonly CheckSummary None = new(0, 0, 0, 0, 0, 0);
+        public static readonly CheckSummary None = new(0, 0, 0, 0, 0, 0, 0);
     }
 
     private CheckSummary checks = CheckSummary.None;
@@ -1771,6 +1845,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
             checkedRows.Count,
             checkedRows.Count - Rows.Count(row => row.IsChecked),
             Folders(checkedRows.Where(row => row.Row.CanMarkReturned)),
+            Folders(checkedRows.Where(row => row.Row.CanMarkReturned && row.Status == RowStatus.ReadyToReturn)),
             Folders(checkedRows.Where(row => row.Row.CanMoveBack)),
             checkedRows.Count(row => row.CanSelect),
             checkedRows.Where(row => row.CanDownload)
@@ -1802,7 +1877,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
                      nameof(CheckedCount), nameof(HasChecks), nameof(SelectionText), nameof(AllShownChecked),
                      nameof(CanMarkReturned), nameof(MarkReturnedText), nameof(CanMoveBack), nameof(MoveBackText),
                      nameof(CanSetDiscipline), nameof(SetDisciplineText), nameof(CanDownloadChecked), nameof(DownloadCheckedText),
-                     nameof(VerifyCheckedText)
+                     nameof(VerifyCheckedText), nameof(MarkReturnedToolTip), nameof(ShowActionBar)
                  })
         {
             OnPropertyChanged(name);
@@ -1812,12 +1887,31 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     public int CheckedCount => checks.Checked;
     public bool HasChecks => checks.Checked > 0;
 
+    private int readyShown;
+
+    /// <summary>Shown rows that are ready to return, for "Check all ready to return".</summary>
+    public int ReadyShownCount => readyShown;
+    public bool HasReadyShown => readyShown > 0;
+    public string CheckReadyText => readyShown == 1 ? "Check the 1 ready to return" : $"Check all {readyShown} ready to return";
+
+    /// <summary>The action bar shows only while something is checked or something shown is ready to return.</summary>
+    public bool ShowActionBar => HasChecks || HasReadyShown;
+
     public string SelectionText => checks.Checked == 0 ? "Nothing checked"
         : checks.Hidden > 0 ? $"{checks.Checked} checked ({checks.Hidden} hidden by filters)"
         : $"{checks.Checked} checked";
 
+    /// <summary>Some checked folders are in the active folder, ready to return or not.</summary>
     public bool CanMarkReturned => checks.Returnable > 0;
-    public string MarkReturnedText => checks.Returnable == 0 ? "Move to Returned…" : $"Move {checks.Returnable} to Returned…";
+
+    /// <summary>
+    /// Move to Returned moves the checked folders that are ready to return. Only when none of them is
+    /// does it offer the other checked folders, and then it asks first.
+    /// </summary>
+    public string MarkReturnedText => checks.Returnable == 0 ? "Move to Returned…"
+        : checks.Ready == 0 ? $"Move {checks.Returnable} to Returned anyway…"
+        : checks.Ready < checks.Returnable ? $"Move {checks.Ready} ready to Returned…"
+        : $"Move {checks.Ready} to Returned…";
     public bool CanMoveBack => checks.MoveBack > 0;
     public string MoveBackText => checks.MoveBack == 0 ? "Move back to active…" : $"Move {checks.MoveBack} back to active…";
     public bool CanSetDiscipline => checks.Discipline > 0;
@@ -3021,8 +3115,12 @@ public sealed class MainViewModel : ObservableObject, IDisposable
             .OrderBy(row => row, Comparer<RowViewModel>.Create(CompareRows))
             .ToList();
         Rows.ReplaceAll(visible);
+        readyShown = visible.Count(row => row.Status == RowStatus.ReadyToReturn && row.CanSelect);
 
         OnPropertyChanged(nameof(EmptyText));
+        OnPropertyChanged(nameof(ReadyShownCount));
+        OnPropertyChanged(nameof(HasReadyShown));
+        OnPropertyChanged(nameof(CheckReadyText));
         OnPropertyChanged(nameof(HasEmptyText));
         OnPropertyChanged(nameof(HasActiveFilters));
         RaiseChecks();
@@ -3147,6 +3245,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
 
             var matching = source.Rows.Where(row => MatchesType(row) && Matches(row)).ToList();
             project.OverdueCount = matching.Count(row => row.IsOverdue);
+            project.MatchingNoun = MatchingNoun(matching.Count);
             project.MatchingCount = matching.Count;
         }
 
@@ -3155,6 +3254,17 @@ public sealed class MainViewModel : ObservableObject, IDisposable
             badgeSources.Remove(gone);
         }
     }
+
+    /// <summary>What a project's count is of, for its badge ("12 open", "1 item", "3 ready").</summary>
+    private string MatchingNoun(int count) => Filter switch
+    {
+        Filters.All => count == 1 ? "item" : "items",
+        Filters.Attention => count == 1 ? "needs attention" : "need attention",
+        Filters.Ready => "ready",
+        Filters.NoFolder => "with no folder",
+        Filters.Returned => "in Returned",
+        _ => "open"
+    };
 
     private bool MatchesType(RowViewModel row) =>
         SelectedType == ItemTypeChoices.Both || string.Equals(row.Row.ItemType, SelectedType, StringComparison.OrdinalIgnoreCase);
@@ -3170,8 +3280,10 @@ public sealed class MainViewModel : ObservableObject, IDisposable
             return true;
         }
 
-        // Any checked person (or anyone at the company) having the item is a match.
-        return (rememberCompany && row.Holders.Any(holder => row.Comparison.Company.Matches(holder.CompanyId, holder.Company)))
+        // Any checked person (or anyone at the company) having the item is a match. A person Procore lists
+        // only by name may have the company in brackets after it.
+        return (rememberCompany && row.Holders.Any(holder => row.Comparison.Company.Matches(holder.CompanyId, holder.Company)
+                    || row.Comparison.Company.Matches(null, PersonNames.CompanyIn(holder.Name))))
             || row.HolderNames.Any(rememberedPeople.Contains);
     }
 
@@ -3181,6 +3293,15 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     /// </summary>
     private int CompareRows(RowViewModel left, RowViewModel right)
     {
+        if (groupBy is GroupModes.Urgency)
+        {
+            var byUrgency = left.Urgency.CompareTo(right.Urgency);
+            if (byUrgency != 0)
+            {
+                return byUrgency;
+            }
+        }
+
         if (groupBy is GroupModes.Project or GroupModes.ProjectAndType)
         {
             var byProject = string.Compare(left.ProjectName, right.ProjectName, StringComparison.CurrentCultureIgnoreCase);
@@ -3247,7 +3368,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     {
         nameof(RowViewModel.ProjectName) => row.ProjectName,
         nameof(RowViewModel.TypeLabel) => row.TypeLabel,
-        nameof(RowViewModel.Title) => row.Title,
+        nameof(RowViewModel.Title) => row.TitleText,
         nameof(RowViewModel.ProviderStatus) => row.ProviderStatus,
         nameof(RowViewModel.PersonSortKey) or nameof(RowViewModel.HolderText) => row.PersonSortKey,
         nameof(RowViewModel.FolderName) => row.HasFolder ? row.FolderName : "",
@@ -3271,12 +3392,15 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         }
 
         var holding = allRows.SelectMany(row => row.HolderNames).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var you = YourNames().ToHashSet(StringComparer.OrdinalIgnoreCase);
         // People checked earlier who hold nothing here stay listed (greyed), so the list shows what filters.
+        // You come first among the names.
         choices.AddRange(holding.Concat(rememberedPeople)
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .OrderBy(name => !holding.Contains(name))
+            .ThenBy(name => !you.Contains(name))
             .ThenBy(name => name, StringComparer.CurrentCultureIgnoreCase)
-            .Select(name => new PersonChoiceViewModel(name, isCompany: false) { IsAbsent = !holding.Contains(name) }));
+            .Select(name => new PersonChoiceViewModel(name, isCompany: false) { IsAbsent = !holding.Contains(name), IsYou = you.Contains(name) }));
 
         foreach (var old in PersonChoices)
         {
@@ -3442,14 +3566,15 @@ public sealed class MainViewModel : ObservableObject, IDisposable
 
     private void ApplySavedView(ViewState view)
     {
+        view.Upgrade();
         selectedType = view.ItemType is ItemTypeChoices.Both or ItemTypes.Rfi or ItemTypes.Submittal ? view.ItemType : ItemTypeChoices.Both;
         filter = string.IsNullOrWhiteSpace(view.Filter) ? Filters.Open : view.Filter;
         dueFilter = Enum.TryParse<DueFilter>(view.Due, out var due) ? due : DueFilter.Any;
         dueWithinDays = Math.Clamp(view.DueWithinDays, 0, 365);
         disciplineFilter = view.Discipline ?? "";
-        groupBy = view.GroupBy is GroupModes.None or GroupModes.Project or GroupModes.Type or GroupModes.ProjectAndType
+        groupBy = view.GroupBy is GroupModes.Urgency or GroupModes.None or GroupModes.Project or GroupModes.Type or GroupModes.ProjectAndType
             ? view.GroupBy
-            : GroupModes.ProjectAndType;
+            : GroupModes.Urgency;
         sortColumn = string.IsNullOrWhiteSpace(view.SortColumn) ? nameof(RowViewModel.Number) : view.SortColumn;
         sortDescending = view.SortDescending;
         sortBy = view.SortPreset ?? "";
@@ -3469,13 +3594,19 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         projectsPaneWidth = view.ProjectsPaneWidth is >= 200 and <= 700 ? view.ProjectsPaneWidth : 290;
         hiddenColumns.Clear();
         hiddenColumns.UnionWith(view.HiddenColumns ?? new List<string>());
+        // Checked names are kept without a company in brackets, as the list now shows them.
         rememberedPeople.Clear();
-        rememberedPeople.UnionWith(view.People);
+        rememberedPeople.UnionWith(view.People.Select(PersonNames.WithoutCompany).Where(name => name.Length > 0));
         rememberCompany = view.AnyoneAtCompany;
+        peopleDefaulted = view.PeopleDefaulted;
     }
 
     /// <summary>Called by the window once it has restored the saved view; changes are saved from then on.</summary>
-    public void ViewStateRestored() => viewStateReady = true;
+    public void ViewStateRestored()
+    {
+        viewStateReady = true;
+        DefaultPeopleToYou();
+    }
 
     private void ScheduleViewStateSave()
     {
@@ -3497,6 +3628,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
 
         store.SaveViewState(new ViewState
         {
+            Version = ViewState.CurrentVersion,
             // Projects not yet tracked are remembered too; they're matched by id next time.
             SelectedProjectIds = selectedProjects.Select(project => project.Id).ToList(),
             PrimaryProjectId = SelectedProject?.Id,
@@ -3504,6 +3636,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
             Filter = filter,
             People = rememberedPeople.OrderBy(name => name, StringComparer.CurrentCultureIgnoreCase).ToList(),
             AnyoneAtCompany = rememberCompany,
+            PeopleDefaulted = peopleDefaulted,
             Due = dueFilter.ToString(),
             DueWithinDays = dueWithinDays,
             Discipline = disciplineFilter,

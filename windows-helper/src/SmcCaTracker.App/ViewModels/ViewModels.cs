@@ -405,8 +405,23 @@ public sealed class ProjectViewModel : ObservableObject
         }
     }
 
+    private string matchingNoun = "open";
+
+    /// <summary>What the count is of, after the Show filter: "open", "items", "ready", …</summary>
+    public string MatchingNoun
+    {
+        get => matchingNoun;
+        set
+        {
+            if (Set(ref matchingNoun, value))
+            {
+                OnPropertyChanged(nameof(BadgeText));
+            }
+        }
+    }
+
     public bool HasBadge => MatchingCount > 0;
-    public string BadgeText => MatchingCount?.ToString() ?? "";
+    public string BadgeText => MatchingCount is { } count ? $"{count} {matchingNoun}" : "";
     public string BadgeToolTip => MatchingCount == 1 ? "1 item matches the filters above the item list" : $"{MatchingCount} items match the filters above the item list";
     public string OverdueText => $"{OverdueCount} overdue";
     public bool HasOverdue => OverdueCount > 0 && HasBadge;
@@ -440,9 +455,14 @@ public sealed class RowViewModel : ObservableObject
         var folders = comparison.Folders;
         CourtText = row.Item is null ? "" : CourtEvaluator.Describe(row.Court, company);
         Holders = ItemTiming.CurrentHolders(row.Item);
-        HolderNames = Holders.Select(holder => holder.Name.Trim()).ToList();
+        // Names without a company in brackets, so a person Procore writes both ways is one person.
+        HolderNames = Holders.Select(holder => PersonNames.WithoutCompany(holder.Name))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
         DaysInCourt = ItemTiming.DaysInCourt(row.Item, today);
         DaysTillDue = ItemTiming.DaysTillDue(row.Item, today);
+        DueText = ItemTiming.DueText(row.Item, today);
+        Urgency = ItemTiming.UrgencyOf(row.Item, today);
         // Where the folder sits, e.g. "Submittals\Elec\BB" or "Submittals\Elec\~Returned".
         var typeName = FolderLayout.DisplayName(folders.TypeFolder(row.ItemType));
         LocationText = row.Folder is null ? ""
@@ -479,20 +499,15 @@ public sealed class RowViewModel : ObservableObject
     public string DaysInCourtText => DaysInCourt is { } days ? days == 1 ? "1 day" : $"{days} days" : "";
 
     public int? DaysTillDue { get; }
-    public string DueDateText => Row.Item?.DueAt is { } due ? due.ToLocalTime().ToString("MMM d, yyyy") : "";
+    /// <summary>The Due column: date and countdown, "Sep 7 · 26 days overdue".</summary>
+    public string DueText { get; }
 
-    public string DaysTillDueText => DaysTillDue switch
-    {
-        null => "",
-        < -1 => $"{-DaysTillDue} days overdue",
-        -1 => "1 day overdue",
-        0 => "Due today",
-        1 => "Tomorrow",
-        _ => $"In {DaysTillDue} days"
-    };
+    /// <summary>The "When it's due" heading this row is listed under.</summary>
+    public Urgency Urgency { get; }
+    public string UrgencyText => ItemTiming.UrgencyLabel(Urgency);
 
-    /// <summary>Hover text for "Days till due" (the date column starts hidden).</summary>
-    public string DueToolTip => DueDateText.Length == 0 ? "No due date" : $"Due {DueDateText}";
+    /// <summary>Hover text for the Due column: the full date with its weekday.</summary>
+    public string DueToolTip => Row.Item?.DueAt is { } due ? $"Due {due.ToLocalTime():dddd, MMMM d, yyyy}" : "No due date";
 
     public bool IsOverdue => DaysTillDue < 0;
     public bool IsDueToday => DaysTillDue == 0;
@@ -512,6 +527,14 @@ public sealed class RowViewModel : ObservableObject
         : string.IsNullOrWhiteSpace(item.Revision) || item.Revision == "0" ? item.Number
         : $"{item.Number} Rev {item.Revision}";
     public string Title => Row.Item?.Title ?? "";
+
+    /// <summary>The Title column: the item's title, or the folder's name for a folder with no item.</summary>
+    public string TitleText => Row.Item?.Title ?? Row.Folder?.Name ?? "";
+
+    /// <summary>Hover text for the Title column: the title and where its folder is (the Folder column starts hidden).</summary>
+    public string TitleToolTip => Row.Folder is null ? Title
+        : Row.Item is null ? $"A folder with no Helix or Procore item: {LocationText}\\{Row.Folder.Name}"
+        : $"{Title}\nFolder: {LocationText}\\{Row.Folder.Name}\nDouble-click the row (or press Enter) to open the folder.";
     public string ProviderStatus => Row.Item?.Status ?? "";
     public string CourtText { get; }
     public string FolderName => Row.Folder?.Name ?? "—";
@@ -868,7 +891,13 @@ public sealed class PersonChoiceViewModel : ObservableObject
     /// <summary>Checked earlier but holding nothing in the shown projects (listed greyed, still filtering).</summary>
     public bool IsAbsent { get; init; }
 
-    public string Label => IsAbsent ? $"{Name} (nothing here)" : Name;
+    /// <summary>You: the name you're signed in to Helix or Procore as.</summary>
+    public bool IsYou { get; init; }
+
+    public string Label => IsYou && IsAbsent ? $"{Name} (you, nothing here)"
+        : IsYou ? $"{Name} (you)"
+        : IsAbsent ? $"{Name} (nothing here)"
+        : Name;
 
     public bool IsChecked
     {

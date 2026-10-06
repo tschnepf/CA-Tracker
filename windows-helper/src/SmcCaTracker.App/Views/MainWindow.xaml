@@ -54,48 +54,25 @@
                     <Setter Property="Background" Value="{DynamicResource SuccessSoftBrush}" />
                     <Setter Property="TextElement.Foreground" Value="{DynamicResource SuccessBrush}" />
                 </DataTrigger>
+                <!-- An open item with its folder where it belongs: nothing to point out. -->
+                <DataTrigger Binding="{Binding Status}" Value="Open">
+                    <Setter Property="Visibility" Value="Collapsed" />
+                </DataTrigger>
             </Style.Triggers>
         </Style>
     </Window.Resources>
 
+    <!-- The window's own title bar names the app, so there's no heading row: Sync all and Settings live in
+         the project list. -->
     <Grid>
         <Grid.RowDefinitions>
-            <RowDefinition Height="Auto" />
             <RowDefinition Height="Auto" />
             <RowDefinition Height="*" />
             <RowDefinition Height="Auto" />
         </Grid.RowDefinitions>
 
-        <!-- Title bar area. Buttons are declared in the order Tab visits them. -->
-        <Border Grid.Row="0" Padding="20,10" BorderBrush="{DynamicResource LineBrush}" BorderThickness="0,0,0,1"
-                Background="{DynamicResource SurfaceBackground}">
-            <DockPanel LastChildFill="False">
-                <TextBlock DockPanel.Dock="Left" Text="SMC CA Tracker" FontSize="18" FontWeight="SemiBold" VerticalAlignment="Center" />
-                <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
-                    <!-- Sync every site now; ▾ syncs one site or opens Connections. Progress shows above the project list. -->
-                    <Button x:Name="SyncAllButton" Content="{Binding SyncAllText}" Click="SyncAll_Click" MinWidth="96"
-                            ToolTip="Sync every Helix and Procore project now. F5 syncs the selected project." />
-                    <Button x:Name="SyncMenuButton" Content="▾" Click="SyncMenu_Click" Margin="2,0,0,0" Padding="9,6"
-                            AutomationProperties.Name="More sync choices" ToolTip="Sync one site, or open Connections">
-                        <Button.ContextMenu>
-                            <ContextMenu>
-                                <MenuItem x:Name="SyncHelixMenu" Header="Sync Helix" Click="SyncHelix_Click" />
-                                <MenuItem x:Name="SyncProcoreMenu" Header="Sync Procore" Click="SyncProcore_Click" />
-                                <Separator />
-                                <MenuItem Header="Connections…" Click="OpenConnections_Click" />
-                            </ContextMenu>
-                        </Button.ContextMenu>
-                    </Button>
-                    <Button Content="{Binding UpdateText}" Click="InstallUpdate_Click" Margin="8,0,0,0"
-                            Visibility="{Binding IsUpdateAvailable, Converter={StaticResource Visible}}"
-                            ToolTip="{Binding UpdateNotes}" />
-                    <Button x:Name="SettingsButton" Content="Se_ttings" Click="Settings_Click" Margin="8,0,0,0" MinWidth="96" />
-                </StackPanel>
-            </DockPanel>
-        </Border>
-
         <!-- Sign-in needed: says so, with a button, instead of syncs that just fail. -->
-        <Border Grid.Row="1" Padding="20,8" Background="{DynamicResource WarningSoftBrush}" BorderBrush="{DynamicResource LineBrush}"
+        <Border Grid.Row="0" Padding="20,8" Background="{DynamicResource WarningSoftBrush}" BorderBrush="{DynamicResource LineBrush}"
                 BorderThickness="0,0,0,1" Visibility="{Binding ShowSignInBanner, Converter={StaticResource Visible}}">
             <DockPanel>
                 <Button DockPanel.Dock="Right" Content="✕" Style="{StaticResource LinkButton}" Click="DismissBanner_Click" Margin="8,0,0,0"
@@ -120,11 +97,11 @@
             </DockPanel>
         </Border>
 
-        <views:SettingsPage x:Name="SettingsView" Grid.Row="2" Visibility="Collapsed" />
+        <views:SettingsPage x:Name="SettingsView" Grid.Row="1" Visibility="Collapsed" />
 
-        <Grid x:Name="ProjectsPage" Grid.Row="2" Margin="16">
+        <Grid x:Name="ProjectsPage" Grid.Row="1" Margin="16">
             <Grid.ColumnDefinitions>
-                <ColumnDefinition x:Name="ProjectsColumn" Width="290" MinWidth="200" MaxWidth="700" />
+                <ColumnDefinition x:Name="ProjectsColumn" Width="290" MinWidth="220" MaxWidth="700" />
                 <ColumnDefinition Width="16" />
                 <ColumnDefinition x:Name="ListColumn" Width="*" MinWidth="420" />
                 <ColumnDefinition x:Name="PanelSplitterColumn" Width="0" />
@@ -145,7 +122,26 @@
             <!-- Projects -->
             <Border Grid.Column="0" Style="{StaticResource Card}" Padding="10">
                 <DockPanel>
-                    <TextBlock DockPanel.Dock="Top" Text="PROJECTS" Style="{StaticResource SectionTitle}" Margin="6,4,0,8" />
+                    <!-- PROJECTS, and Sync all (every site now; ▾ syncs one site or opens Connections). Its progress
+                         shows under the search box. Buttons are declared in the order Tab visits them. -->
+                    <DockPanel DockPanel.Dock="Top" Margin="6,0,4,8">
+                        <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
+                            <Button x:Name="SyncAllButton" Content="{Binding SyncAllText}" Click="SyncAll_Click" Padding="10,4"
+                                    ToolTip="Sync every Helix and Procore project now. F5 syncs the selected project." />
+                            <Button x:Name="SyncMenuButton" Content="▾" Click="SyncMenu_Click" Margin="2,0,0,0" Padding="8,4"
+                                    AutomationProperties.Name="More sync choices" ToolTip="Sync one site, or open Connections">
+                                <Button.ContextMenu>
+                                    <ContextMenu>
+                                        <MenuItem x:Name="SyncHelixMenu" Header="Sync Helix" Click="SyncHelix_Click" />
+                                        <MenuItem x:Name="SyncProcoreMenu" Header="Sync Procore" Click="SyncProcore_Click" />
+                                        <Separator />
+                                        <MenuItem Header="Connections…" Click="OpenConnections_Click" />
+                                    </ContextMenu>
+                                </Button.ContextMenu>
+                            </Button>
+                        </StackPanel>
+                        <TextBlock Text="PROJECTS" Style="{StaticResource SectionTitle}" Margin="0" VerticalAlignment="Center" />
+                    </DockPanel>
                     <!-- Find a project (Ctrl+F): by name or hosting company. -->
                     <Grid DockPanel.Dock="Top" Margin="4,0,4,8">
                         <TextBox x:Name="ProjectSearchBox" Text="{Binding ProjectSearch, UpdateSourceTrigger=PropertyChanged}" Padding="8,5"
@@ -163,8 +159,18 @@
                                          Visibility="{Binding IsSyncProgressRunning, Converter={StaticResource Visible}}" />
                         </StackPanel>
                     </Border>
-                    <Button DockPanel.Dock="Bottom" Content="_New project…" Click="NewProject_Click" Margin="4,8,4,2"
-                            ToolTip="Start tracking a CA folder" />
+                    <!-- New project, and Settings (which opens in place of the projects, with its own way back). -->
+                    <Grid DockPanel.Dock="Bottom" Margin="4,8,4,2">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <Button Content="_New project…" Click="NewProject_Click" ToolTip="Start tracking a CA folder" />
+                        <Button x:Name="SettingsButton" Grid.Column="1" Content="Se_ttings" Click="Settings_Click" Margin="6,0,0,0" />
+                    </Grid>
+                    <Button DockPanel.Dock="Bottom" Content="{Binding UpdateText}" Click="InstallUpdate_Click" Margin="4,8,4,0"
+                            Visibility="{Binding IsUpdateAvailable, Converter={StaticResource Visible}}"
+                            ToolTip="{Binding UpdateNotes}" />
                     <CheckBox DockPanel.Dock="Bottom" Content="{Binding ShowArchivedText}" IsChecked="{Binding ShowArchived}"
                               Margin="6,8,4,0" Visibility="{Binding HasArchived, Converter={StaticResource Visible}}"
                               ToolTip="Archived projects are hidden and not synced, for you only. Check to show them (dimmed) and unarchive them." />
@@ -277,7 +283,7 @@
                                             <TextBlock Text="{Binding Subtitle}" FontSize="11.5" Foreground="{DynamicResource TextSecondary}"
                                                        TextTrimming="CharacterEllipsis" />
                                         </StackPanel>
-                                        <!-- "2 overdue" (only when some are), then how many items match the list's filters. -->
+                                        <!-- "2 overdue" (only when some are), then how many items match the list's filters ("7 open"). -->
                                         <StackPanel Grid.Column="1" Orientation="Horizontal" Margin="8,0,0,0" VerticalAlignment="Center">
                                             <Border Background="{DynamicResource DangerSoftBrush}" CornerRadius="9" Padding="7,1" Margin="0,0,4,0"
                                                     Visibility="{Binding HasOverdue, Converter={StaticResource Visible}}"
@@ -447,6 +453,9 @@
                                                        VerticalAlignment="Center" Margin="2,0,0,0" />
                                             <Button DockPanel.Dock="Right" Style="{StaticResource LinkButton}" Content="Everyone"
                                                     Click="ClearPeople_Click" ToolTip="Clear the checks and show everyone" />
+                                            <Button DockPanel.Dock="Right" Style="{StaticResource LinkButton}" Content="Just you"
+                                                    Click="ShowOnlyYou_Click" ToolTip="Check only yourself (the name you're signed in to Helix or Procore as)"
+                                                    Visibility="{Binding CanShowOnlyYou, Converter={StaticResource Visible}}" />
                                         </DockPanel>
                                         <TextBlock DockPanel.Dock="Top" Style="{StaticResource Muted}" FontSize="12" Margin="2,0,0,6"
                                                    Text="No one has open items here yet. Sync to read them."
@@ -503,8 +512,9 @@
                     <StackPanel Orientation="Horizontal" Margin="0,0,14,6">
                         <TextBlock Text="Group by" VerticalAlignment="Center" Margin="0,0,8,0" Foreground="{DynamicResource TextSecondary}" />
                         <ComboBox x:Name="GroupBox" SelectionChanged="Group_Changed" MinWidth="140" AutomationProperties.Name="Group by"
-                                  ToolTip="Headings for each project and/or for RFIs and Submittals. Sorting happens within each heading.">
-                            <ComboBoxItem Content="Project, then type" Tag="project-type" IsSelected="True" />
+                                  ToolTip="Headings for when items are due, for each project, or for RFIs and Submittals. Sorting happens within each heading.">
+                            <ComboBoxItem Content="When it's due" Tag="urgency" IsSelected="True" />
+                            <ComboBoxItem Content="Project, then type" Tag="project-type" />
                             <ComboBoxItem Content="Project" Tag="project" />
                             <ComboBoxItem Content="RFIs / Submittals" Tag="type" />
                             <ComboBoxItem Content="Nothing (one list)" Tag="none" />
@@ -518,7 +528,7 @@
                             <ComboBoxItem Content="Number" Tag="number" IsSelected="True" />
                             <ComboBoxItem Content="Ball in court (A–Z)" Tag="person" />
                             <ComboBoxItem Content="Days in court (longest)" Tag="court" />
-                            <ComboBoxItem Content="Days till due (soonest)" Tag="due" />
+                            <ComboBoxItem Content="Due (soonest)" Tag="due" />
                             <!-- Shown after a column heading is clicked: "Title ↑". -->
                             <ComboBoxItem x:Name="SortByColumnItem" Content="By column heading" Tag="column" Visibility="Collapsed" />
                         </ComboBox>
@@ -533,13 +543,24 @@
                     </Grid.RowDefinitions>
 
                     <DataGrid x:Name="ItemsGrid" ItemsSource="{Binding Rows}" IsReadOnly="True"
-                              MouseDoubleClick="Grid_MouseDoubleClick" Sorting="ItemsGrid_Sorting"
+                              MouseDoubleClick="Grid_MouseDoubleClick" PreviewKeyDown="ItemsGrid_PreviewKeyDown" Sorting="ItemsGrid_Sorting"
                               VirtualizingPanel.IsVirtualizingWhenGrouping="True" VirtualizingPanel.VirtualizationMode="Recycling"
                               HorizontalScrollBarVisibility="Auto" SizeChanged="ItemsGrid_SizeChanged" FrozenColumnCount="2"
                               AutomationProperties.Name="Items">
                         <DataGrid.RowStyle>
                             <Style TargetType="DataGridRow">
                                 <Setter Property="ContextMenu" Value="{StaticResource RowMenu}" />
+                                <!-- A stripe down the left edge: red when overdue, amber when due today. -->
+                                <Setter Property="BorderThickness" Value="3,0,0,0" />
+                                <Setter Property="BorderBrush" Value="Transparent" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding IsOverdue}" Value="True">
+                                        <Setter Property="BorderBrush" Value="{DynamicResource DangerBrush}" />
+                                    </DataTrigger>
+                                    <DataTrigger Binding="{Binding IsDueToday}" Value="True">
+                                        <Setter Property="BorderBrush" Value="{DynamicResource WarningBrush}" />
+                                    </DataTrigger>
+                                </Style.Triggers>
                             </Style>
                         </DataGrid.RowStyle>
                         <DataGrid.GroupStyle>
@@ -547,7 +568,21 @@
                                 <GroupStyle.HeaderTemplate>
                                     <DataTemplate>
                                         <StackPanel Orientation="Horizontal" Margin="8,10,0,4">
-                                            <TextBlock Text="{Binding Name}" FontWeight="SemiBold" FontSize="13.5" />
+                                            <!-- "Overdue" and "Due today" headings in their colours. -->
+                                            <TextBlock Text="{Binding Name}" FontWeight="SemiBold" FontSize="13.5">
+                                                <TextBlock.Style>
+                                                    <Style TargetType="TextBlock">
+                                                        <Style.Triggers>
+                                                            <DataTrigger Binding="{Binding Name}" Value="Overdue">
+                                                                <Setter Property="Foreground" Value="{DynamicResource DangerBrush}" />
+                                                            </DataTrigger>
+                                                            <DataTrigger Binding="{Binding Name}" Value="Due today">
+                                                                <Setter Property="Foreground" Value="{DynamicResource WarningBrush}" />
+                                                            </DataTrigger>
+                                                        </Style.Triggers>
+                                                    </Style>
+                                                </TextBlock.Style>
+                                            </TextBlock>
                                             <TextBlock Text="{Binding ItemCount, StringFormat=' · {0}'}" Foreground="{DynamicResource TextSecondary}" />
                                         </StackPanel>
                                     </DataTemplate>
@@ -566,7 +601,7 @@
                                         <CheckBox IsChecked="{Binding IsChecked, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
                                                   IsEnabled="{Binding CanSelect}" HorizontalAlignment="Center"
                                                   AutomationProperties.Name="{Binding Number, StringFormat=Check {0}}"
-                                                  ToolTip="Check to set its discipline, download it, or include its folder in a move" />
+                                                  ToolTip="Check to download it, set its discipline, or include its folder in a move. Space checks the selected rows." />
                                     </DataTemplate>
                                 </DataGridTemplateColumn.CellTemplate>
                             </DataGridTemplateColumn>
@@ -601,34 +636,13 @@
                             <DataGridTextColumn x:Name="TypeColumn" Header="Type" Binding="{Binding TypeSingular}" Width="85"
                                                 IsReadOnly="True" SortMemberPath="TypeLabel" />
                             <DataGridTextColumn x:Name="NumberColumn" Header="Number" Binding="{Binding Number}" Width="110" IsReadOnly="True" SortMemberPath="Number" />
-                            <DataGridTextColumn x:Name="TitleColumn" Header="Title" Binding="{Binding Title}" Width="300" IsReadOnly="True" SortMemberPath="Title">
-                                <DataGridTextColumn.ElementStyle>
-                                    <Style TargetType="TextBlock">
-                                        <Setter Property="ToolTip" Value="{Binding Title}" />
-                                        <Setter Property="TextTrimming" Value="CharacterEllipsis" />
-                                        <Setter Property="VerticalAlignment" Value="Center" />
-                                    </Style>
-                                </DataGridTextColumn.ElementStyle>
-                            </DataGridTextColumn>
-                            <DataGridTextColumn x:Name="StatusColumn" Header="Item status" Binding="{Binding ProviderStatus}" Width="95" IsReadOnly="True" SortMemberPath="ProviderStatus" />
-                            <DataGridTextColumn x:Name="CourtColumn" Header="Ball in court" Binding="{Binding HolderText}" Width="180" IsReadOnly="True"
-                                                SortMemberPath="PersonSortKey">
-                                <DataGridTextColumn.ElementStyle>
-                                    <Style TargetType="TextBlock">
-                                        <Setter Property="ToolTip" Value="{Binding CourtText}" />
-                                        <Setter Property="TextTrimming" Value="CharacterEllipsis" />
-                                        <Setter Property="VerticalAlignment" Value="Center" />
-                                    </Style>
-                                </DataGridTextColumn.ElementStyle>
-                            </DataGridTextColumn>
-                            <DataGridTextColumn x:Name="DaysInCourtColumn" Header="Days in court" Binding="{Binding DaysInCourtText}" Width="95" IsReadOnly="True"
-                                                SortMemberPath="DaysInCourt" />
-                            <DataGridTextColumn x:Name="DueColumn" Header="Due" Binding="{Binding DueDateText}" Width="100" IsReadOnly="True"
-                                                SortMemberPath="DaysTillDue" />
-                            <DataGridTemplateColumn x:Name="DaysTillDueColumn" Header="Days till due" Width="120" SortMemberPath="DaysTillDue">
+                            <!-- The date and how far off it is: "Sep 7 · 26 days overdue". Right after the number, so it
+                                 stays in view in a narrow window. (Named for the column it replaced, so a choice to hide
+                                 it is kept.) -->
+                            <DataGridTemplateColumn x:Name="DaysTillDueColumn" Header="Due" Width="160" SortMemberPath="DaysTillDue">
                                 <DataGridTemplateColumn.CellTemplate>
                                     <DataTemplate>
-                                        <TextBlock Text="{Binding DaysTillDueText}" VerticalAlignment="Center" ToolTip="{Binding DueToolTip}">
+                                        <TextBlock Text="{Binding DueText}" VerticalAlignment="Center" ToolTip="{Binding DueToolTip}">
                                             <TextBlock.Style>
                                                 <Style TargetType="TextBlock">
                                                     <Style.Triggers>
@@ -647,6 +661,35 @@
                                     </DataTemplate>
                                 </DataGridTemplateColumn.CellTemplate>
                             </DataGridTemplateColumn>
+                            <!-- The item's title, or (grey italic) the folder's name when there's no item. -->
+                            <DataGridTextColumn x:Name="TitleColumn" Header="Title" Binding="{Binding TitleText}" Width="300" IsReadOnly="True" SortMemberPath="Title">
+                                <DataGridTextColumn.ElementStyle>
+                                    <Style TargetType="TextBlock">
+                                        <Setter Property="ToolTip" Value="{Binding TitleToolTip}" />
+                                        <Setter Property="TextTrimming" Value="CharacterEllipsis" />
+                                        <Setter Property="VerticalAlignment" Value="Center" />
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding HasItem}" Value="False">
+                                                <Setter Property="FontStyle" Value="Italic" />
+                                                <Setter Property="Foreground" Value="{DynamicResource TextSecondary}" />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </DataGridTextColumn.ElementStyle>
+                            </DataGridTextColumn>
+                            <DataGridTextColumn x:Name="StatusColumn" Header="Item status" Binding="{Binding ProviderStatus}" Width="95" IsReadOnly="True" SortMemberPath="ProviderStatus" />
+                            <DataGridTextColumn x:Name="CourtColumn" Header="Ball in court" Binding="{Binding HolderText}" Width="180" IsReadOnly="True"
+                                                SortMemberPath="PersonSortKey">
+                                <DataGridTextColumn.ElementStyle>
+                                    <Style TargetType="TextBlock">
+                                        <Setter Property="ToolTip" Value="{Binding CourtText}" />
+                                        <Setter Property="TextTrimming" Value="CharacterEllipsis" />
+                                        <Setter Property="VerticalAlignment" Value="Center" />
+                                    </Style>
+                                </DataGridTextColumn.ElementStyle>
+                            </DataGridTextColumn>
+                            <DataGridTextColumn x:Name="DaysInCourtColumn" Header="Days in court" Binding="{Binding DaysInCourtText}" Width="95" IsReadOnly="True"
+                                                SortMemberPath="DaysInCourt" />
                             <DataGridTextColumn x:Name="FolderColumn" Header="Folder" Binding="{Binding FolderName}" Width="200" IsReadOnly="True" SortMemberPath="FolderName">
                                 <DataGridTextColumn.ElementStyle>
                                     <Style TargetType="TextBlock">
@@ -700,8 +743,11 @@
                                 Visibility="{Binding HasActiveFilters, Converter={StaticResource Visible}}" />
                     </StackPanel>
 
-                    <!-- Actions on the checked items. Moves open a preview first; buttons say how many they act on. -->
-                    <Border Grid.Row="1" Style="{StaticResource Card}" Margin="0,10,0,0" Padding="12,8">
+                    <!-- Actions on the checked items, shown while something is checked (or ready to return). Only
+                         the actions that apply appear; Download is the main one. Moves open a preview first; buttons
+                         say how many they act on. -->
+                    <Border Grid.Row="1" Style="{StaticResource Card}" Margin="0,10,0,0" Padding="12,8"
+                            Visibility="{Binding ShowActionBar, Converter={StaticResource Visible}}">
                         <Border.Resources>
                             <Style TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
                                 <Setter Property="Padding" Value="10,5" />
@@ -715,25 +761,27 @@
                             <WrapPanel VerticalAlignment="Center">
                                 <TextBlock Text="{Binding SelectionText}" VerticalAlignment="Center" Margin="4,0,14,0"
                                            Foreground="{DynamicResource TextSecondary}" />
-                                <Button Content="Check all ready to return" Click="SelectReady_Click" Margin="0,2,6,2"
+                                <Button Content="{Binding CheckReadyText}" Click="SelectReady_Click" Margin="0,2,6,2"
+                                        Visibility="{Binding HasReadyShown, Converter={StaticResource Visible}}"
                                         ToolTip="Checks the shown folders that are ready to move to Returned" />
                                 <Button Content="Clear checks" Click="ClearTicks_Click" Margin="0,2,6,2"
                                         Visibility="{Binding HasChecks, Converter={StaticResource Visible}}" />
                                 <Button Content="{Binding SetDisciplineText}" Click="SetTickedDiscipline_Click" Margin="0,2,6,2"
-                                        IsEnabled="{Binding CanSetDiscipline}" ToolTipService.ShowOnDisabled="True"
+                                        Visibility="{Binding CanSetDiscipline, Converter={StaticResource Visible}}"
                                         ToolTip="Set the discipline of the checked items. Items with no folder yet download into that discipline's folder." />
-                                <Button Content="{Binding DownloadCheckedText}" Click="DownloadChecked_Click" Margin="0,2,6,2"
-                                        IsEnabled="{Binding CanDownloadChecked}" ToolTipService.ShowOnDisabled="True"
-                                        ToolTip="Download the checked Helix items: one window lists them all with their files and where they go" />
                                 <Button Content="{Binding VerifyCheckedText}" Click="VerifyChecked_Click" Margin="0,2,6,2"
-                                        IsEnabled="{Binding CanDownloadChecked}" ToolTipService.ShowOnDisabled="True"
+                                        Visibility="{Binding CanDownloadChecked, Converter={StaticResource Visible}}"
                                         ToolTip="Check that each checked Helix item's folder has every file Helix has for it; missing files can then be downloaded" />
                                 <Button Content="{Binding MoveBackText}" Click="MoveBack_Click" Margin="0,2,6,2"
-                                        IsEnabled="{Binding CanMoveBack}" ToolTipService.ShowOnDisabled="True"
+                                        Visibility="{Binding CanMoveBack, Converter={StaticResource Visible}}"
                                         ToolTip="Moves checked folders that are in Returned back to the active folder. A preview shows every move first." />
+                                <Button Content="{Binding MarkReturnedText}" Click="MarkReturned_Click" Margin="0,2,6,2"
+                                        Visibility="{Binding CanMarkReturned, Converter={StaticResource Visible}}"
+                                        ToolTip="{Binding MarkReturnedToolTip}" />
                             </WrapPanel>
-                            <Button Grid.Column="1" Style="{StaticResource AccentButton}" Content="{Binding MarkReturnedText}" Click="MarkReturned_Click"
-                                    IsEnabled="{Binding CanMarkReturned}" ToolTip="{Binding MarkReturnedToolTip}" ToolTipService.ShowOnDisabled="True"
+                            <Button Grid.Column="1" Style="{StaticResource AccentButton}" Content="{Binding DownloadCheckedText}" Click="DownloadChecked_Click"
+                                    Visibility="{Binding CanDownloadChecked, Converter={StaticResource Visible}}"
+                                    ToolTip="Download the checked Helix items: one window lists them all with their files and where they go"
                                     VerticalAlignment="Center" Margin="8,0,0,0" />
                         </Grid>
                     </Border>
@@ -741,9 +789,8 @@
             </Grid>
         </Grid>
 
-        <!-- Footer -->
         <!-- Footer: only while there is something to say. -->
-        <Border Grid.Row="3" Padding="20,6" BorderBrush="{DynamicResource LineBrush}" BorderThickness="0,1,0,0"
+        <Border Grid.Row="2" Padding="20,6" BorderBrush="{DynamicResource LineBrush}" BorderThickness="0,1,0,0"
                 Background="{DynamicResource SurfaceBackground}" Visibility="{Binding HasFooter, Converter={StaticResource Visible}}">
             <DockPanel>
                 <TextBlock DockPanel.Dock="Right" Text="Working…" Foreground="{DynamicResource AccentBrush}" Margin="0,0,16,0"

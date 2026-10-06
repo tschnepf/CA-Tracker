@@ -90,6 +90,9 @@ public partial class MainWindow : Window
                 case nameof(MainViewModel.SortDescending):
                     UpdateSortArrows();
                     break;
+                case nameof(MainViewModel.PersonFilterText):
+                    UpdateColumns();
+                    break;
             }
         };
         SettingsView.BackRequested += (_, _) => ShowProjects();
@@ -372,17 +375,22 @@ public partial class MainWindow : Window
             column.Visibility = viewModel.IsColumnHidden(name) ? Visibility.Collapsed : Visibility.Visible;
         }
 
+        // One person checked: every row is theirs, so the column would only repeat the name.
+        if (viewModel.IsOnePersonFilter)
+        {
+            CourtColumn.Visibility = Visibility.Collapsed;
+        }
+
         ScheduleColumnFit();
     }
 
     /// <summary>Columns you can turn off, with the name they are remembered by and their menu label.</summary>
     private IEnumerable<(DataGridColumn Column, string Name, string Label)> OptionalColumns() => new (DataGridColumn, string, string)[]
     {
+        (DaysTillDueColumn, nameof(DaysTillDueColumn), "Due"),
         (StatusColumn, nameof(StatusColumn), "Item status"),
         (CourtColumn, nameof(CourtColumn), "Ball in court"),
         (DaysInCourtColumn, nameof(DaysInCourtColumn), "Days in court"),
-        (DueColumn, nameof(DueColumn), "Due date"),
-        (DaysTillDueColumn, nameof(DaysTillDueColumn), "Days till due"),
         (FolderColumn, nameof(FolderColumn), "Folder"),
         (DisciplineColumn, nameof(DisciplineColumn), "Discipline"),
         (ResultColumn, nameof(ResultColumn), "Folder status")
@@ -392,9 +400,15 @@ public partial class MainWindow : Window
     private void InitColumnsMenu()
     {
         columnsMenu.Items.Add(new MenuItem { Header = "Show these columns:", IsEnabled = false });
+        MenuItem? courtItem = null;
         foreach (var (_, name, label) in OptionalColumns())
         {
             var item = new MenuItem { Header = label, IsCheckable = true, StaysOpenOnClick = true, Tag = name };
+            if (name == nameof(CourtColumn))
+            {
+                courtItem = item;
+            }
+
             item.Click += (_, _) =>
             {
                 viewModel.SetColumnHidden(name, !item.IsChecked);
@@ -408,6 +422,11 @@ public partial class MainWindow : Window
             foreach (var item in columnsMenu.Items.OfType<MenuItem>().Where(item => item.Tag is string))
             {
                 item.IsChecked = !viewModel.IsColumnHidden((string)item.Tag);
+            }
+
+            if (courtItem is not null)
+            {
+                courtItem.Header = viewModel.IsOnePersonFilter ? "Ball in court (hidden while one person is checked)" : "Ball in court";
             }
         };
 
@@ -436,6 +455,11 @@ public partial class MainWindow : Window
         }
 
         view.GroupDescriptions.Clear();
+        if (viewModel.GroupBy is GroupModes.Urgency)
+        {
+            view.GroupDescriptions.Add(new PropertyGroupDescription(nameof(RowViewModel.UrgencyText)));
+        }
+
         if (viewModel.GroupBy is GroupModes.Project or GroupModes.ProjectAndType)
         {
             view.GroupDescriptions.Add(new PropertyGroupDescription(nameof(RowViewModel.ProjectName)));
@@ -557,6 +581,8 @@ public partial class MainWindow : Window
     }
 
     private void ClearPeople_Click(object sender, RoutedEventArgs e) => viewModel.ClearPeople();
+
+    private void ShowOnlyYou_Click(object sender, RoutedEventArgs e) => viewModel.ShowOnlyYou();
 
     private void Due_Changed(object sender, SelectionChangedEventArgs e)
     {
@@ -795,10 +821,28 @@ public partial class MainWindow : Window
 
     private async void MarkReturned_Click(object sender, RoutedEventArgs e)
     {
-        // A folder shown under both the BB and TFO projects is only planned once.
-        var rows = viewModel.CheckedRows().Where(row => row.Row.CanMarkReturned)
+        // The checked folders that are ready to return. The other checked active folders only when none
+        // is ready, and only after asking. A folder shown under both the BB and TFO projects is planned once.
+        var active = viewModel.CheckedRows().Where(row => row.Row.CanMarkReturned)
             .DistinctBy(row => row.Row.Folder!.FullPath, StringComparer.OrdinalIgnoreCase)
             .ToList();
+        var rows = active.Where(row => row.Status == RowStatus.ReadyToReturn).ToList();
+        if (rows.Count == 0 && active.Count > 0)
+        {
+            var question = active.Count == 1
+                ? "The checked folder isn't ready to return (see its Folder status).\n\nMove it to Returned anyway?"
+                : $"None of the {active.Count} checked folders is ready to return (see their Folder status).\n\nMove them to Returned anyway?";
+            var answer = MessageBox.Show(this, $"{question} A preview shows every move first; nothing changes until you confirm it.",
+                "Move to Returned", MessageBoxButton.YesNo, MessageBoxImage.Warning, MessageBoxResult.No);
+            if (answer != MessageBoxResult.Yes)
+            {
+                viewModel.StatusMessage = "Cancelled — nothing was changed.";
+                return;
+            }
+
+            rows = active;
+        }
+
         if (rows.Count == 0)
         {
             ShowInfo("Check the active folders you want to move into the Returned folder first. \"Check all ready to return\" checks the suggested ones.");
@@ -1063,6 +1107,41 @@ public partial class MainWindow : Window
             return;
         }
 
+        await OpenRowAsync(row);
+    }
+
+    /// <summary>
+    /// Enter opens the selected row, as a double-click does; Space checks (or unchecks) the selected rows.
+    /// On a row's link or check box the keys are that control's own.
+    /// </summary>
+    private async void ItemsGrid_PreviewKeyDown(object sender, KeyEventArgs e)
+    {
+        if (Keyboard.Modifiers != ModifierKeys.None
+            || e.OriginalSource is TextBox or System.Windows.Controls.Primitives.ButtonBase
+            || ItemsGrid.SelectedItems.OfType<RowViewModel>().ToList() is not { Count: > 0 } rows)
+        {
+            return;
+        }
+
+        if (e.Key == Key.Enter)
+        {
+            e.Handled = true;
+            await OpenRowAsync(ItemsGrid.CurrentItem as RowViewModel ?? rows[0]);
+        }
+        else if (e.Key == Key.Space)
+        {
+            e.Handled = true;
+            var check = !rows.Where(row => row.CanSelect).All(row => row.IsChecked);
+            foreach (var row in rows.Where(row => row.CanSelect))
+            {
+                row.IsChecked = check;
+            }
+        }
+    }
+
+    /// <summary>Opens a row's folder, or its item when it has no folder yet.</summary>
+    private async Task OpenRowAsync(RowViewModel row)
+    {
         if (row.HasFolder)
         {
             OpenInExplorer(row.Row.Folder!.FullPath);
@@ -1180,14 +1259,12 @@ public partial class MainWindow : Window
 
         ProjectsPage.Visibility = Visibility.Collapsed;
         SettingsView.Visibility = Visibility.Visible;
-        SettingsButton.Content = "← _Projects";
     }
 
     private void ShowProjects()
     {
         SettingsView.Visibility = Visibility.Collapsed;
         ProjectsPage.Visibility = Visibility.Visible;
-        SettingsButton.Content = "Se_ttings";
     }
 
     /// <summary>Sync all (or Stop while it runs). With nothing signed in, Connections opens instead.</summary>

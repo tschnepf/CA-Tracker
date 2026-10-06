@@ -949,6 +949,135 @@ public class ItemTimingTests
         Assert.Null(ItemTiming.DaysInCourt(Item(null, false, new SnapshotHolder { Name = "Pat", State = "current" }), Today));
         Assert.Empty(ItemTiming.CurrentHolders(Item(null, closed: true, new SnapshotHolder { Name = "Pat", State = "current" })));
     }
+
+    [Fact]
+    public void APersonProcoreWritesBothWaysHoldsTheItemOnce()
+    {
+        var item = Item(null, false,
+            new SnapshotHolder { Name = "Pat Lee", State = "current", Company = "Acme Electric" },
+            new SnapshotHolder { Name = "Pat Lee (Acme Electric)", State = "current" },
+            new SnapshotHolder { Name = "Sam Roe (Acme Electric)", State = "current" });
+
+        Assert.Equal(new[] { "Pat Lee", "Sam Roe (Acme Electric)" }, ItemTiming.CurrentHolders(item).Select(holder => holder.Name));
+    }
+
+    [Fact]
+    public void DueTextShowsTheDateAndHowFarOffItIs()
+    {
+        var us = System.Globalization.CultureInfo.GetCultureInfo("en-US");
+        Assert.Equal("Sep 3 \u00b7 26 days overdue", ItemTiming.DueText(Item(Local(9, 3)), Today, us));
+        Assert.Equal("Sep 28 \u00b7 1 day overdue", ItemTiming.DueText(Item(Local(9, 28)), Today, us));
+        Assert.Equal("Sep 29 \u00b7 today", ItemTiming.DueText(Item(Local(9, 29)), Today, us));
+        Assert.Equal("Sep 30 \u00b7 tomorrow", ItemTiming.DueText(Item(Local(9, 30)), Today, us));
+        Assert.Equal("Oct 3 \u00b7 in 4 days", ItemTiming.DueText(Item(Local(10, 3)), Today, us));
+        // Closed: just the date. Another year: with the year. No date: nothing.
+        Assert.Equal("Sep 1", ItemTiming.DueText(Item(Local(9, 1), closed: true), Today, us));
+        Assert.Equal("Jan 5, 2027 \u00b7 in 98 days", ItemTiming.DueText(Item(new DateTimeOffset(new DateTime(2027, 1, 5, 12, 0, 0, DateTimeKind.Local))), Today, us));
+        Assert.Equal("", ItemTiming.DueText(Item(null), Today, us));
+    }
+
+    [Fact]
+    public void ItemsAreGroupedByWhenTheyreDue()
+    {
+        Assert.Equal(Urgency.Overdue, ItemTiming.UrgencyOf(Item(Local(9, 28)), Today));
+        Assert.Equal(Urgency.DueToday, ItemTiming.UrgencyOf(Item(Local(9, 29)), Today));
+        Assert.Equal(Urgency.NextWeek, ItemTiming.UrgencyOf(Item(Local(9, 30)), Today));
+        Assert.Equal(Urgency.NextWeek, ItemTiming.UrgencyOf(Item(Local(10, 6)), Today));
+        Assert.Equal(Urgency.Later, ItemTiming.UrgencyOf(Item(Local(10, 7)), Today));
+        Assert.Equal(Urgency.NoDueDate, ItemTiming.UrgencyOf(Item(null), Today));
+        Assert.Equal(Urgency.NoDueDate, ItemTiming.UrgencyOf(null, Today));
+        Assert.Equal(Urgency.Closed, ItemTiming.UrgencyOf(Item(Local(9, 1), closed: true), Today));
+        // The headings are listed in this order.
+        Assert.True(Urgency.Overdue < Urgency.DueToday && Urgency.DueToday < Urgency.NextWeek && Urgency.Later < Urgency.NoDueDate);
+    }
+}
+
+public class ViewStateTests
+{
+    [Fact]
+    public void AnOldViewGroupedTheOldDefaultWayIsGroupedByWhenItsDue()
+    {
+        var old = new ViewState { Version = 0, GroupBy = "project-type" };
+        old.Upgrade();
+        Assert.Equal("urgency", old.GroupBy);
+        Assert.Equal(ViewState.CurrentVersion, old.Version);
+
+        // A grouping chosen on purpose stays, and an up-to-date view isn't changed again.
+        var chosen = new ViewState { Version = 0, GroupBy = "project" };
+        chosen.Upgrade();
+        Assert.Equal("project", chosen.GroupBy);
+        var current = new ViewState { Version = ViewState.CurrentVersion, GroupBy = "project-type" };
+        current.Upgrade();
+        Assert.Equal("project-type", current.GroupBy);
+    }
+
+    [Fact]
+    public void ANewViewIsGroupedByWhenItsDueWithoutTheFolderColumn()
+    {
+        Assert.Equal("urgency", new ViewState().GroupBy);
+        Assert.Equal(new[] { "FolderColumn" }, new ViewState().HiddenColumns);
+    }
+
+    [Fact]
+    public void AnOldViewHidesTheFolderColumnOnce()
+    {
+        var old = new ViewState { Version = 1 };
+        old.HiddenColumns.Clear();
+        old.HiddenColumns.Add("DueColumn");
+        old.Upgrade();
+        Assert.Equal(new[] { "DueColumn", "FolderColumn" }, old.HiddenColumns);
+
+        // Shown again afterwards: it stays shown.
+        old.HiddenColumns.Remove("FolderColumn");
+        old.Upgrade();
+        Assert.DoesNotContain("FolderColumn", old.HiddenColumns);
+    }
+}
+
+public class PersonNamesTests
+{
+    [Theory]
+    [InlineData("Pat Lee (Acme Electric)", "Pat Lee", "Acme Electric")]
+    [InlineData("  Pat Lee  ", "Pat Lee", null)]
+    [InlineData("Pat Lee (Acme (West))", "Pat Lee", "Acme (West)")]
+    [InlineData("Robert (Bob) Jones", "Robert (Bob) Jones", null)]
+    [InlineData("(Acme Electric)", "(Acme Electric)", null)]
+    [InlineData("Lee(Acme)", "Lee(Acme)", null)]
+    [InlineData("Pat Lee ()", "Pat Lee ()", null)]
+    [InlineData(null, "", null)]
+    public void TheCompanyInBracketsComesOffTheName(string? name, string person, string? company)
+    {
+        Assert.Equal(person, PersonNames.WithoutCompany(name));
+        Assert.Equal(company, PersonNames.CompanyIn(name));
+    }
+}
+
+public class DefaultPeopleTests
+{
+    [Fact]
+    public void BallInCourtStartsAsYouWhenNobodyIsChecked()
+    {
+        Assert.Equal(new[] { "Tim Smith" }, DefaultPeople.ToCheck(Array.Empty<string>(), false, new[] { " Tim Smith ", null, "tim smith" }));
+        // Helix and Procore may spell your name differently: both are checked.
+        Assert.Equal(new[] { "Tim Smith", "Timothy Smith" }, DefaultPeople.ToCheck(Array.Empty<string>(), false, new[] { "Tim Smith", "Timothy Smith" }));
+        Assert.Empty(DefaultPeople.ToCheck(Array.Empty<string>(), false, new string?[] { null, " " }));
+    }
+
+    [Fact]
+    public void AnEarlierChoiceIsKept()
+    {
+        Assert.Empty(DefaultPeople.ToCheck(new[] { "Pat Lee" }, false, new[] { "Tim Smith" }));
+        Assert.Empty(DefaultPeople.ToCheck(Array.Empty<string>(), anyoneAtCompany: true, new[] { "Tim Smith" }));
+    }
+
+    [Fact]
+    public void ViewFilesFromBeforeGetTheDefaultOnce()
+    {
+        var old = System.Text.Json.JsonSerializer.Deserialize<ViewState>("{\"people\":[]}", TrackerJson.Options)!;
+        Assert.False(old.PeopleDefaulted);
+        var saved = System.Text.Json.JsonSerializer.Serialize(new ViewState { PeopleDefaulted = true }, TrackerJson.Options);
+        Assert.True(System.Text.Json.JsonSerializer.Deserialize<ViewState>(saved, TrackerJson.Options)!.PeopleDefaulted);
+    }
 }
 
 public class DownloadNamingTests
