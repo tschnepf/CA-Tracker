@@ -1,5 +1,6 @@
 using System.ComponentModel;
 using System.Windows;
+using System.Windows.Input;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
 using System.Windows.Data;
@@ -25,6 +26,10 @@ public partial class WatchlistWindow : Window
     private readonly List<PersonRow> rows;
     private readonly ICollectionView view;
     private readonly ListCollectionView projectView;
+
+    // The project whose box was clicked last, and whether a Shift-click is checking a run of them (rebuilt once after).
+    private ProjectChoice? projectAnchor;
+    private bool checkingMany;
     private readonly Dictionary<string, List<string>> kept = new(StringComparer.Ordinal);
 
     public WatchlistWindow(IReadOnlyList<WatchProject> candidates, Watchlist? existing, IReadOnlyCollection<string> preselectedKeys)
@@ -78,7 +83,13 @@ public partial class WatchlistWindow : Window
 
         foreach (var choice in choices)
         {
-            choice.PropertyChanged += (_, _) => Rebuild();
+            choice.PropertyChanged += (_, _) =>
+            {
+                if (!checkingMany)
+                {
+                    Rebuild();
+                }
+            };
         }
 
         foreach (var cell in rows.SelectMany(row => row.Cells))
@@ -237,6 +248,45 @@ public partial class WatchlistWindow : Window
                 row.Cells[index].IsChecked = check;
             }
         }
+    }
+
+    /// <summary>
+    /// A project's box. Shift-clicking it checks every project listed between it and the box clicked before (or
+    /// unchecks them, when this click unchecked it), in the list as it is filtered now.
+    /// </summary>
+    private void ProjectCheck_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not CheckBox { DataContext: ProjectChoice choice } box)
+        {
+            return;
+        }
+
+        if (Keyboard.Modifiers.HasFlag(ModifierKeys.Shift) && projectAnchor is not null)
+        {
+            var listed = projectView.Cast<ProjectChoice>().ToList();
+            var from = listed.IndexOf(projectAnchor);
+            var to = listed.IndexOf(choice);
+            if (from >= 0 && to >= 0)
+            {
+                var check = box.IsChecked == true;
+                checkingMany = true;
+                try
+                {
+                    for (var index = Math.Min(from, to); index <= Math.Max(from, to); index++)
+                    {
+                        listed[index].IsChecked = check;
+                    }
+                }
+                finally
+                {
+                    checkingMany = false;
+                }
+
+                Rebuild();
+            }
+        }
+
+        projectAnchor = choice;
     }
 
     /// <summary>Find a project: only projects whose name contains the text stay listed (checked ones keep their check).</summary>

@@ -43,7 +43,8 @@
                             <ItemsControl x:Name="ProjectChoices" Focusable="False">
                                 <ItemsControl.ItemTemplate>
                                     <DataTemplate>
-                                        <CheckBox IsChecked="{Binding IsChecked, Mode=TwoWay}" Margin="0,4" ToolTip="{Binding Name}">
+                                        <CheckBox IsChecked="{Binding IsChecked, Mode=TwoWay}" Margin="0,4" Click="ProjectCheck_Click"
+                                                  ToolTip="{Binding Name, StringFormat={}{0} (Shift-click another to check every project between)}">
                                             <TextBlock Text="{Binding Name}" TextWrapping="Wrap" />
                                         </CheckBox>
                                     </DataTemplate>
