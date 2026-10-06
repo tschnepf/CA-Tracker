@@ -1,5 +1,6 @@
 using System.ComponentModel;
 using System.Windows;
+using System.Windows.Input;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
 using System.Windows.Data;
@@ -11,8 +12,8 @@ using SmcCaTracker.Core.Storage;
 namespace SmcCaTracker.App.Views;
 
 /// <summary>
-/// Makes or edits a watchlist: its name, the projects it covers, and, in a grid of people by project, who is
-/// watched on each. Each box says what that person holds on that project now, so empty pairs are plain before
+/// Makes or edits a watchlist: its name, the projects it covers (a list on the left; type to find one), and, in
+/// a grid of people by project on the right, who is watched on each. Each box says what that person holds on that project now, so empty pairs are plain before
 /// they're checked. People are everyone who holds or is next on an open item of a project; by default only
 /// the project's own company is listed (people checked already always are). Projects not offered any more
 /// (archived, removed) keep their people as they were.
@@ -24,6 +25,11 @@ public partial class WatchlistWindow : Window
     private readonly List<ProjectChoice> choices;
     private readonly List<PersonRow> rows;
     private readonly ICollectionView view;
+    private readonly ListCollectionView projectView;
+
+    // The project whose box was clicked last, and whether a Shift-click is checking a run of them (rebuilt once after).
+    private ProjectChoice? projectAnchor;
+    private bool checkingMany;
     private readonly Dictionary<string, List<string>> kept = new(StringComparer.Ordinal);
 
     public WatchlistWindow(IReadOnlyList<WatchProject> candidates, Watchlist? existing, IReadOnlyCollection<string> preselectedKeys)
@@ -77,7 +83,13 @@ public partial class WatchlistWindow : Window
 
         foreach (var choice in choices)
         {
-            choice.PropertyChanged += (_, _) => Rebuild();
+            choice.PropertyChanged += (_, _) =>
+            {
+                if (!checkingMany)
+                {
+                    Rebuild();
+                }
+            };
         }
 
         foreach (var cell in rows.SelectMany(row => row.Cells))
@@ -85,7 +97,14 @@ public partial class WatchlistWindow : Window
             cell.PropertyChanged += (_, _) => UpdateSummary();
         }
 
-        ProjectChoices.ItemsSource = choices;
+        // The projects, A–Z, narrowed to those whose name contains what's typed in Find a project.
+        projectView = new ListCollectionView(choices)
+        {
+            Filter = item => ProjectSearchBox.Text.Trim() is var search
+                && (search.Length == 0 || ((ProjectChoice)item).Name.Contains(search, StringComparison.CurrentCultureIgnoreCase))
+        };
+        projectView.SortDescriptions.Add(new SortDescription(nameof(ProjectChoice.Name), ListSortDirection.Ascending));
+        ProjectChoices.ItemsSource = projectView;
         view = CollectionViewSource.GetDefaultView(rows);
         view.Filter = item => IsListed((PersonRow)item);
         PeopleGrid.ItemsSource = view;
@@ -184,6 +203,7 @@ public partial class WatchlistWindow : Window
             : view.IsEmpty ? "No one to list. Clear the search, or uncheck \"Only people from the project's company\"."
             : "";
         EmptyText.Visibility = EmptyText.Text.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
+        ProjectCountText.Text = $"{Shown.Count()} of {choices.Count} checked";
         UpdateSummary();
     }
 
@@ -227,6 +247,56 @@ public partial class WatchlistWindow : Window
             {
                 row.Cells[index].IsChecked = check;
             }
+        }
+    }
+
+    /// <summary>
+    /// A project's box. Shift-clicking it checks every project listed between it and the box clicked before (or
+    /// unchecks them, when this click unchecked it), in the list as it is filtered now.
+    /// </summary>
+    private void ProjectCheck_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not CheckBox { DataContext: ProjectChoice choice } box)
+        {
+            return;
+        }
+
+        if (Keyboard.Modifiers.HasFlag(ModifierKeys.Shift) && projectAnchor is not null)
+        {
+            var listed = projectView.Cast<ProjectChoice>().ToList();
+            var from = listed.IndexOf(projectAnchor);
+            var to = listed.IndexOf(choice);
+            if (from >= 0 && to >= 0)
+            {
+                var check = box.IsChecked == true;
+                checkingMany = true;
+                try
+                {
+                    for (var index = Math.Min(from, to); index <= Math.Max(from, to); index++)
+                    {
+                        listed[index].IsChecked = check;
+                    }
+                }
+                finally
+                {
+                    checkingMany = false;
+                }
+
+                Rebuild();
+            }
+        }
+
+        projectAnchor = choice;
+    }
+
+    /// <summary>Find a project: only projects whose name contains the text stay listed (checked ones keep their check).</summary>
+    private void ProjectSearch_Changed(object sender, TextChangedEventArgs e)
+    {
+        ProjectSearchHint.Visibility = ProjectSearchBox.Text.Length == 0 ? Visibility.Visible : Visibility.Collapsed;
+        if (projectView is not null)
+        {
+            projectView.Refresh();
+            NoProjectsText.Visibility = projectView.IsEmpty ? Visibility.Visible : Visibility.Collapsed;
         }
     }
 

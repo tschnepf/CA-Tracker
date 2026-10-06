@@ -404,6 +404,122 @@ public class ComparisonAndOperationTests
     }
 
     [Fact]
+    public void BackWithUsTheFirstTimeMovesWhatItHoldsIntoR0AndMakesR1()
+    {
+        var (temp, settings, mapping) = Setup();
+        using (temp)
+        {
+            var returned = Path.Combine(mapping.CaFolder, "RFIs", "~Returned", "RFI-003 - Back with us");
+            File.WriteAllText(Path.Combine(returned, "Question.pdf"), "q");
+            File.WriteAllText(Path.Combine(returned, "Response.pdf"), "r");
+            Directory.CreateDirectory(Path.Combine(returned, "Markups"));
+            var hidden = Path.Combine(returned, "desktop.ini");
+            File.WriteAllText(hidden, "x");
+            File.SetAttributes(hidden, FileAttributes.Hidden | FileAttributes.System);
+
+            var comparison = ProjectComparer.Compare(Snapshot(), mapping, settings);
+            var reopened = comparison.For(ItemTypes.Rfi).Rows.Where(row => row.Status == RowStatus.Reopened).ToList();
+            var plan = OperationPlanner.PlanReopen(reopened, comparison);
+
+            // Planning changes nothing; the preview lists every step.
+            Assert.True(Directory.Exists(returned));
+            Assert.Equal(new[] { OperationKind.MoveFolder, OperationKind.CreateFolder, OperationKind.MoveFolder, OperationKind.MoveFile, OperationKind.MoveFile, OperationKind.CreateFolder },
+                plan.Operations.Select(operation => operation.Kind));
+            Assert.All(plan.Operations, operation => Assert.False(operation.IsBlocked));
+
+            var results = new OperationExecutor(new AppPaths(temp.Make("appdata"))).Execute(plan);
+            Assert.All(results, result => Assert.Equal(OperationOutcome.Done, result.Outcome));
+            var active = Path.Combine(mapping.CaFolder, "RFIs", "RFI-003 - Back with us");
+            Assert.False(Directory.Exists(returned));
+            Assert.True(File.Exists(Path.Combine(active, "R0", "Question.pdf")));
+            Assert.True(File.Exists(Path.Combine(active, "R0", "Response.pdf")));
+            Assert.True(Directory.Exists(Path.Combine(active, "R0", "Markups")));
+            Assert.True(File.Exists(Path.Combine(active, "desktop.ini")));
+            Assert.True(Directory.Exists(Path.Combine(active, "R1")));
+            Assert.Empty(Directory.EnumerateFileSystemEntries(Path.Combine(active, "R1")));
+        }
+    }
+
+    [Fact]
+    public void BackWithUsAgainMakesTheNextRevisionFolder()
+    {
+        var (temp, settings, mapping) = Setup();
+        using (temp)
+        {
+            var returned = Path.Combine(mapping.CaFolder, "RFIs", "~Returned", "RFI-003 - Back with us");
+            Directory.CreateDirectory(Path.Combine(returned, "R0"));
+            Directory.CreateDirectory(Path.Combine(returned, "Rev 1"));
+            File.WriteAllText(Path.Combine(returned, "Notes.txt"), "n");
+
+            var comparison = ProjectComparer.Compare(Snapshot(), mapping, settings);
+            var reopened = comparison.For(ItemTypes.Rfi).Rows.Where(row => row.Status == RowStatus.Reopened).ToList();
+            var plan = OperationPlanner.PlanReopen(reopened, comparison);
+            Assert.Equal(new[] { OperationKind.MoveFolder, OperationKind.CreateFolder }, plan.Operations.Select(operation => operation.Kind));
+
+            new OperationExecutor(new AppPaths(temp.Make("appdata"))).Execute(plan);
+            var active = Path.Combine(mapping.CaFolder, "RFIs", "RFI-003 - Back with us");
+            Assert.True(Directory.Exists(Path.Combine(active, "R2")));
+            Assert.True(File.Exists(Path.Combine(active, "Notes.txt")));
+        }
+    }
+
+    [Fact]
+    public void BackWithUsDoesNothingElseWhenTheFolderCantMoveBack()
+    {
+        var (temp, settings, mapping) = Setup();
+        using (temp)
+        {
+            var returned = Path.Combine(mapping.CaFolder, "RFIs", "~Returned", "RFI-003 - Back with us");
+            File.WriteAllText(Path.Combine(returned, "Question.pdf"), "q");
+            // Something of the same name is already in the active folder: the move is blocked, and so is the rest.
+            var clash = temp.Make("CMH04", "CA", "RFIs", "RFI-003 - Back with us");
+            var comparison = ProjectComparer.Compare(Snapshot(), mapping, settings);
+            // (With a second folder of that name the comparison may call it Two folders; the returned one is planned all the same.)
+            var reopened = comparison.For(ItemTypes.Rfi).Rows.Where(row => row.Folder is { } folder && FolderScanner.SamePath(folder.FullPath, returned)).ToList();
+            Assert.Single(reopened);
+            var plan = OperationPlanner.PlanReopen(reopened, comparison);
+            Assert.NotEmpty(plan.Operations);
+            Assert.All(plan.Operations, operation => Assert.True(operation.IsBlocked));
+
+            new OperationExecutor(new AppPaths(temp.Make("appdata"))).Execute(plan);
+            Assert.True(File.Exists(Path.Combine(returned, "Question.pdf")));
+            Assert.False(Directory.Exists(Path.Combine(clash, "R0")));
+            Assert.False(Directory.Exists(Path.Combine(clash, "R1")));
+        }
+    }
+
+    [Fact]
+    public void StepsAfterAMoveThatFailedAreSkipped()
+    {
+        var (temp, settings, mapping) = Setup();
+        using (temp)
+        {
+            var returned = Path.Combine(mapping.CaFolder, "RFIs", "~Returned", "RFI-003 - Back with us");
+            var comparison = ProjectComparer.Compare(Snapshot(), mapping, settings);
+            var reopened = comparison.For(ItemTypes.Rfi).Rows.Where(row => row.Status == RowStatus.Reopened).ToList();
+            var plan = OperationPlanner.PlanReopen(reopened, comparison);
+
+            // The folder disappears between the preview and the run: no R folders are made anywhere.
+            Directory.Delete(returned, recursive: true);
+            var results = new OperationExecutor(new AppPaths(temp.Make("appdata"))).Execute(plan);
+            Assert.Equal(OperationOutcome.Failed, results[0].Outcome);
+            Assert.All(results.Skip(1), result => Assert.Equal(OperationOutcome.Skipped, result.Outcome));
+            Assert.False(Directory.Exists(Path.Combine(mapping.CaFolder, "RFIs", "RFI-003 - Back with us")));
+        }
+    }
+
+    [Theory]
+    [InlineData("R0", 0)]
+    [InlineData("R2", 2)]
+    [InlineData(" R02 ", 2)]
+    [InlineData("Rev 3", 3)]
+    [InlineData("Revision 4", 4)]
+    [InlineData("Response", null)]
+    [InlineData("R2 markups", null)]
+    public void RevisionFoldersAreRecognisedByTheirWholeName(string name, int? revision) =>
+        Assert.Equal(revision, DownloadNaming.RevisionOfFolder(name));
+
+    [Fact]
     public void FolderNamesAreValidated()
     {
         Assert.True(FolderNames.IsValid("~Returned"));

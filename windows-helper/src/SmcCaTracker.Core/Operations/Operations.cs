@@ -9,7 +9,8 @@ namespace SmcCaTracker.Core.Operations;
 public enum OperationKind
 {
     CreateFolder,
-    MoveFolder
+    MoveFolder,
+    MoveFile
 }
 
 /// <summary>One change shown in the preview. Nothing touches the disk until the plan is executed.</summary>
@@ -22,6 +23,12 @@ public sealed class PlannedOperation
     public string? Warning { get; init; }
     public string? BlockedReason { get; init; }
     public bool IsBlocked => BlockedReason is not null;
+
+    /// <summary>
+    /// A folder that must exist when this step runs (it was moved or created by an earlier step); otherwise the
+    /// step is skipped, so nothing is made in the wrong place when an earlier step didn't happen.
+    /// </summary>
+    public string? RequiresPath { get; init; }
 }
 
 public sealed class OperationPlan
@@ -123,6 +130,119 @@ public static class OperationPlanner
             Description = "These folders will be moved out of the returned folder.",
             Operations = operations
         };
+    }
+
+    /// <summary>
+    /// Plans bringing back the folders of items that are back in your company's court while their folder sits in
+    /// a returned folder: each folder moves back to the active folder (as <see cref="PlanMoveBack"/>), and gets a
+    /// new revision folder for the new round. A folder with no revision folders yet ("R0", "R1", "Rev 2", …) has
+    /// what it holds moved into a new R0 (the first round) and an empty R1 made; otherwise the next number after
+    /// the highest is made (R1 → R2). Hidden and system files (desktop.ini, Thumbs.db) stay where they are. Every
+    /// step after the move needs the folder to have arrived, so nothing is made elsewhere if the move doesn't happen.
+    /// </summary>
+    public static OperationPlan PlanReopen(IEnumerable<ComparisonRow> rows, ProjectComparison comparison)
+    {
+        var operations = new List<PlannedOperation>();
+        var targets = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var row in rows.Where(row => row.Folder is not null)
+                     .OrderBy(row => row.SortNumber, Comparer<string>.Create(ItemNumber.CompareNatural)))
+        {
+            var scan = comparison.For(row.ItemType).Scan;
+            var folder = row.Folder!;
+            var destinationParent = ActiveDestination(folder, scan);
+            var destination = Path.Combine(destinationParent, folder.Name);
+            var problem = MoveProblem(folder, FolderLocation.Returned, destination, targets);
+            operations.Add(new PlannedOperation
+            {
+                Kind = OperationKind.MoveFolder,
+                SourcePath = folder.FullPath,
+                DestinationPath = destination,
+                Title = $"Move {folder.Name} back to {Display(scan.TypeFolderPath, destinationParent)}",
+                BlockedReason = problem
+            });
+
+            // Later steps act on the folder where it will be, once moved back.
+            var skipped = problem is null ? null : "Skipped with the move above.";
+            var (revisions, contents) = ReadItemFolder(folder.FullPath);
+            if (revisions.Count == 0)
+            {
+                var first = Path.Combine(destination, "R0");
+                operations.Add(new PlannedOperation
+                {
+                    Kind = OperationKind.CreateFolder,
+                    DestinationPath = first,
+                    Title = $"Create R0 in {folder.Name}, for what it holds now",
+                    RequiresPath = destination,
+                    BlockedReason = skipped
+                });
+                foreach (var (name, isFile) in contents)
+                {
+                    operations.Add(new PlannedOperation
+                    {
+                        Kind = isFile ? OperationKind.MoveFile : OperationKind.MoveFolder,
+                        SourcePath = Path.Combine(destination, name),
+                        DestinationPath = Path.Combine(first, name),
+                        Title = $"Move {name} into R0",
+                        RequiresPath = first,
+                        BlockedReason = skipped
+                    });
+                }
+
+                operations.Add(new PlannedOperation
+                {
+                    Kind = OperationKind.CreateFolder,
+                    DestinationPath = Path.Combine(destination, "R1"),
+                    Title = $"Create R1 in {folder.Name}, for the new round",
+                    RequiresPath = destination,
+                    BlockedReason = skipped
+                });
+            }
+            else
+            {
+                var next = revisions.Max() + 1;
+                operations.Add(new PlannedOperation
+                {
+                    Kind = OperationKind.CreateFolder,
+                    DestinationPath = Path.Combine(destination, $"R{next}"),
+                    Title = $"Create R{next} in {folder.Name}, for the new round (the last was R{next - 1})",
+                    RequiresPath = destination,
+                    BlockedReason = skipped
+                });
+            }
+        }
+
+        return new OperationPlan
+        {
+            Title = "Back with you: new revision",
+            Description = "These items are back with your company, but their folders are in the returned folder. Each folder moves back and gets a new R folder for the new round.",
+            Operations = operations
+        };
+    }
+
+    /// <summary>An item folder's revision folders (their numbers) and the rest of what it holds (hidden and system files left out).</summary>
+    private static (List<int> Revisions, List<(string Name, bool IsFile)> Contents) ReadItemFolder(string path)
+    {
+        var revisions = new List<int>();
+        var contents = new List<(string, bool)>();
+        try
+        {
+            foreach (var entry in new DirectoryInfo(path).EnumerateFileSystemInfos().OrderBy(entry => entry.Name, StringComparer.OrdinalIgnoreCase))
+            {
+                if (entry is DirectoryInfo && Downloads.DownloadNaming.RevisionOfFolder(entry.Name) is { } revision)
+                {
+                    revisions.Add(revision);
+                }
+                else if ((entry.Attributes & (FileAttributes.Hidden | FileAttributes.System)) == 0)
+                {
+                    contents.Add((entry.Name, entry is FileInfo));
+                }
+            }
+        }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+        {
+        }
+
+        return (revisions, contents);
     }
 
     /// <summary>The folder a returned item folder goes into. See <see cref="PlanMarkReturned"/>.</summary>
@@ -325,6 +445,11 @@ public sealed class OperationExecutor
             return new OperationResult(operation, OperationOutcome.Skipped, operation.BlockedReason!);
         }
 
+        if (operation.RequiresPath is { } required && !Directory.Exists(required))
+        {
+            return new OperationResult(operation, OperationOutcome.Skipped, "An earlier step didn't happen, so this one was skipped.");
+        }
+
         try
         {
             if (operation.Kind == OperationKind.CreateFolder)
@@ -342,6 +467,27 @@ public sealed class OperationExecutor
             if (parent is not null && failedFolders.Contains(parent))
             {
                 return new OperationResult(operation, OperationOutcome.Skipped, "The destination folder could not be created.");
+            }
+
+            if (operation.Kind == OperationKind.MoveFile)
+            {
+                if (operation.SourcePath is null || !File.Exists(operation.SourcePath))
+                {
+                    return new OperationResult(operation, OperationOutcome.Failed, "The file no longer exists.");
+                }
+
+                if (File.Exists(operation.DestinationPath) || Directory.Exists(operation.DestinationPath))
+                {
+                    return new OperationResult(operation, OperationOutcome.Failed, "Something with the same name appeared at the destination.");
+                }
+
+                if (parent is null || !Directory.Exists(parent))
+                {
+                    return new OperationResult(operation, OperationOutcome.Failed, "The destination folder does not exist.");
+                }
+
+                File.Move(operation.SourcePath, operation.DestinationPath);
+                return new OperationResult(operation, OperationOutcome.Done, "Moved.");
             }
 
             if (operation.SourcePath is null || !Directory.Exists(operation.SourcePath))

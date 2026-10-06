@@ -1165,8 +1165,38 @@ public partial class MainWindow : Window
             return;
         }
 
+        // Items back with your company get a new R folder as they come back; other folders just move back.
         await PreviewAndRunAsync(Merge(rows.GroupBy(row => row.Comparison)
-            .Select(group => OperationPlanner.PlanMoveBack(group.Select(row => row.Row), group.Key))
+            .SelectMany(group => new[]
+            {
+                group.Any(row => row.Status == RowStatus.Reopened)
+                    ? OperationPlanner.PlanReopen(group.Where(row => row.Status == RowStatus.Reopened).Select(row => row.Row), group.Key)
+                    : null,
+                group.Any(row => row.Status != RowStatus.Reopened)
+                    ? OperationPlanner.PlanMoveBack(group.Where(row => row.Status != RowStatus.Reopened).Select(row => row.Row), group.Key)
+                    : null
+            })
+            .OfType<OperationPlan>()
+            .ToList()));
+    }
+
+    /// <summary>
+    /// "↩ N back with you": items back with your company whose folders are in Returned. Each folder moves back and
+    /// gets a new R folder (R0 for what it holds and R1 the first time, the next number after that), after the
+    /// preview, which can be cancelled.
+    /// </summary>
+    private async void Reopened_Click(object sender, RoutedEventArgs e)
+    {
+        var rows = viewModel.ReopenedRows()
+            .DistinctBy(row => row.Row.Folder!.FullPath, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        if (rows.Count == 0)
+        {
+            return;
+        }
+
+        await PreviewAndRunAsync(Merge(rows.GroupBy(row => row.Comparison)
+            .Select(group => OperationPlanner.PlanReopen(group.Select(row => row.Row), group.Key))
             .ToList()));
     }
 
