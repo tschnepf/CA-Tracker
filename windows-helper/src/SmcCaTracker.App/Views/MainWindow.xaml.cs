@@ -897,31 +897,6 @@ public partial class MainWindow : Window
         await viewModel.RecheckFoldersAsync();
     }
 
-    /// <summary>A row's ⋯ button: the row's menu (also on right-click), just below the button.</summary>
-    private void RowMenu_Click(object sender, RoutedEventArgs e)
-    {
-        if (sender is not FrameworkElement button)
-        {
-            return;
-        }
-
-        DependencyObject? parent = button;
-        while (parent is not null and not DataGridRow)
-        {
-            parent = System.Windows.Media.VisualTreeHelper.GetParent(parent);
-        }
-
-        if (parent is DataGridRow { ContextMenu: { } menu } row)
-        {
-            var corner = button.TranslatePoint(new Point(0, button.ActualHeight), row);
-            menu.PlacementTarget = row;
-            menu.Placement = System.Windows.Controls.Primitives.PlacementMode.Relative;
-            menu.HorizontalOffset = corner.X;
-            menu.VerticalOffset = corner.Y;
-            menu.IsOpen = true;
-        }
-    }
-
     private void OpenRowFolder_Click(object sender, RoutedEventArgs e)
     {
         if (sender is FrameworkElement { DataContext: RowViewModel row })
@@ -930,23 +905,32 @@ public partial class MainWindow : Window
         }
     }
 
-    private bool batchDownloading;
+    private DownloadWindow? batchWindow;
 
     /// <summary>
-    /// Downloads the checked items one after another: each opens in the download window to choose its
-    /// files; after it's downloaded (or skipped) the next one opens. Stop or closing the window ends it.
+    /// Downloads the checked items: one download window lists them all, each with its files and where they
+    /// go, and saves every checked file in one go. While it is open, Download brings it back to the front.
     /// </summary>
-    private async void DownloadChecked_Click(object sender, RoutedEventArgs e)
+    private void DownloadChecked_Click(object sender, RoutedEventArgs e) => OpenCheckedItems(verify: false);
+
+    /// <summary>
+    /// Checks the checked items' folders against Helix in the same window: each says whether its folder has
+    /// every file Helix has for it, with the missing ones checked so Download gets them.
+    /// </summary>
+    private void VerifyChecked_Click(object sender, RoutedEventArgs e) => OpenCheckedItems(verify: true);
+
+    private void OpenCheckedItems(bool verify)
     {
-        if (batchDownloading)
+        if (batchWindow is not null)
         {
+            batchWindow.Activate();
             return;
         }
 
         var rows = viewModel.CheckedRows().Where(row => row.Row.Item is not null).ToList();
         if (rows.Count == 0)
         {
-            ShowInfo("Check the items you want to download first (the box in the heading checks everything shown).");
+            ShowInfo($"Check the items you want to {(verify ? "verify" : "download")} first (the box in the heading checks everything shown).");
             return;
         }
 
@@ -966,32 +950,18 @@ public partial class MainWindow : Window
             ShowInfo($"{notHelix} checked item{(notHelix == 1 ? " is" : "s are")} from Procore and will be skipped (Procore downloads aren't supported yet).");
         }
 
-        batchDownloading = true;
-        try
-        {
-            for (var index = 0; index < requests.Count; index++)
-            {
-                var window = new DownloadWindow(requests[index], viewModel.Paths, index, requests.Count) { Owner = this };
-                var closed = new TaskCompletionSource();
-                window.Downloaded += async (_, _) => await viewModel.RecheckFoldersAsync();
-                downloadWindowsOpen++;
-                window.Closed += (_, _) =>
-                {
-                    downloadWindowsOpen--;
-                    closed.TrySetResult();
-                };
-                window.Show();
-                await closed.Task;
-                if (!window.ContinueBatch)
-                {
-                    break;
-                }
-            }
-        }
-        finally
-        {
-            batchDownloading = false;
-        }
+        batchWindow = ShowDownloadWindow(requests, verify);
+        batchWindow.Closed += (_, _) => batchWindow = null;
+    }
+
+    private DownloadWindow ShowDownloadWindow(IReadOnlyList<DownloadRequest> requests, bool verify = false)
+    {
+        var window = new DownloadWindow(requests, viewModel.Paths, verify) { Owner = this };
+        window.Downloaded += async (_, _) => await viewModel.RecheckFoldersAsync();
+        downloadWindowsOpen++;
+        window.Closed += (_, _) => downloadWindowsOpen--;
+        window.Show();
+        return window;
     }
 
     private void DownloadRow_Click(object sender, RoutedEventArgs e)
@@ -1008,11 +978,25 @@ public partial class MainWindow : Window
             return;
         }
 
-        var window = new DownloadWindow(request, viewModel.Paths) { Owner = this };
-        window.Downloaded += async (_, _) => await viewModel.RecheckFoldersAsync();
-        downloadWindowsOpen++;
-        window.Closed += (_, _) => downloadWindowsOpen--;
-        window.Show();
+        ShowDownloadWindow(new[] { request });
+    }
+
+    /// <summary>A row's Verify: does its folder have every file Helix has for the item?</summary>
+    private void VerifyRow_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not FrameworkElement { DataContext: RowViewModel row })
+        {
+            return;
+        }
+
+        var request = viewModel.DownloadRequestFor(row);
+        if (request is null)
+        {
+            ShowInfo("Verifying folders is available for Helix items. Procore isn't supported yet.");
+            return;
+        }
+
+        ShowDownloadWindow(new[] { request }, verify: true);
     }
 
     private async void OpenRowLink_Click(object sender, RoutedEventArgs e)
@@ -1072,8 +1056,10 @@ public partial class MainWindow : Window
     private async void Grid_MouseDoubleClick(object sender, MouseButtonEventArgs e)
     {
         if (e.OriginalSource is not DependencyObject source
+            || IsInButton(source)
             || ItemsControl.ContainerFromElement(ItemsGrid, source) is not DataGridRow { Item: RowViewModel row })
         {
+            // A double-click on a row's link (or check box) is that link's, not the row's.
             return;
         }
 
@@ -1085,6 +1071,22 @@ public partial class MainWindow : Window
         {
             await OpenItemAsync(row);
         }
+    }
+
+    private static bool IsInButton(DependencyObject source)
+    {
+        for (DependencyObject? element = source; element is not null and not DataGridRow;
+             element = element is System.Windows.Media.Visual or System.Windows.Media.Media3D.Visual3D
+                 ? System.Windows.Media.VisualTreeHelper.GetParent(element)
+                 : LogicalTreeHelper.GetParent(element))
+        {
+            if (element is System.Windows.Controls.Primitives.ButtonBase)
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private void OpenSignIn(string provider, bool signInExpired = false)

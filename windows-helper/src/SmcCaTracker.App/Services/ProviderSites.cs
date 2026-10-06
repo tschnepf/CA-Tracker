@@ -23,6 +23,13 @@ public static class ProviderSites
             : string.Equals(uri.Host, ProviderLinks.HelixHost, StringComparison.OrdinalIgnoreCase));
 
     /// <summary>
+    /// A page of Helix's new web app (signed in, but not one CA Tracker's page library can use). Not a
+    /// sign-in page: Helix sends some projects' RFI or Submittals pages there.
+    /// </summary>
+    public static bool IsHelixNewApp(Uri uri) =>
+        uri.Scheme == Uri.UriSchemeHttps && string.Equals(uri.Host, ProviderLinks.HelixNewAppHost, StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
     /// A sign-in page: a whole path segment such as /login, /sign-in, /auth, /sso or /account (optionally
     /// with an extension, e.g. Login.aspx). Words that only contain one ("Associated", "Author",
     /// "Accounts") are ordinary pages.

@@ -34,4 +34,15 @@ public sealed class ProviderSitesTests
     [InlineData("https://app.procore.com/rest/v1.0/me", false)]
     public void SignInPagesAreWholePathSegments(string address, bool signIn) =>
         Assert.Equal(signIn, ProviderSites.LooksLikeSignIn(new Uri(address)));
+
+    [Fact]
+    public void HelixsNewAppIsToldApartFromTheOldOneAndFromSignIn()
+    {
+        // Where Helix sent a project's Submittals list (seen 2026-10-03).
+        var moved = new Uri("https://app.helixteam.com/projects/67a3688e17038d35d95b54fb/submittals");
+        Assert.True(ProviderSites.IsHelixNewApp(moved));
+        Assert.False(ProviderSites.LooksLikeSignIn(moved));
+        Assert.False(ProviderSites.IsHelixNewApp(new Uri("https://project.helixteam.com/Projects/42/Submittals")));
+        Assert.False(ProviderSites.IsHelixNewApp(new Uri("http://app.helixteam.com/")));
+    }
 }

@@ -1801,7 +1801,8 @@ public sealed class MainViewModel : ObservableObject, IDisposable
                  {
                      nameof(CheckedCount), nameof(HasChecks), nameof(SelectionText), nameof(AllShownChecked),
                      nameof(CanMarkReturned), nameof(MarkReturnedText), nameof(CanMoveBack), nameof(MoveBackText),
-                     nameof(CanSetDiscipline), nameof(SetDisciplineText), nameof(CanDownloadChecked), nameof(DownloadCheckedText)
+                     nameof(CanSetDiscipline), nameof(SetDisciplineText), nameof(CanDownloadChecked), nameof(DownloadCheckedText),
+                     nameof(VerifyCheckedText)
                  })
         {
             OnPropertyChanged(name);
@@ -1823,6 +1824,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     public string SetDisciplineText => checks.Discipline == 0 ? "Set discipline…" : $"Set discipline of {checks.Discipline}…";
     public bool CanDownloadChecked => checks.Download > 0;
     public string DownloadCheckedText => checks.Download == 0 ? "Download…" : $"Download {checks.Download}…";
+    public string VerifyCheckedText => checks.Download == 0 ? "Verify folders…" : $"Verify {checks.Download} folder{(checks.Download == 1 ? "" : "s")}…";
 
     /// <summary>Header box: true when every checkable shown row is checked, null when some are, false when none.</summary>
     public bool? AllShownChecked
@@ -1852,7 +1854,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     /// (its matched folder, else a new "&lt;number&gt; - &lt;name&gt;" folder in the project's RFI/Submittal folder).
     /// Null when the item can't be downloaded (not Helix, or no item).
     /// </summary>
-    public Views.DownloadRequest? DownloadRequestFor(RowViewModel row)
+    public DownloadRequest? DownloadRequestFor(RowViewModel row)
     {
         var project = row.Project.Project;
         var item = row.Row.Item;
@@ -1876,7 +1878,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         var projectName = !string.IsNullOrWhiteSpace(project.Connection.ProjectName)
             ? project.Connection.ProjectName
             : row.Project.Snapshot?.ProjectName ?? "";
-        return new Views.DownloadRequest(item.ItemType, item.ItemId, project.Connection.ProjectId, item.Number, item.Title,
+        return new DownloadRequest(item.ItemType, item.ItemId, project.Connection.ProjectId, item.Number, item.Title,
             projectName, row.Row.Folder?.FullPath, parent);
     }
 

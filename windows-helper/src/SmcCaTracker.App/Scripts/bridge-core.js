@@ -537,9 +537,12 @@
     };
   }
 
+  // The item to work on. Told its type and project, any Helix page will do (the Helix home page too, for
+  // projects whose RFI or Submittals pages Helix sends to its new app); otherwise they come from the
+  // project page open.
   function getPackageTarget(windowObject, itemId, itemType, projectId) {
-    const page = parsePageContext(windowObject.location && windowObject.location.href);
-    if (!page) {
+    const page = itemType && projectId ? null : parsePageContext(windowObject.location && windowObject.location.href);
+    if (!page && !(itemType && projectId)) {
       throw new Error("The current tab is no longer on a supported Helix activity page.");
     }
     const targetType = itemType || page.itemType;
@@ -1410,9 +1413,13 @@
     }
 
     const featureName = target.itemType === "rfi" ? "RFIs" : "Submittals";
-    const context = getContext(windowObject);
+    // Who you are, for the reports you may see: the page's user, or Helix's login on its home page.
+    const user = currentUser(windowObject);
+    if (!user) {
+      throw new Error("Helix is still loading the currently logged-in user.");
+    }
     const accessRules = [{ isGlobal: true }, { idProjects: { $in: [target.projectId] } }];
-    if (context.contactId) accessRules.push({ idContacts: { $in: [context.contactId] } });
+    if (user.contactId) accessRules.push({ idContacts: { $in: [user.contactId] } });
     const reportFilter = {
       functionName: "DetailView",
       isActive: true,
