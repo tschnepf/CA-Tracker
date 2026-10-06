@@ -24,6 +24,10 @@ namespace SmcCaTracker.App.Views;
 /// catch changes made to other items here. The browser stays open between items, so the next opens fast.
 /// If Helix sends you to sign in (or reloads the list) while an item is open, the item opens again once
 /// the list is back, and a change made meanwhile is still noticed.
+/// When Helix has moved a project's list to its new app (app.helixteam.com), which does have an address for
+/// each item, the item opens there instead, straight away from then on. The new app shows an item's review
+/// steps correctly where the old viewer doesn't (a reviewer listed twice shows both as waiting). CA Tracker
+/// can't watch an item there, so it syncs the project when the item is closed.
 /// </summary>
 public partial class ItemPanel : UserControl
 {
@@ -43,6 +47,16 @@ public partial class ItemPanel : UserControl
     private Task? startTask;
     private bool opening;
     private bool opened;
+
+    // Lists Helix has moved to its new app, seen this run: "project|type" → the list's address there. Their
+    // items open straight in the new app ("<list>/<item id>").
+    private static readonly Dictionary<string, string> newAppLists = new(StringComparer.OrdinalIgnoreCase);
+
+    // The item's address in the new app has been loaded (or is loading).
+    private bool newAppItemRequested;
+
+    // The item is open in the new app: when it closes, the project is synced (CA Tracker can't watch it there).
+    private bool newAppItem;
 
     // Watching the item for changes made here.
     private string? courtBaseline;
@@ -73,6 +87,12 @@ public partial class ItemPanel : UserControl
 
     /// <summary>Raised when the Close button has finished (the main window then hides the panel).</summary>
     public event EventHandler? CloseRequested;
+
+    /// <summary>
+    /// Raised with the Helix project's id when an item that was open in Helix's new app is closed: CA Tracker
+    /// can't see what was done there, so the project is synced.
+    /// </summary>
+    public event Action<string>? ProjectSyncRequested;
 
     /// <summary>The item shown, as "type|id" (empty when none).</summary>
     public string CurrentItemKey => opened || opening ? $"{itemType}|{itemId}" : "";
@@ -108,6 +128,8 @@ public partial class ItemPanel : UserControl
         courtBaseline = null;
         checkStartedAt = null;
         newAppShown = false;
+        newAppItemRequested = false;
+        newAppItem = false;
         // An update of the last item still running would keep this one from being checked.
         updateStartedAt = null;
         updateDone?.TrySetResult();
@@ -123,9 +145,9 @@ public partial class ItemPanel : UserControl
         {
             await EnsureStartedAsync();
         }
-        else
+        else if (Browser.CoreWebView2 is { } core)
         {
-            Browser.CoreWebView2?.Navigate(ListUrl);
+            GoToItem(core);
         }
 
         _ = WatchOpenAsync(attempt);
@@ -208,6 +230,42 @@ public partial class ItemPanel : UserControl
     private string ListUrl =>
         $"https://{ProviderLinks.HelixHost}/Projects/{Uri.EscapeDataString(projectId)}/{(itemType == ItemTypes.Submittal ? "Submittals" : "RFI")}";
 
+    private string NewAppKey => $"{projectId}|{itemType}";
+
+    /// <summary>The item's address in Helix's new app, once Helix has moved its list there; otherwise null.</summary>
+    private string? NewAppItemUrl =>
+        newAppLists.TryGetValue(NewAppKey, out var list) ? $"{list}/{Uri.EscapeDataString(itemId)}" : null;
+
+    /// <summary>Straight to the item in Helix's new app when its list has moved there; otherwise to its list.</summary>
+    private void GoToItem(CoreWebView2 core)
+    {
+        if (NewAppItemUrl is { } url)
+        {
+            newAppItemRequested = true;
+            core.Navigate(url);
+        }
+        else
+        {
+            core.Navigate(ListUrl);
+        }
+    }
+
+    /// <summary>
+    /// The address of this item's list in Helix's new app, from a page Helix sent the list to there
+    /// ("https://app.helixteam.com/projects/{project}/submittals"); null for any other new-app page.
+    /// </summary>
+    private string? NewAppListUrl(Uri page)
+    {
+        var segments = page.AbsolutePath.Trim('/').Split('/');
+        var word = itemType == ItemTypes.Submittal ? "submittal" : "rfi";
+        return segments.Length >= 3
+               && string.Equals(segments[0], "projects", StringComparison.OrdinalIgnoreCase)
+               && string.Equals(Uri.UnescapeDataString(segments[1]), projectId, StringComparison.OrdinalIgnoreCase)
+               && segments[2].Contains(word, StringComparison.OrdinalIgnoreCase)
+            ? $"https://{page.Host}/{segments[0]}/{segments[1]}/{segments[2]}"
+            : null;
+    }
+
     /// <summary>
     /// Starts the page once: opening another item while it starts waits for the same start, so its
     /// handlers aren't added twice. Starts again if the last start failed.
@@ -275,7 +333,7 @@ public partial class ItemPanel : UserControl
                 RetryButton.Visibility = Visibility.Visible;
             });
         };
-        core.Navigate(ListUrl);
+        GoToItem(core);
     }
 
     private void OnNavigationStarting(object? sender, CoreWebView2NavigationStartingEventArgs e)
@@ -310,15 +368,40 @@ public partial class ItemPanel : UserControl
 
         if (ProviderSites.IsHelixNewApp(current))
         {
-            // Helix shows this project's list in its new app, where CA Tracker can't open the item for you.
-            AppLog.Info("panel", $"Helix opened its new app for {itemType} {itemId}.");
             newAppShown = true;
-            SetStatus($"Helix shows this project's {(itemType == ItemTypes.Submittal ? "Submittals" : "RFIs")} in its new app (below). Find the item there: CA Tracker can't open items in the new app yet.");
+            if (!newAppItemRequested && NewAppListUrl(current) is { } list)
+            {
+                // Helix sent the item's list to its new app, which has an address for each item: open it there,
+                // and next time go there straight away.
+                newAppLists[NewAppKey] = list;
+                AppLog.Info("panel", $"Helix moved the {itemType} list of project {projectId} to its new app; opening {itemType} {itemId} there.");
+            }
+
+            if (!newAppItemRequested && NewAppItemUrl is { } itemUrl)
+            {
+                newAppItemRequested = true;
+                Browser.CoreWebView2.Navigate(itemUrl);
+                return;
+            }
+
+            if (newAppItemRequested)
+            {
+                newAppItem = true;
+                AppLog.Info("panel", $"Opened {itemType} {itemId} in Helix's new app.");
+                SetStatus("Opened in Helix's new app. Work on it here; when you close it, CA Tracker syncs the project to pick up your changes.");
+                return;
+            }
+
+            // Somewhere else in the new app: find the item there.
+            AppLog.Info("panel", $"Helix opened its new app for {itemType} {itemId}.");
+            SetStatus($"Helix shows this project's {(itemType == ItemTypes.Submittal ? "Submittals" : "RFIs")} in its new app (below). Find the item there.");
             return;
         }
 
         if (!ProviderSites.IsProviderHost(Providers.Helix, current) || ProviderSites.LooksLikeSignIn(current))
         {
+            // After signing in, the item's address is loaded again.
+            newAppItemRequested = false;
             SetStatus("Sign in to Helix below; the item opens by itself afterwards.");
             return;
         }
@@ -326,8 +409,8 @@ public partial class ItemPanel : UserControl
         var listPath = new Uri(ListUrl).AbsolutePath;
         if (!current.AbsolutePath.StartsWith(listPath, StringComparison.OrdinalIgnoreCase))
         {
-            // Signed in and landed elsewhere (e.g. the Helix home page): go to the item's list.
-            Browser.CoreWebView2.Navigate(ListUrl);
+            // Signed in and landed elsewhere (e.g. the Helix home page): go to the item (or its list).
+            GoToItem(Browser.CoreWebView2);
             return;
         }
 
@@ -428,9 +511,9 @@ public partial class ItemPanel : UserControl
         {
             await OpenItemAsync();
         }
-        else
+        else if (Browser.CoreWebView2 is { } core)
         {
-            Browser.CoreWebView2?.Navigate(ListUrl);
+            GoToItem(core);
         }
     }
 
@@ -611,6 +694,13 @@ public partial class ItemPanel : UserControl
     public async Task FinishAsync(TimeSpan? wait = null)
     {
         watchTimer.Stop();
+        if (newAppItem)
+        {
+            // Open in Helix's new app, where CA Tracker can't see what was done: sync the project instead.
+            newAppItem = false;
+            ProjectSyncRequested?.Invoke(projectId);
+        }
+
         if (pageDead || Browser.CoreWebView2 is null || store is null)
         {
             return;
@@ -647,6 +737,7 @@ public partial class ItemPanel : UserControl
         openAttempt++;
         opened = false;
         opening = false;
+        newAppItem = false;
         started = false;
         startTask = null;
         pageDead = false;

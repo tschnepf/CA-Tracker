@@ -70,6 +70,8 @@ public partial class MainWindow : Window
             viewModel.Dispose();
         };
         ItemPanel.CloseRequested += (_, _) => ShowItemPanel(false);
+        // An item worked on in Helix's new app: sync its project, as the panel can't see the changes there.
+        ItemPanel.ProjectSyncRequested += async helixProjectId => await viewModel.SyncHelixProjectAsync(helixProjectId);
         InitDetailsPanel();
         // Coming back to the app (e.g. from Explorer): check the CA folders straight away.
         Activated += (_, _) => viewModel.CheckFoldersSoon();

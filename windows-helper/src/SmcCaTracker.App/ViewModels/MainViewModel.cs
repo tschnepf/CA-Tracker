@@ -1793,6 +1793,23 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     private static bool IsHelix(ProjectViewModel project) =>
         string.Equals(project.Project.Connection?.Provider, Providers.Helix, StringComparison.OrdinalIgnoreCase);
 
+    /// <summary>
+    /// Syncs the project linked to this Helix project: after an item was worked on in Helix's new app, where the
+    /// item panel can't see changes as they're made.
+    /// </summary>
+    public Task SyncHelixProjectAsync(string helixProjectId)
+    {
+        var project = Projects.FirstOrDefault(candidate => IsHelix(candidate)
+            && string.Equals(candidate.Project.Connection?.ProjectId, helixProjectId, StringComparison.Ordinal));
+        if (project is null)
+        {
+            return Task.CompletedTask;
+        }
+
+        AppLog.Info("panel", $"Syncing {project.Name}: an item was open in Helix's new app.");
+        return StartRefreshAsync(project);
+    }
+
     private static ProviderSyncTarget HelixTarget(ProjectViewModel project)
     {
         var connection = project.Project.Connection!;
