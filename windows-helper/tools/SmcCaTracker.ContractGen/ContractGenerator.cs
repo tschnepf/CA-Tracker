@@ -22,12 +22,14 @@ public static class ContractGenerator
 
     /// <summary>
     /// Single operations of the tracker's general API the desktop reads, as "METHOD /path/" (exact path).
-    /// Only that method is pinned: project search for binding (D3) and a project's team for assigning (D4).
+    /// Only that method is pinned: project search for binding (D3), a project's team for assigning (D4), and people
+    /// search for linking someone not on the team.
     /// </summary>
     public static readonly IReadOnlyList<string> PinnedOperations =
     [
         "POST /api/projects/search/",
-        "GET /api/assignments/"
+        "GET /api/assignments/",
+        "POST /api/people/search/"
     ];
 
     public const string Namespace = "SmcCaTracker.Core.WorkloadTracker.Contract";

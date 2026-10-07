@@ -139,6 +139,47 @@ public sealed class WorkloadTrackerApi
     public Task<ApiResult> GetAssignmentsAsync(string address, string token, string clientId, int projectId, string? etag, CancellationToken cancel) =>
         SendAsync(HttpMethod.Get, address, string.Create(CultureInfo.InvariantCulture, $"/api/ca/assignments/?project={projectId}"), token, clientId, null, cancel, etag);
 
+    public Task<ApiResult> ResolvePeopleAsync(string address, string token, string clientId, CaPeopleResolveRequest request, CancellationToken cancel) =>
+        SendAsync(HttpMethod.Post, address, "/api/ca/people/resolve/", token, clientId, JsonSerializer.Serialize(request, ContractJson.Options), cancel);
+
+    public Task<ApiResult> LinkPeopleAsync(string address, string token, string clientId, CaPeopleLinkRequest request, CancellationToken cancel) =>
+        SendAsync(HttpMethod.Post, address, "/api/ca/people/links/", token, clientId, JsonSerializer.Serialize(request, ContractJson.Options), cancel);
+
+    /// <summary>People in Workload Tracker whose name matches <paramref name="query"/> (for someone not on a project's team).</summary>
+    public Task<ApiResult> SearchPeopleAsync(string address, string token, string clientId, string query, CancellationToken cancel)
+    {
+        var text = query.Trim();
+        var request = new PeopleSearchRequestRequest
+        {
+            Page = 1,
+            PageSize = SearchPageSize,
+            SearchTokens = text.Length == 0 ? null : [new SearchTokenPeopleRequest { Term = text, Op = OpEnum.And }]
+        };
+        return SendAsync(HttpMethod.Post, address, "/api/people/search/", token, clientId, JsonSerializer.Serialize(request, ContractJson.Options), cancel);
+    }
+
+    /// <summary>The active people in a people search result, read field by field like the team.</summary>
+    public static List<TeamMember> ReadPeople(ApiResult result)
+    {
+        var people = new List<TeamMember>();
+        if (!result.Ok || result.TryRead<JsonElement>() is not { ValueKind: JsonValueKind.Object } root
+            || !root.TryGetProperty("results", out var rows) || rows.ValueKind != JsonValueKind.Array)
+        {
+            return people;
+        }
+
+        foreach (var row in rows.EnumerateArray())
+        {
+            var active = !row.TryGetProperty("isActive", out var flag) || flag.ValueKind != JsonValueKind.False;
+            if (row.ValueKind == JsonValueKind.Object && active && Int(row, "id") is { } id && String(row, "name") is { Length: > 0 } name)
+            {
+                people.Add(new TeamMember(id, name, String(row, "departmentName"), String(row, "roleName")));
+            }
+        }
+
+        return people;
+    }
+
     /// <summary>
     /// The projects in a search result. Read field by field: the search returns the tracker's whole
     /// project row, of which only these fields are used (and checked against the pinned schema in tests).

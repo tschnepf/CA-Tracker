@@ -39,6 +39,12 @@ internal sealed class FakeTracker : HttpMessageHandler
     /// <summary>People the tracker refuses to assign (they have left).</summary>
     public HashSet<int> PeopleWhoLeft { get; } = new();
 
+    /// <summary>The tracker's people links, by provider user id: person, name and how it was linked.</summary>
+    public Dictionary<string, (int PersonId, string Name, string Source)> PersonLinks { get; } = new(StringComparer.Ordinal);
+
+    /// <summary>The body of POST /api/people/search/.</summary>
+    public string PeopleSearchBody { get; set; } = """{"count": 0, "next": null, "previous": null, "results": []}""";
+
     protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
     {
         var text = request.Content is null ? null : await request.Content.ReadAsStringAsync(cancellationToken);
@@ -50,6 +56,9 @@ internal sealed class FakeTracker : HttpMessageHandler
         return request.RequestUri.AbsolutePath switch
         {
             "/api/projects/search/" => Json(200, SearchBody),
+            "/api/people/search/" => Json(200, PeopleSearchBody),
+            "/api/ca/people/resolve/" => ResolvePeople(body!),
+            "/api/ca/people/links/" => LinkPeople(body!),
             "/api/assignments/" => TeamPage(int.Parse(query["page"] ?? "1")),
             "/api/ca/assignments/" when request.Method == HttpMethod.Post => Assign(body!),
             "/api/ca/assignments/" => ReadAssignments(int.Parse(query["project"]!), headers.GetValueOrDefault("If-None-Match")),
@@ -88,6 +97,58 @@ internal sealed class FakeTracker : HttpMessageHandler
             outcome,
             effective = new { trackerProjectId = projectId, projectNumber = number, projectName = name, assertedByName = by, assertedAt = "2026-10-07T15:00:00Z" }
         };
+    }
+
+    private JsonObject PersonLink(JsonNode person)
+    {
+        var id = person["providerUserId"]?.GetValue<string>() ?? "";
+        var found = PersonLinks.TryGetValue(id, out var link);
+        return new JsonObject
+        {
+            ["providerUserId"] = id.Length == 0 ? null : id,
+            ["email"] = person["email"]?.DeepClone(),
+            ["personId"] = found ? link.PersonId : null,
+            ["personName"] = found ? link.Name : null,
+            ["personActive"] = found ? true : null,
+            ["linkedBy"] = found ? link.Source : null,
+            ["linkedByName"] = found && link.Source == "manual" ? "Casey Lead" : null,
+            ["linkedAt"] = found && link.Source == "manual" ? "2026-10-07T15:00:00Z" : null
+        };
+    }
+
+    private HttpResponseMessage ResolvePeople(JsonNode body) =>
+        Json(200, new JsonObject { ["links"] = new JsonArray(body["people"]!.AsArray().Select(person => (JsonNode)PersonLink(person!)).ToArray()) }.ToJsonString());
+
+    private HttpResponseMessage LinkPeople(JsonNode body)
+    {
+        var results = new JsonArray();
+        var rows = body["links"]!.AsArray();
+        for (var index = 0; index < rows.Count; index++)
+        {
+            var row = rows[index]!;
+            var id = row["providerUserId"]!.GetValue<string>();
+            var personId = row["personId"]?.GetValue<int>();
+            string outcome;
+            if (PersonLinks.TryGetValue(id, out var link) && link.Source == "auto")
+            {
+                results.Add(new JsonObject { ["index"] = index, ["outcome"] = "rejected", ["reason"] = "protected", ["link"] = null });
+                continue;
+            }
+
+            if (personId is { } person)
+            {
+                outcome = PersonLinks.TryGetValue(id, out link) && link.PersonId == person ? "unchanged" : "linked";
+                PersonLinks[id] = (person, $"Person {person}", "manual");
+            }
+            else
+            {
+                outcome = PersonLinks.Remove(id) ? "unlinked" : "unchanged";
+            }
+
+            results.Add(new JsonObject { ["index"] = index, ["outcome"] = outcome, ["reason"] = null, ["link"] = PersonLink(row) });
+        }
+
+        return Json(200, new JsonObject { ["results"] = results }.ToJsonString());
     }
 
     private HttpResponseMessage TeamPage(int page) =>

@@ -596,6 +596,105 @@ public sealed class WorkloadTrackerSync
         return (team, null);
     }
 
+    // ---- People links (decision D4) ----------------------------------------------------------------
+
+    /// <summary>
+    /// Who each of these Helix or Procore people is linked to in Workload Tracker, and how, keyed by
+    /// <see cref="ProviderPerson.Key"/>. People without a provider id or email are left out (they can't be linked).
+    /// </summary>
+    public async Task<(IReadOnlyDictionary<string, CaPersonLink> Links, string? Problem)> ResolvePeopleAsync(
+        string provider, IReadOnlyList<ProviderPerson> people, CancellationToken cancel = default)
+    {
+        var links = new Dictionary<string, CaPersonLink>(StringComparer.Ordinal);
+        if (Credentials() is not { } credentials)
+        {
+            return (links, NotConnectedText);
+        }
+
+        foreach (var batch in people.Where(person => person.CanLink).Chunk(MaxPeoplePerRequest))
+        {
+            var request = new CaPeopleResolveRequest { Provider = provider, People = batch.Select(Reference).ToList() };
+            var result = await api.ResolvePeopleAsync(credentials.Sync.Address, credentials.Token, credentials.Sync.ClientId, request, cancel)
+                .ConfigureAwait(false);
+            if (!result.Ok || result.TryRead<CaPeopleResolveResult>() is not { } body || body.Links.Count != batch.Length)
+            {
+                return (links, result.Ok ? "Workload Tracker's answer about people couldn't be read." : Explain(result));
+            }
+
+            for (var index = 0; index < batch.Length; index++)
+            {
+                links[batch[index].Key] = body.Links[index];
+            }
+        }
+
+        return (links, null);
+    }
+
+    /// <summary>
+    /// Links Helix or Procore people to Workload Tracker people (a null person unlinks), confirmed by the
+    /// person using the app. The tracker relinks the items it holds at once.
+    /// </summary>
+    public async Task<(IReadOnlyList<CaPersonLinkResult> Results, string? Problem)> LinkPeopleAsync(
+        string provider, IReadOnlyList<(ProviderPerson Person, int? PersonId)> links, CancellationToken cancel = default)
+    {
+        if (Credentials() is not { } credentials)
+        {
+            return ([], NotConnectedText);
+        }
+
+        var results = new List<CaPersonLinkResult>();
+        foreach (var batch in links.Where(link => link.Person.CanLink).Chunk(MaxPeoplePerRequest))
+        {
+            var request = new CaPeopleLinkRequest
+            {
+                Provider = provider,
+                Links = batch.Select(link => new CaPersonLinkWriteRequest
+                {
+                    ProviderUserId = link.Person.ProviderUserId,
+                    Email = link.Person.Email,
+                    Name = Cut(link.Person.Name, 200),
+                    Company = link.Person.Company is null ? null : Cut(link.Person.Company, 200),
+                    PersonId = link.PersonId
+                }).ToList()
+            };
+            var result = await api.LinkPeopleAsync(credentials.Sync.Address, credentials.Token, credentials.Sync.ClientId, request, cancel)
+                .ConfigureAwait(false);
+            if (!result.Ok || result.TryRead<CaPeopleLinkResult>() is not { } body)
+            {
+                return (results, result.Ok ? "Workload Tracker's answer about people couldn't be read." : Explain(result));
+            }
+
+            results.AddRange(body.Results.Select(row => row with { Index = row.Index + results.Count }));
+        }
+
+        return (results, null);
+    }
+
+    /// <summary>Active Workload Tracker people whose name matches, for linking someone who isn't on the project's team.</summary>
+    public async Task<(IReadOnlyList<TeamMember> People, string? Problem)> SearchPeopleAsync(string query, CancellationToken cancel = default)
+    {
+        if (Credentials() is not { } credentials)
+        {
+            return ([], NotConnectedText);
+        }
+
+        var result = await api.SearchPeopleAsync(credentials.Sync.Address, credentials.Token, credentials.Sync.ClientId, query, cancel)
+            .ConfigureAwait(false);
+        return result.Ok ? (WorkloadTrackerApi.ReadPeople(result), null) : ([], Explain(result));
+    }
+
+    private const int MaxPeoplePerRequest = 500;
+
+    private static CaPersonRefRequest Reference(ProviderPerson person) => new()
+    {
+        ProviderUserId = person.ProviderUserId,
+        Email = person.Email,
+        Name = Cut(person.Name, 200),
+        Company = person.Company is null ? null : Cut(person.Company, 200)
+    };
+
+    private static string Cut(string value, int length) => value.Length <= length ? value : value[..length];
+
     // ---- Item assignments (decision D4) ---------------------------------------------------------
 
     /// <summary>

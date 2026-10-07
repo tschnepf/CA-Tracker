@@ -6,7 +6,7 @@
     "x-source": {
       "repository": "workload-tracker",
       "file": "backend/openapi.json",
-      "commit": "e4d01693a89659851519bd9790125135b82f4d6a"
+      "commit": "036c6e8fcb67b327d6bfcaba0b9f2ea340a2ac21"
     }
   },
   "paths": {
@@ -337,6 +337,183 @@
         }
       }
     },
+    "/api/ca/people/links/": {
+      "post": {
+        "operationId": "ca_people_links_create",
+        "description": "Link Helix or Procore people to Workload Tracker people by hand (personId null unlinks). Stored items are relinked at once. A link made automatically from someone's own sign-in is not changed here.",
+        "tags": [
+          "ca"
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CaPeopleLinkRequest"
+              }
+            },
+            "application/x-www-form-urlencoded": {
+              "schema": {
+                "$ref": "#/components/schemas/CaPeopleLinkRequest"
+              }
+            },
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/CaPeopleLinkRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "security": [
+          {
+            "cookieAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CaPeopleLinkResult"
+                }
+              }
+            },
+            "description": ""
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CaError"
+                }
+              }
+            },
+            "description": "Invalid body."
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CaError"
+                }
+              }
+            },
+            "description": "CA Tracker sync is turned off."
+          }
+        }
+      }
+    },
+    "/api/ca/people/resolve/": {
+      "post": {
+        "operationId": "ca_people_resolve_create",
+        "description": "Who each Helix or Procore person is linked to in Workload Tracker, and how.",
+        "tags": [
+          "ca"
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CaPeopleResolveRequest"
+              }
+            },
+            "application/x-www-form-urlencoded": {
+              "schema": {
+                "$ref": "#/components/schemas/CaPeopleResolveRequest"
+              }
+            },
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/CaPeopleResolveRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "security": [
+          {
+            "cookieAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CaPeopleResolveResult"
+                }
+              }
+            },
+            "description": ""
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CaError"
+                }
+              }
+            },
+            "description": "Invalid body."
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CaError"
+                }
+              }
+            },
+            "description": "CA Tracker sync is turned off."
+          }
+        }
+      }
+    },
+    "/api/people/search/": {
+      "post": {
+        "operationId": "people_search_create",
+        "description": "Search people with tokenized filters and pagination.",
+        "tags": [
+          "people"
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PeopleSearchRequestRequest"
+              }
+            },
+            "application/x-www-form-urlencoded": {
+              "schema": {
+                "$ref": "#/components/schemas/PeopleSearchRequestRequest"
+              }
+            },
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/PeopleSearchRequestRequest"
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "cookieAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PeopleSearchResponse"
+                }
+              }
+            },
+            "description": ""
+          }
+        }
+      }
+    },
     "/api/projects/search/": {
       "post": {
         "operationId": "projects_search_create",
@@ -508,6 +685,22 @@
         "required": [
           "revoked"
         ]
+      },
+      "AzureDepartmentSyncModeEnum": {
+        "enum": [
+          "azure",
+          "manual"
+        ],
+        "type": "string",
+        "description": "* `azure` - Follow Azure\n* `manual` - Manual"
+      },
+      "AzureRoleSyncModeEnum": {
+        "enum": [
+          "azure",
+          "manual"
+        ],
+        "type": "string",
+        "description": "* `azure` - Follow Azure\n* `manual` - Manual"
       },
       "CaAssignment": {
         "type": "object",
@@ -1263,6 +1456,264 @@
         "type": "string",
         "description": "* `pending` - Waiting for more parts\n* `applied` - All parts received and applied"
       },
+      "CaPeopleLinkRequest": {
+        "type": "object",
+        "properties": {
+          "provider": {
+            "$ref": "#/components/schemas/CaProviderEnum"
+          },
+          "links": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CaPersonLinkWriteRequest"
+            },
+            "maxItems": 500,
+            "minItems": 1
+          }
+        },
+        "required": [
+          "links",
+          "provider"
+        ]
+      },
+      "CaPeopleLinkResult": {
+        "type": "object",
+        "properties": {
+          "results": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CaPersonLinkResult"
+            }
+          }
+        },
+        "required": [
+          "results"
+        ]
+      },
+      "CaPeopleResolveRequest": {
+        "type": "object",
+        "properties": {
+          "provider": {
+            "$ref": "#/components/schemas/CaProviderEnum"
+          },
+          "people": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CaPersonRefRequest"
+            },
+            "maxItems": 500,
+            "minItems": 1
+          }
+        },
+        "required": [
+          "people",
+          "provider"
+        ]
+      },
+      "CaPeopleResolveResult": {
+        "type": "object",
+        "properties": {
+          "links": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CaPersonLink"
+            },
+            "description": "One per person sent, in the same order."
+          }
+        },
+        "required": [
+          "links"
+        ]
+      },
+      "CaPersonLink": {
+        "type": "object",
+        "description": "Who a provider identity is linked to now, and how (null when it is not linked).",
+        "properties": {
+          "providerUserId": {
+            "type": "string",
+            "nullable": true
+          },
+          "email": {
+            "type": "string",
+            "nullable": true
+          },
+          "personId": {
+            "type": "integer",
+            "nullable": true
+          },
+          "personName": {
+            "type": "string",
+            "nullable": true
+          },
+          "personActive": {
+            "type": "boolean",
+            "nullable": true
+          },
+          "linkedBy": {
+            "nullable": true,
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/CaPersonLinkSourceEnum"
+              },
+              {
+                "$ref": "#/components/schemas/NullEnum"
+              }
+            ]
+          },
+          "linkedByName": {
+            "type": "string",
+            "nullable": true,
+            "description": "Who linked it by hand."
+          },
+          "linkedAt": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          }
+        },
+        "required": [
+          "email",
+          "linkedAt",
+          "linkedBy",
+          "linkedByName",
+          "personActive",
+          "personId",
+          "personName",
+          "providerUserId"
+        ]
+      },
+      "CaPersonLinkOutcomeEnum": {
+        "enum": [
+          "linked",
+          "unlinked",
+          "unchanged",
+          "rejected"
+        ],
+        "type": "string",
+        "description": "* `linked` - Linked\n* `unlinked` - Unlinked\n* `unchanged` - Unchanged\n* `rejected` - Rejected"
+      },
+      "CaPersonLinkRejectionEnum": {
+        "enum": [
+          "no_identity",
+          "person_not_found",
+          "person_inactive",
+          "protected"
+        ],
+        "type": "string",
+        "description": "* `no_identity` - Neither a provider user id nor an email\n* `person_not_found` - No such person\n* `person_inactive` - The person has left\n* `protected` - Linked automatically to their own sign-in; change it in Django admin"
+      },
+      "CaPersonLinkResult": {
+        "type": "object",
+        "properties": {
+          "index": {
+            "type": "integer"
+          },
+          "outcome": {
+            "$ref": "#/components/schemas/CaPersonLinkOutcomeEnum"
+          },
+          "reason": {
+            "nullable": true,
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/CaPersonLinkRejectionEnum"
+              },
+              {
+                "$ref": "#/components/schemas/NullEnum"
+              }
+            ]
+          },
+          "link": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/CaPersonLink"
+              }
+            ],
+            "nullable": true
+          }
+        },
+        "required": [
+          "index",
+          "link",
+          "outcome",
+          "reason"
+        ]
+      },
+      "CaPersonLinkSourceEnum": {
+        "enum": [
+          "auto",
+          "manual",
+          "email"
+        ],
+        "type": "string",
+        "description": "* `auto` - Their own sign-in in CA Tracker\n* `manual` - Linked by hand\n* `email` - Matching email"
+      },
+      "CaPersonLinkWriteRequest": {
+        "type": "object",
+        "description": "A Helix or Procore person as the desktop sees them.",
+        "properties": {
+          "providerUserId": {
+            "type": "string",
+            "nullable": true,
+            "minLength": 1,
+            "maxLength": 64
+          },
+          "email": {
+            "type": "string",
+            "nullable": true,
+            "minLength": 1,
+            "maxLength": 254
+          },
+          "name": {
+            "type": "string",
+            "default": "",
+            "maxLength": 200
+          },
+          "company": {
+            "type": "string",
+            "nullable": true,
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "personId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true,
+            "description": "The person to link to; null to unlink."
+          }
+        },
+        "required": [
+          "personId"
+        ]
+      },
+      "CaPersonRefRequest": {
+        "type": "object",
+        "description": "A Helix or Procore person as the desktop sees them.",
+        "properties": {
+          "providerUserId": {
+            "type": "string",
+            "nullable": true,
+            "minLength": 1,
+            "maxLength": 64
+          },
+          "email": {
+            "type": "string",
+            "nullable": true,
+            "minLength": 1,
+            "maxLength": 254
+          },
+          "name": {
+            "type": "string",
+            "default": "",
+            "maxLength": 200
+          },
+          "company": {
+            "type": "string",
+            "nullable": true,
+            "minLength": 1,
+            "maxLength": 200
+          }
+        }
+      },
       "CaProjectAssignments": {
         "type": "object",
         "properties": {
@@ -1392,6 +1843,21 @@
           "providerItemId"
         ]
       },
+      "DepartmentFilterPeopleRequest": {
+        "type": "object",
+        "properties": {
+          "departmentId": {
+            "type": "integer"
+          },
+          "op": {
+            "$ref": "#/components/schemas/OpEnum"
+          }
+        },
+        "required": [
+          "departmentId",
+          "op"
+        ]
+      },
       "DepartmentFilterProjectRequest": {
         "type": "object",
         "properties": {
@@ -1451,6 +1917,221 @@
             }
           }
         }
+      },
+      "PeopleSearchRequestRequest": {
+        "type": "object",
+        "properties": {
+          "page": {
+            "type": "integer"
+          },
+          "page_size": {
+            "type": "integer"
+          },
+          "department": {
+            "type": "integer"
+          },
+          "include_children": {
+            "type": "integer"
+          },
+          "department_filters": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DepartmentFilterPeopleRequest"
+            }
+          },
+          "vertical": {
+            "type": "integer"
+          },
+          "include_inactive": {
+            "type": "integer"
+          },
+          "licensed": {
+            "type": "boolean"
+          },
+          "location": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "ordering": {
+            "type": "string",
+            "minLength": 1
+          },
+          "search_tokens": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SearchTokenPeopleRequest"
+            }
+          }
+        }
+      },
+      "PeopleSearchResponse": {
+        "type": "object",
+        "properties": {
+          "count": {
+            "type": "integer"
+          },
+          "next": {
+            "type": "string",
+            "nullable": true
+          },
+          "previous": {
+            "type": "string",
+            "nullable": true
+          },
+          "results": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Person"
+            }
+          }
+        },
+        "required": [
+          "count",
+          "results"
+        ]
+      },
+      "Person": {
+        "type": "object",
+        "description": "Person serializer with department and role integration",
+        "properties": {
+          "id": {
+            "type": "integer",
+            "readOnly": true
+          },
+          "name": {
+            "type": "string",
+            "maxLength": 200
+          },
+          "weeklyCapacity": {
+            "type": "integer",
+            "default": 36
+          },
+          "role": {
+            "type": "integer",
+            "nullable": true,
+            "description": "Person's role in the organization"
+          },
+          "roleName": {
+            "type": "string",
+            "readOnly": true
+          },
+          "department": {
+            "type": "integer",
+            "nullable": true
+          },
+          "departmentName": {
+            "type": "string",
+            "readOnly": true
+          },
+          "vertical": {
+            "type": "integer",
+            "readOnly": true,
+            "nullable": true
+          },
+          "verticalName": {
+            "type": "string",
+            "readOnly": true,
+            "nullable": true
+          },
+          "azureDepartmentSyncMode": {
+            "$ref": "#/components/schemas/AzureDepartmentSyncModeEnum"
+          },
+          "azureRoleSyncMode": {
+            "$ref": "#/components/schemas/AzureRoleSyncModeEnum"
+          },
+          "email": {
+            "type": "string",
+            "format": "email",
+            "nullable": true,
+            "maxLength": 254
+          },
+          "phone": {
+            "type": "string",
+            "nullable": true,
+            "maxLength": 20
+          },
+          "location": {
+            "type": "string",
+            "nullable": true,
+            "maxLength": 100
+          },
+          "hireDate": {
+            "type": "string",
+            "format": "date",
+            "nullable": true
+          },
+          "endDate": {
+            "type": "string",
+            "format": "date",
+            "nullable": true
+          },
+          "isActive": {
+            "type": "boolean"
+          },
+          "effectiveActive": {
+            "type": "string",
+            "readOnly": true
+          },
+          "firstEligibleWeek": {
+            "type": "string",
+            "readOnly": true
+          },
+          "lastEligibleWeek": {
+            "type": "string",
+            "readOnly": true
+          },
+          "ssoLinked": {
+            "type": "string",
+            "readOnly": true
+          },
+          "notes": {
+            "type": "string"
+          },
+          "licensed": {
+            "type": "boolean"
+          },
+          "additionalEorDisciplines": {
+            "type": "array",
+            "items": {
+              "type": "integer"
+            }
+          },
+          "additionalEorDisciplineNames": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "readOnly": true
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time",
+            "readOnly": true
+          },
+          "updatedAt": {
+            "type": "string",
+            "format": "date-time",
+            "readOnly": true
+          }
+        },
+        "required": [
+          "additionalEorDisciplineNames",
+          "createdAt",
+          "departmentName",
+          "effectiveActive",
+          "firstEligibleWeek",
+          "id",
+          "lastEligibleWeek",
+          "name",
+          "roleName",
+          "ssoLinked",
+          "updatedAt",
+          "vertical",
+          "verticalName"
+        ]
       },
       "PersonSkillSummary": {
         "type": "object",
@@ -1611,6 +2292,22 @@
         "required": [
           "count",
           "results"
+        ]
+      },
+      "SearchTokenPeopleRequest": {
+        "type": "object",
+        "properties": {
+          "term": {
+            "type": "string",
+            "minLength": 1
+          },
+          "op": {
+            "$ref": "#/components/schemas/OpEnum"
+          }
+        },
+        "required": [
+          "op",
+          "term"
         ]
       },
       "SearchTokenProjectRequest": {
