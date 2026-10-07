@@ -62,14 +62,67 @@ public partial class WorkloadTrackerSignInWindow : Window
         core.Settings.AreDevToolsEnabled = false;
         core.Settings.IsStatusBarEnabled = false;
         core.WebMessageReceived += OnWebMessageReceived;
-        var device = Uri.EscapeDataString(Environment.MachineName);
-        core.Navigate(new Uri(address, $"/profile?section=ca-tracker&device={device}").ToString());
+        core.SourceChanged += OnSourceChanged;
+        core.Navigate(ConnectPage.ToString());
     }
+
+    /// <summary>Profile → CA Tracker, named after this PC.</summary>
+    private Uri ConnectPage => new(address, $"/profile?section=ca-tracker&device={Uri.EscapeDataString(Environment.MachineName)}");
+
+    private bool signingIn;
+
+    /// <summary>
+    /// Signing in loses the page asked for (email sign-in keeps only its path, Microsoft sign-in returns to
+    /// the home page), so once past the sign-in pages the window goes back to Profile → CA Tracker.
+    /// </summary>
+    private void OnSourceChanged(object? sender, CoreWebView2SourceChangedEventArgs e)
+    {
+        if (!Uri.TryCreate(Browser.CoreWebView2.Source, UriKind.Absolute, out var current))
+        {
+            return;
+        }
+
+        if (IsSignInPage(current))
+        {
+            signingIn = true;
+            StatusText.Text = "Sign in to Workload Tracker. CA Tracker's page opens next.";
+            return;
+        }
+
+        var onConnectPage = string.Equals(current.AbsolutePath, "/profile", StringComparison.OrdinalIgnoreCase)
+            && current.Query.Contains("section=ca-tracker", StringComparison.OrdinalIgnoreCase);
+        if (onConnectPage)
+        {
+            signingIn = false;
+            StatusText.Text = "Press Connect CA Tracker. This window closes once Workload Tracker hands over the connection.";
+        }
+        else if (signingIn)
+        {
+            signingIn = false;
+            Browser.CoreWebView2.Navigate(ConnectPage.ToString());
+        }
+    }
+
+    private bool IsSignInPage(Uri page)
+    {
+        if (!SameOrigin(page))
+        {
+            return true; // Microsoft's sign-in pages
+        }
+
+        var path = page.AbsolutePath;
+        return path.StartsWith("/login", StringComparison.OrdinalIgnoreCase)
+            || path.StartsWith("/reset-password", StringComparison.OrdinalIgnoreCase)
+            || path.StartsWith("/sso/", StringComparison.OrdinalIgnoreCase)
+            || path.StartsWith("/api/auth/", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private bool SameOrigin(Uri page) => string.Equals(
+        page.GetLeftPart(UriPartial.Authority), address.GetLeftPart(UriPartial.Authority), StringComparison.OrdinalIgnoreCase);
 
     private void OnWebMessageReceived(object? sender, CoreWebView2WebMessageReceivedEventArgs e)
     {
-        if (!Uri.TryCreate(e.Source, UriKind.Absolute, out var source)
-            || !string.Equals(source.GetLeftPart(UriPartial.Authority), address.GetLeftPart(UriPartial.Authority), StringComparison.OrdinalIgnoreCase))
+        if (!Uri.TryCreate(e.Source, UriKind.Absolute, out var source) || !SameOrigin(source))
         {
             return;
         }
