@@ -63,7 +63,47 @@ public sealed class WorkloadTrackerSettings
     public int? PersonId { get; set; }
     public string? PersonName { get; set; }
 
+    /// <summary>
+    /// Per tracker project entry (<see cref="TrackerProject.Id"/>): the Workload Tracker project its items go
+    /// to, chosen in Edit project (decision D3). Kept when disconnecting, as this PC's choice; forgotten
+    /// when connecting to a different tracker, whose project ids mean other projects.
+    /// </summary>
+    public Dictionary<string, WorkloadBinding> Bindings { get; set; } = new(StringComparer.Ordinal);
+
     public bool IsPaired => Address.Length > 0 && TokenProtected.Length > 0 && Account.Length > 0;
+}
+
+/// <summary>An existing Workload Tracker project a local project entry is bound to.</summary>
+public sealed class WorkloadBinding
+{
+    public int ProjectId { get; set; }
+    public string? ProjectNumber { get; set; }
+    public string ProjectName { get; set; } = "";
+
+    public const string Bound = "bound";
+    public const string Conflict = "conflict";
+    public const string Rejected = "rejected";
+
+    /// <summary>
+    /// What the tracker answered when the binding was last sent: <see cref="Bound"/>, <see cref="Conflict"/>
+    /// (someone else bound the Helix or Procore project differently) or <see cref="Rejected"/> (this
+    /// account can't see the project). Null until sent.
+    /// </summary>
+    public string? Outcome { get; set; }
+
+    /// <summary>On a conflict: the project the tracker uses, and who chose it.</summary>
+    public int? TheirProjectId { get; set; }
+    public string? TheirProjectNumber { get; set; }
+    public string? TheirProjectName { get; set; }
+    public string? TheirAssertedBy { get; set; }
+
+    public string Label => LabelOf(ProjectNumber, ProjectName);
+
+    public string? TheirLabel => TheirProjectName is null ? null : LabelOf(TheirProjectNumber, TheirProjectName);
+
+    public static string LabelOf(string? number, string name) => string.IsNullOrWhiteSpace(number) ? name : $"{number} · {name}";
+
+    public WorkloadBinding Copy() => (WorkloadBinding)MemberwiseClone();
 }
 
 /// <summary>Keeping Helix items up to date in the background.</summary>
@@ -435,6 +475,17 @@ public sealed class SettingsStore
             project.Disciplines = (project.Disciplines ?? new Dictionary<string, string>())
                 .GroupBy(entry => entry.Key.ToLowerInvariant())
                 .ToDictionary(group => group.Key, group => group.Last().Value);
+        }
+
+        // Bindings of projects that were removed go with them.
+        var projectIds = settings.Projects.Select(project => project.Id).ToHashSet(StringComparer.Ordinal);
+        settings.WorkloadTracker.Bindings = new Dictionary<string, WorkloadBinding>(
+            (settings.WorkloadTracker.Bindings ?? new Dictionary<string, WorkloadBinding>())
+                .Where(pair => pair.Value is { ProjectId: > 0 } && projectIds.Contains(pair.Key)),
+            StringComparer.Ordinal);
+        foreach (var binding in settings.WorkloadTracker.Bindings.Values)
+        {
+            binding.ProjectName ??= "";
         }
 
         return settings;

@@ -51,6 +51,12 @@ public interface ITrackerPersistence : IDisposable
 
     /// <summary>Empties the outbox (unpaired).</summary>
     void ClearOutbox();
+
+    /// <summary>Replaces every item assignment kept for one Workload Tracker project.</summary>
+    void ReplaceAssignments(int trackerProjectId, IReadOnlyList<WorkloadAssignment> assignments);
+
+    /// <summary>Forgets every item assignment (unpaired, or paired with another account).</summary>
+    void ClearAssignments();
 }
 
 /// <summary>What <see cref="ITrackerPersistence.Load"/> returns.</summary>
@@ -64,6 +70,7 @@ public sealed class PersistedState
     public ViewState View { get; set; } = new();
     public List<SyncRun> RecentSyncRuns { get; set; } = new();
     public List<OutboxEntry> Outbox { get; set; } = new();
+    public List<WorkloadAssignment> Assignments { get; set; } = new();
 }
 
 public sealed record FolderScanRecord(string ProjectId, TypeFolderScan Scan);
@@ -93,7 +100,10 @@ public enum StoreChangeKind
     Snapshot,
     FolderScan,
     Catalog,
-    Accounts
+    Accounts,
+
+    /// <summary>Workload Tracker item assignments (changed here, or read back from the tracker).</summary>
+    Assignments
 }
 
 /// <summary>What changed in the <see cref="TrackerStore"/>.</summary>
@@ -126,6 +136,7 @@ public sealed class InMemoryPersistence : ITrackerPersistence
     private List<ProviderAccount> accounts = new();
     private ViewState view = new();
     private readonly Dictionary<string, OutboxEntry> outbox = new(StringComparer.Ordinal);
+    private readonly Dictionary<int, List<WorkloadAssignment>> assignments = new();
 
     public int SaveCount { get; private set; }
 
@@ -140,7 +151,8 @@ public sealed class InMemoryPersistence : ITrackerPersistence
         Accounts = accounts.ToList(),
         View = view,
         RecentSyncRuns = runs.ToList(),
-        Outbox = outbox.Values.Select(entry => entry.Copy()).ToList()
+        Outbox = outbox.Values.Select(entry => entry.Copy()).ToList(),
+        Assignments = assignments.Values.SelectMany(rows => rows).Select(row => row.Copy()).ToList()
     };
 
     public string? GetMeta(string key) => meta.TryGetValue(key, out var value) ? value : null;
@@ -206,6 +218,18 @@ public sealed class InMemoryPersistence : ITrackerPersistence
     public void ClearOutbox()
     {
         outbox.Clear();
+        SaveCount++;
+    }
+
+    public void ReplaceAssignments(int trackerProjectId, IReadOnlyList<WorkloadAssignment> rows)
+    {
+        assignments[trackerProjectId] = rows.Select(row => row.Copy()).ToList();
+        SaveCount++;
+    }
+
+    public void ClearAssignments()
+    {
+        assignments.Clear();
         SaveCount++;
     }
 

@@ -256,6 +256,50 @@ public class DatabaseTests
     }
 
     [Fact]
+    public void WorkloadAssignmentsComeBackAfterReopening()
+    {
+        using var temp = new TempFolder();
+        var file = Path.Combine(temp.Root, "tracker.db");
+        var row = new WorkloadAssignment
+        {
+            TrackerProjectId = 12,
+            Provider = "helix",
+            Host = "project.helixteam.com",
+            ProviderProjectId = "H-1",
+            ItemType = "rfi",
+            Number = "RFI-0001",
+            PersonId = 39,
+            PersonName = "Julia Jackson",
+            PersonActive = false,
+            Active = true,
+            AssignedAt = new DateTimeOffset(2026, 10, 7, 15, 0, 0, 123, TimeSpan.Zero),
+            AssignedByName = "Casey Lead",
+            CompletedAt = new DateTimeOffset(2026, 10, 8, 9, 0, 0, TimeSpan.Zero),
+            Pending = true
+        };
+        using (var database = new SqlitePersistence(file))
+        {
+            database.ReplaceAssignments(12, [row, new WorkloadAssignment { TrackerProjectId = 12, Provider = "helix", ProviderProjectId = "H-1", ItemType = "rfi", Number = "RFI-0002", PersonId = 1 }]);
+            database.ReplaceAssignments(13, [new WorkloadAssignment { TrackerProjectId = 13, Provider = "helix", ProviderProjectId = "H-2", ItemType = "rfi", Number = "X", PersonId = 1 }]);
+            database.ReplaceAssignments(12, [row]);
+        }
+
+        using (var database = new SqlitePersistence(file))
+        {
+            var rows = database.Load().Assignments.OrderBy(entry => entry.TrackerProjectId).ToList();
+            Assert.Equal([12, 13], rows.Select(entry => entry.TrackerProjectId));
+            var back = rows[0];
+            Assert.Equal(row.Key, back.Key);
+            Assert.Equal((row.PersonName, row.PersonActive, row.Active, row.AssignedByName, row.Pending, row.Host),
+                (back.PersonName, back.PersonActive, back.Active, back.AssignedByName, back.Pending, back.Host));
+            Assert.Equal((row.AssignedAt, row.CompletedAt), (back.AssignedAt, back.CompletedAt));
+
+            database.ClearAssignments();
+            Assert.Empty(database.Load().Assignments);
+        }
+    }
+
+    [Fact]
     public void ItemChangesAndRemovalsAreSaved()
     {
         using var temp = new TempFolder();

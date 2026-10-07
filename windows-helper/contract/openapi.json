@@ -6,10 +6,56 @@
     "x-source": {
       "repository": "workload-tracker",
       "file": "backend/openapi.json",
-      "commit": "9fc0dbdb0c3b409563866b8717120bc337f515ed"
+      "commit": "e4d01693a89659851519bd9790125135b82f4d6a"
     }
   },
   "paths": {
+    "/api/assignments/": {
+      "get": {
+        "operationId": "assignments_list",
+        "description": "Get all assignments with person details and optional project\nfiltering.",
+        "parameters": [
+          {
+            "name": "page",
+            "required": false,
+            "in": "query",
+            "description": "A page number within the paginated result set.",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "name": "page_size",
+            "required": false,
+            "in": "query",
+            "description": "Number of results to return per page.",
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "tags": [
+          "assignments"
+        ],
+        "security": [
+          {
+            "cookieAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PaginatedAssignmentList"
+                }
+              }
+            },
+            "description": ""
+          }
+        }
+      }
+    },
     "/api/auth/me/": {
       "get": {
         "operationId": "auth_me_retrieve",
@@ -118,7 +164,7 @@
             },
             "description": "Invalid request."
           },
-          "501": {
+          "404": {
             "content": {
               "application/json": {
                 "schema": {
@@ -126,7 +172,7 @@
                 }
               }
             },
-            "description": "Not implemented yet."
+            "description": "No such project, or not one the user can view."
           },
           "503": {
             "content": {
@@ -142,7 +188,7 @@
       },
       "post": {
         "operationId": "ca_assignments_create",
-        "description": "Assign or unassign people on CA items, idempotently; per row the latest assignedAt wins.",
+        "description": "Assign or unassign people on CA items, idempotently; per row the latest assignedAt wins. Rows on projects the user cannot view, unbound provider projects, or inactive people are rejected.",
         "tags": [
           "ca"
         ],
@@ -191,16 +237,6 @@
               }
             },
             "description": "Invalid body."
-          },
-          "501": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/CaError"
-                }
-              }
-            },
-            "description": "Not implemented yet."
           },
           "503": {
             "content": {
@@ -300,10 +336,168 @@
           }
         }
       }
+    },
+    "/api/projects/search/": {
+      "post": {
+        "operationId": "projects_search_create",
+        "description": "Search projects with tokenized filters and pagination.",
+        "tags": [
+          "projects"
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProjectSearchRequestRequest"
+              }
+            },
+            "application/x-www-form-urlencoded": {
+              "schema": {
+                "$ref": "#/components/schemas/ProjectSearchRequestRequest"
+              }
+            },
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/ProjectSearchRequestRequest"
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "cookieAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectSearchResponse"
+                }
+              }
+            },
+            "description": ""
+          }
+        }
+      }
     }
   },
   "components": {
     "schemas": {
+      "Assignment": {
+        "type": "object",
+        "description": "Assignment serializer with weekly hours support",
+        "properties": {
+          "id": {
+            "type": "integer",
+            "readOnly": true
+          },
+          "person": {
+            "type": "integer",
+            "nullable": true
+          },
+          "personName": {
+            "type": "string",
+            "readOnly": true
+          },
+          "personWeeklyCapacity": {
+            "type": "integer",
+            "readOnly": true
+          },
+          "personDepartmentId": {
+            "type": "integer",
+            "nullable": true,
+            "readOnly": true
+          },
+          "personDepartmentName": {
+            "type": "string",
+            "nullable": true,
+            "readOnly": true
+          },
+          "personSkills": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PersonSkillSummary"
+            },
+            "readOnly": true
+          },
+          "projectName": {
+            "type": "string",
+            "maxLength": 200
+          },
+          "project": {
+            "type": "integer",
+            "nullable": true
+          },
+          "projectDisplayName": {
+            "type": "string",
+            "readOnly": true
+          },
+          "projectClient": {
+            "type": "string",
+            "readOnly": true,
+            "nullable": true
+          },
+          "roleOnProjectId": {
+            "type": "integer",
+            "nullable": true
+          },
+          "roleName": {
+            "type": "string",
+            "nullable": true,
+            "readOnly": true
+          },
+          "roleIsGlobal": {
+            "type": "boolean",
+            "readOnly": true
+          },
+          "additionalResponsibilityIds": {
+            "type": "array",
+            "items": {
+              "type": "integer"
+            }
+          },
+          "additionalResponsibilities": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ProjectRoleItem"
+            },
+            "readOnly": true
+          },
+          "weeklyHours": {},
+          "allocationPercentage": {
+            "type": "integer",
+            "readOnly": true
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time",
+            "readOnly": true
+          },
+          "updatedAt": {
+            "type": "string",
+            "format": "date-time",
+            "readOnly": true
+          }
+        },
+        "required": [
+          "additionalResponsibilities",
+          "allocationPercentage",
+          "createdAt",
+          "id",
+          "personDepartmentId",
+          "personDepartmentName",
+          "personName",
+          "personSkills",
+          "personWeeklyCapacity",
+          "projectClient",
+          "projectDisplayName",
+          "roleIsGlobal",
+          "roleName",
+          "updatedAt"
+        ]
+      },
       "AuthSessionRevokeResponse": {
         "type": "object",
         "properties": {
@@ -339,6 +533,10 @@
           "personName": {
             "type": "string"
           },
+          "personActive": {
+            "type": "boolean",
+            "description": "false when the person has left: flag the assignment for reassignment."
+          },
           "assignedByName": {
             "type": "string",
             "nullable": true
@@ -365,6 +563,7 @@
           "id",
           "itemType",
           "number",
+          "personActive",
           "personId",
           "personName",
           "providerProject",
@@ -1193,9 +1392,241 @@
           "providerItemId"
         ]
       },
+      "DepartmentFilterProjectRequest": {
+        "type": "object",
+        "properties": {
+          "departmentId": {
+            "type": "integer"
+          },
+          "op": {
+            "$ref": "#/components/schemas/OpEnum"
+          }
+        },
+        "required": [
+          "departmentId",
+          "op"
+        ]
+      },
       "NullEnum": {
         "enum": [
           null
+        ]
+      },
+      "OpEnum": {
+        "enum": [
+          "or",
+          "and",
+          "not"
+        ],
+        "type": "string",
+        "description": "* `or` - or\n* `and` - and\n* `not` - not"
+      },
+      "PaginatedAssignmentList": {
+        "type": "object",
+        "required": [
+          "count",
+          "results"
+        ],
+        "properties": {
+          "count": {
+            "type": "integer",
+            "example": 123
+          },
+          "next": {
+            "type": "string",
+            "nullable": true,
+            "format": "uri",
+            "example": "http://api.example.org/accounts/?page=4"
+          },
+          "previous": {
+            "type": "string",
+            "nullable": true,
+            "format": "uri",
+            "example": "http://api.example.org/accounts/?page=2"
+          },
+          "results": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Assignment"
+            }
+          }
+        }
+      },
+      "PersonSkillSummary": {
+        "type": "object",
+        "description": "Lightweight serializer for person skill summaries",
+        "properties": {
+          "skillTagName": {
+            "type": "string",
+            "readOnly": true
+          },
+          "skillType": {
+            "type": "string",
+            "readOnly": true
+          },
+          "proficiencyLevel": {
+            "type": "string",
+            "readOnly": true
+          }
+        },
+        "required": [
+          "proficiencyLevel",
+          "skillTagName",
+          "skillType"
+        ]
+      },
+      "ProjectRoleItem": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer",
+            "readOnly": true
+          },
+          "name": {
+            "type": "string",
+            "maxLength": 100
+          },
+          "is_active": {
+            "type": "boolean"
+          },
+          "sort_order": {
+            "type": "integer",
+            "maximum": 2147483647,
+            "minimum": -2147483648
+          },
+          "department_id": {
+            "type": "integer",
+            "nullable": true,
+            "readOnly": true
+          },
+          "scope": {
+            "$ref": "#/components/schemas/ProjectRoleItemScopeEnum"
+          },
+          "max_per_project": {
+            "type": "integer",
+            "maximum": 2147483647,
+            "minimum": 0,
+            "nullable": true,
+            "description": "Maximum number of assignments allowed for this role per project. Null means no limit."
+          }
+        },
+        "required": [
+          "department_id",
+          "id",
+          "name"
+        ]
+      },
+      "ProjectRoleItemScopeEnum": {
+        "enum": [
+          "department",
+          "global"
+        ],
+        "type": "string",
+        "description": "* `department` - Department\n* `global` - Global"
+      },
+      "ProjectSearchRequestRequest": {
+        "type": "object",
+        "properties": {
+          "page": {
+            "type": "integer"
+          },
+          "page_size": {
+            "type": "integer"
+          },
+          "ordering": {
+            "type": "string",
+            "minLength": 1
+          },
+          "vertical": {
+            "type": "integer"
+          },
+          "status_in": {
+            "type": "string",
+            "minLength": 1
+          },
+          "mine_only": {
+            "type": "boolean"
+          },
+          "include_children": {
+            "type": "integer"
+          },
+          "workload_week_start": {
+            "type": "string",
+            "format": "date"
+          },
+          "workload_weeks": {
+            "type": "integer"
+          },
+          "search_tokens": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SearchTokenProjectRequest"
+            }
+          },
+          "department_filters": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DepartmentFilterProjectRequest"
+            }
+          },
+          "include": {
+            "type": "string",
+            "minLength": 1,
+            "description": "CSV includes. Supports role_map."
+          },
+          "include_inactive_roles": {
+            "type": "boolean"
+          },
+          "include_deliverable_dates": {
+            "type": "boolean"
+          },
+          "next_deliverable_within_weeks": {
+            "type": "integer"
+          }
+        }
+      },
+      "ProjectSearchResponse": {
+        "type": "object",
+        "properties": {
+          "count": {
+            "type": "integer"
+          },
+          "next": {
+            "type": "string",
+            "nullable": true
+          },
+          "previous": {
+            "type": "string",
+            "nullable": true
+          },
+          "results": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": {}
+            }
+          },
+          "rolesByDepartment": {}
+        },
+        "required": [
+          "count",
+          "results"
+        ]
+      },
+      "SearchTokenProjectRequest": {
+        "type": "object",
+        "properties": {
+          "term": {
+            "type": "string",
+            "minLength": 1
+          },
+          "op": {
+            "$ref": "#/components/schemas/OpEnum"
+          }
+        },
+        "required": [
+          "op",
+          "term"
         ]
       },
       "UserProfile": {

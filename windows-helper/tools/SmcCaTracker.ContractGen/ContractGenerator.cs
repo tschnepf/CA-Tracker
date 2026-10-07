@@ -20,6 +20,16 @@ public static class ContractGenerator
         "/api/auth/sessions/{session_id}/revoke/"
     ];
 
+    /// <summary>
+    /// Single operations of the tracker's general API the desktop reads, as "METHOD /path/" (exact path).
+    /// Only that method is pinned: project search for binding (D3) and a project's team for assigning (D4).
+    /// </summary>
+    public static readonly IReadOnlyList<string> PinnedOperations =
+    [
+        "POST /api/projects/search/",
+        "GET /api/assignments/"
+    ];
+
     public const string Namespace = "SmcCaTracker.Core.WorkloadTracker.Contract";
 
     private const string ComponentPrefix = "#/components/schemas/";
@@ -43,6 +53,36 @@ public static class ContractGenerator
             if (PinnedPathPrefixes.Any(prefix => path.StartsWith(prefix, StringComparison.Ordinal)))
             {
                 paths[path] = item!.DeepClone();
+                continue;
+            }
+
+            var methods = PinnedOperations
+                .Select(operation => operation.Split(' ', 2))
+                .Where(parts => parts[1] == path)
+                .Select(parts => parts[0].ToLowerInvariant())
+                .ToHashSet(StringComparer.Ordinal);
+            if (methods.Count > 0)
+            {
+                var pinnedItem = new JsonObject();
+                foreach (var (key, value) in item!.AsObject())
+                {
+                    // Path-level keys (parameters, summary) and the pinned methods; other methods stay out.
+                    if (methods.Contains(key) || key is not ("get" or "put" or "post" or "delete" or "options" or "head" or "patch" or "trace"))
+                    {
+                        pinnedItem[key] = value!.DeepClone();
+                    }
+                }
+
+                paths[path] = pinnedItem;
+            }
+        }
+
+        foreach (var operation in PinnedOperations)
+        {
+            var parts = operation.Split(' ', 2);
+            if (paths[parts[1]]?[parts[0].ToLowerInvariant()] is null)
+            {
+                throw new InvalidDataException($"The tracker schema lacks {operation}.");
             }
         }
 

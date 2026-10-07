@@ -7,7 +7,7 @@ namespace SmcCaTracker.Data;
 /// </summary>
 internal static class Schema
 {
-    public const int CurrentVersion = 3;
+    public const int CurrentVersion = 4;
 
     private static readonly string[][] Versions =
     {
@@ -253,6 +253,31 @@ internal static class Schema
             "DROP TABLE IF EXISTS change_log;",
             "DELETE FROM preferences WHERE pref_key = 'central';",
             "DELETE FROM schema_info WHERE meta_key IN ('central_cursor', 'central_client_id', 'central_server', 'central_send_everything');"
+        },
+
+        // Version 4: Workload Tracker item assignments, as read back from the tracker plus changes made
+        // here that are still to be sent (pending). Keyed like the tracker: project, item lineage, person.
+        new[]
+        {
+            """
+            CREATE TABLE IF NOT EXISTS wt_assignments (
+                tracker_project_id INTEGER NOT NULL,
+                provider TEXT NOT NULL,
+                host TEXT NOT NULL,
+                provider_project_id TEXT NOT NULL,
+                item_type TEXT NOT NULL,
+                number TEXT NOT NULL,
+                person_id INTEGER NOT NULL,
+                person_name TEXT NOT NULL,
+                person_active INTEGER NOT NULL,
+                active INTEGER NOT NULL,
+                assigned_at TEXT NOT NULL,
+                assigned_by_name TEXT NULL,
+                completed_at TEXT NULL,
+                pending INTEGER NOT NULL,
+                PRIMARY KEY (tracker_project_id, provider, provider_project_id, item_type, number, person_id)
+            );
+            """
         }
     };
 

@@ -251,7 +251,8 @@ public sealed class SqlitePersistence : ITrackerPersistence
         Accounts = LoadAccounts(),
         View = FromJson<ViewState>(GetPreference("view")) ?? new ViewState(),
         RecentSyncRuns = LoadSyncRuns(200),
-        Outbox = LoadOutbox()
+        Outbox = LoadOutbox(),
+        Assignments = LoadAssignments()
     };
 
     private TrackerSettings LoadSettings()
@@ -1040,6 +1041,67 @@ public sealed class SqlitePersistence : ITrackerPersistence
     {
         using var scope = new WriteScope(this);
         Execute("DELETE FROM wt_outbox;", scope.Transaction);
+        scope.Commit();
+    }
+
+    // ---- Workload Tracker item assignments ---------------------------------------------------
+
+    private List<WorkloadAssignment> LoadAssignments()
+    {
+        var rows = new List<WorkloadAssignment>();
+        using var command = Command(
+            "SELECT tracker_project_id, provider, host, provider_project_id, item_type, number, person_id, person_name, person_active, " +
+            "active, assigned_at, assigned_by_name, completed_at, pending FROM wt_assignments;",
+            null);
+        using var reader = command.ExecuteReader();
+        while (reader.Read())
+        {
+            rows.Add(new WorkloadAssignment
+            {
+                TrackerProjectId = (int)reader.GetInt64(0),
+                Provider = reader.GetString(1),
+                Host = reader.GetString(2),
+                ProviderProjectId = reader.GetString(3),
+                ItemType = reader.GetString(4),
+                Number = reader.GetString(5),
+                PersonId = (int)reader.GetInt64(6),
+                PersonName = reader.GetString(7),
+                PersonActive = reader.GetInt64(8) != 0,
+                Active = reader.GetInt64(9) != 0,
+                AssignedAt = ParseDate(reader.GetString(10)) ?? DateTimeOffset.MinValue,
+                AssignedByName = Text(reader, 11),
+                CompletedAt = ParseDate(Text(reader, 12)),
+                Pending = reader.GetInt64(13) != 0
+            });
+        }
+
+        return rows;
+    }
+
+    public void ReplaceAssignments(int trackerProjectId, IReadOnlyList<WorkloadAssignment> assignments)
+    {
+        using var scope = new WriteScope(this);
+        Execute("DELETE FROM wt_assignments WHERE tracker_project_id = $project;", scope.Transaction, ("$project", trackerProjectId));
+        foreach (var row in assignments)
+        {
+            Execute(
+                "INSERT OR REPLACE INTO wt_assignments (tracker_project_id, provider, host, provider_project_id, item_type, number, person_id, " +
+                "person_name, person_active, active, assigned_at, assigned_by_name, completed_at, pending) VALUES ($project, $provider, $host, " +
+                "$providerProject, $type, $number, $person, $name, $personActive, $active, $assigned, $by, $completed, $pending);",
+                scope.Transaction,
+                ("$project", trackerProjectId), ("$provider", row.Provider.ToLowerInvariant()), ("$host", row.Host),
+                ("$providerProject", row.ProviderProjectId), ("$type", row.ItemType.ToLowerInvariant()), ("$number", row.Number),
+                ("$person", row.PersonId), ("$name", row.PersonName), ("$personActive", Flag(row.PersonActive)), ("$active", Flag(row.Active)),
+                ("$assigned", Iso(row.AssignedAt)), ("$by", row.AssignedByName), ("$completed", Iso(row.CompletedAt)), ("$pending", Flag(row.Pending)));
+        }
+
+        scope.Commit();
+    }
+
+    public void ClearAssignments()
+    {
+        using var scope = new WriteScope(this);
+        Execute("DELETE FROM wt_assignments;", scope.Transaction);
         scope.Commit();
     }
 

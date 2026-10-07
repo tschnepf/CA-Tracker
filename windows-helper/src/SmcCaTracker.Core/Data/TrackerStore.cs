@@ -29,6 +29,7 @@ public sealed class TrackerStore : IDisposable
     private readonly Dictionary<string, TypeFolderScan> folderScans = new(StringComparer.OrdinalIgnoreCase);
     private readonly List<SyncRun> recentRuns = new();
     private readonly Dictionary<string, OutboxEntry> outbox = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, WorkloadAssignment> assignments = new(StringComparer.Ordinal);
     private TrackerSettings settings;
     private List<CatalogProject> catalog;
     private List<ProviderAccount> accounts;
@@ -64,6 +65,11 @@ public sealed class TrackerStore : IDisposable
             outbox[SnapshotKey(entry.Provider, entry.ProjectId)] = entry;
         }
 
+        foreach (var row in state.Assignments ?? new List<WorkloadAssignment>())
+        {
+            assignments[row.Key] = row;
+        }
+
         AppLog.Info("store",$"Loaded {settings.Projects.Count} projects, {snapshots.Count} item lists " +
             $"({snapshots.Values.Sum(snapshot => snapshot.Items.Count)} items), {folderScans.Count} folder indexes.");
 
@@ -96,6 +102,30 @@ public sealed class TrackerStore : IDisposable
                 return settings;
             }
         }
+    }
+
+    /// <summary>
+    /// Changes a copy of the settings and saves it, in one step against other saves. <paramref name="change"/>
+    /// returns false when it changed nothing; then nothing is saved.
+    /// </summary>
+    public bool UpdateSettings(Func<TrackerSettings, bool> change)
+    {
+        lock (gate)
+        {
+            var copy = Clone(settings);
+            if (!change(copy))
+            {
+                return false;
+            }
+
+            SettingsStore.Normalize(copy);
+            settings = copy;
+            var saved = Clone(copy);
+            Enqueue(target => target.SaveSettings(saved));
+        }
+
+        Raise(new StoreChange { Kind = StoreChangeKind.Settings });
+        return true;
     }
 
     /// <summary>A copy of the settings to edit and then pass to <see cref="SaveSettings"/>.</summary>
@@ -383,6 +413,214 @@ public sealed class TrackerStore : IDisposable
         {
             outbox.Clear();
             Enqueue(target => target.ClearOutbox());
+        }
+    }
+
+    // ---- Workload Tracker item assignments ------------------------------------------------
+
+    /// <summary>Every assignment kept (all tracker projects, or one), as copies.</summary>
+    public IReadOnlyList<WorkloadAssignment> Assignments(int? trackerProjectId = null)
+    {
+        lock (gate)
+        {
+            return assignments.Values
+                .Where(row => trackerProjectId is null || row.TrackerProjectId == trackerProjectId)
+                .Select(row => row.Copy())
+                .ToList();
+        }
+    }
+
+    /// <summary>
+    /// Who is assigned to what, for showing: active assignments grouped by item
+    /// (<see cref="WorkloadItemRef.Key"/>), names in order. Built once per refresh of the list.
+    /// </summary>
+    public IReadOnlyDictionary<string, IReadOnlyList<WorkloadAssignment>> AssignmentIndex()
+    {
+        lock (gate)
+        {
+            return assignments.Values
+                .Where(row => row.Active)
+                .GroupBy(row => row.ItemKey, StringComparer.Ordinal)
+                .ToDictionary(
+                    group => group.Key,
+                    group => (IReadOnlyList<WorkloadAssignment>)group
+                        .OrderBy(row => row.PersonName, StringComparer.CurrentCultureIgnoreCase)
+                        .Select(row => row.Copy())
+                        .ToList(),
+                    StringComparer.Ordinal);
+        }
+    }
+
+    /// <summary>Changes made here and not yet accepted by the tracker.</summary>
+    public IReadOnlyList<WorkloadAssignment> PendingAssignments()
+    {
+        lock (gate)
+        {
+            return assignments.Values.Where(row => row.Pending).OrderBy(row => row.AssignedAt).Select(row => row.Copy()).ToList();
+        }
+    }
+
+    /// <summary>
+    /// Assigns or unassigns people here, at once; each change is pending until the tracker accepts it.
+    /// A change that matches what is kept already is left out. Only while paired.
+    /// </summary>
+    public void ChangeAssignments(IEnumerable<WorkloadAssignment> changes)
+    {
+        var touched = new HashSet<int>();
+        lock (gate)
+        {
+            if (!settings.WorkloadTracker.IsPaired)
+            {
+                return;
+            }
+
+            foreach (var change in changes)
+            {
+                assignments.TryGetValue(change.Key, out var kept);
+                if (kept is null ? !change.Active : kept.Active == change.Active)
+                {
+                    continue; // already so, or unassigning someone who isn't assigned
+                }
+
+                var row = change.Copy();
+                if (row.PersonName.Length == 0 && kept is not null)
+                {
+                    row.PersonName = kept.PersonName;
+                }
+
+                row.Pending = true;
+                row.CompletedAt = row.Active ? kept?.CompletedAt : null;
+                row.PersonActive = true;
+                assignments[row.Key] = row;
+                touched.Add(row.TrackerProjectId);
+            }
+
+            SaveAssignmentsOf(touched);
+        }
+
+        if (touched.Count > 0)
+        {
+            Raise(new StoreChange { Kind = StoreChangeKind.Assignments });
+        }
+    }
+
+    /// <summary>
+    /// What the tracker answered for sent changes: its row replaces the pending one, unless the
+    /// assignment was changed here again meanwhile. A refused change is dropped (the next read-back
+    /// shows what the tracker has).
+    /// </summary>
+    public void CompleteAssignments(IReadOnlyList<(WorkloadAssignment Sent, WorkloadAssignment? Tracker)> results)
+    {
+        var touched = new HashSet<int>();
+        lock (gate)
+        {
+            foreach (var (sent, tracker) in results)
+            {
+                if (assignments.TryGetValue(sent.Key, out var kept) && kept.Pending && kept.AssignedAt > sent.AssignedAt)
+                {
+                    continue; // changed again since it was sent: that change goes next
+                }
+
+                if (tracker is null)
+                {
+                    assignments.Remove(sent.Key);
+                }
+                else
+                {
+                    var row = tracker.Copy();
+                    row.Pending = false;
+                    assignments.Remove(sent.Key);
+                    assignments[row.Key] = row;
+                }
+
+                touched.Add(sent.TrackerProjectId);
+            }
+
+            SaveAssignmentsOf(touched);
+        }
+
+        if (touched.Count > 0)
+        {
+            Raise(new StoreChange { Kind = StoreChangeKind.Assignments });
+        }
+    }
+
+    /// <summary>
+    /// A tracker project's assignments as the tracker has them now. Changes made here that are newer
+    /// (or not sent yet) are kept on top.
+    /// </summary>
+    public void ReplaceAssignments(int trackerProjectId, IReadOnlyList<WorkloadAssignment> fromTracker)
+    {
+        bool changed;
+        lock (gate)
+        {
+            var before = assignments.Values.Where(row => row.TrackerProjectId == trackerProjectId).ToList();
+            var next = fromTracker.Select(row => row.Copy()).ToDictionary(row => row.Key, StringComparer.Ordinal);
+            foreach (var row in next.Values)
+            {
+                row.Pending = false;
+            }
+
+            foreach (var local in before.Where(row => row.Pending))
+            {
+                if (!next.TryGetValue(local.Key, out var theirs) || local.AssignedAt > theirs.AssignedAt)
+                {
+                    next[local.Key] = local;
+                }
+            }
+
+            changed = before.Count != next.Count
+                || before.Any(row => !next.TryGetValue(row.Key, out var other) || !SameAssignment(row, other));
+            if (changed)
+            {
+                foreach (var row in before)
+                {
+                    assignments.Remove(row.Key);
+                }
+
+                foreach (var row in next.Values)
+                {
+                    assignments[row.Key] = row;
+                }
+
+                SaveAssignmentsOf([trackerProjectId]);
+            }
+        }
+
+        if (changed)
+        {
+            Raise(new StoreChange { Kind = StoreChangeKind.Assignments });
+        }
+    }
+
+    /// <summary>Forgets every assignment (unpaired, or paired with another account).</summary>
+    public void ClearAssignments()
+    {
+        bool had;
+        lock (gate)
+        {
+            had = assignments.Count > 0;
+            assignments.Clear();
+            Enqueue(target => target.ClearAssignments());
+        }
+
+        if (had)
+        {
+            Raise(new StoreChange { Kind = StoreChangeKind.Assignments });
+        }
+    }
+
+    private static bool SameAssignment(WorkloadAssignment a, WorkloadAssignment b) =>
+        a.Active == b.Active && a.Pending == b.Pending && a.AssignedAt == b.AssignedAt && a.CompletedAt == b.CompletedAt
+        && a.PersonActive == b.PersonActive && a.PersonName == b.PersonName && a.AssignedByName == b.AssignedByName;
+
+    /// <summary>Queues the given tracker projects' assignments for the database (under the lock).</summary>
+    private void SaveAssignmentsOf(IEnumerable<int> trackerProjectIds)
+    {
+        foreach (var trackerProjectId in trackerProjectIds)
+        {
+            var rows = assignments.Values.Where(row => row.TrackerProjectId == trackerProjectId).Select(row => row.Copy()).ToList();
+            Enqueue(target => target.ReplaceAssignments(trackerProjectId, rows));
         }
     }
 

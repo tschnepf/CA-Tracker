@@ -148,6 +148,29 @@ public class WorkloadTrackerContractTests
     }
 
     [Fact]
+    public void TheGeneralReadsThatArePinnedStillHaveTheFieldsTheAppReads()
+    {
+        // Project search and a project's team are read field by field (their rows are large and loosely
+        // typed); these are the fields WorkloadTrackerApi reads. A rename in the tracker fails here.
+        var paths = PinnedSchema.Document["paths"]!.AsObject();
+        Assert.NotNull(paths["/api/projects/search/"]?["post"]);
+        Assert.Null(paths["/api/projects/search/"]?["get"]);
+        Assert.NotNull(paths["/api/assignments/"]?["get"]);
+        Assert.Null(paths["/api/assignments/"]?["post"]);
+
+        var schemas = PinnedSchema.Document["components"]!["schemas"]!.AsObject();
+        Assert.Subset(
+            schemas["Assignment"]!["properties"]!.AsObject().Select(entry => entry.Key).ToHashSet(),
+            new HashSet<string> { "person", "personName", "personDepartmentName", "roleName" });
+        Assert.Subset(
+            schemas["ProjectSearchResponse"]!["properties"]!.AsObject().Select(entry => entry.Key).ToHashSet(),
+            new HashSet<string> { "results", "next" });
+        Assert.Subset(
+            schemas["PaginatedAssignmentList"]!["properties"]!.AsObject().Select(entry => entry.Key).ToHashSet(),
+            new HashSet<string> { "results", "next" });
+    }
+
+    [Fact]
     public void ThePinnedSchemaHasTheCaEndpointsAndSaysWhereItCameFrom()
     {
         var paths = PinnedSchema.Document["paths"]!.AsObject();

@@ -24,6 +24,21 @@ internal sealed class FakeTracker : HttpMessageHandler
 
     public IEnumerable<JsonNode> Observations => Requests.Where(request => request.Path == "/api/ca/observations/").Select(request => request.Body!);
 
+    /// <summary>How a binding assertion is answered; by default it is recorded as asserted.</summary>
+    public Func<JsonNode, (string Outcome, int ProjectId, string? Number, string Name, string? By)>? BindingAnswer { get; set; }
+
+    /// <summary>The body of POST /api/projects/search/.</summary>
+    public string SearchBody { get; set; } = """{"count": 0, "next": null, "previous": null, "results": []}""";
+
+    /// <summary>The pages of GET /api/assignments/?project=…, in order.</summary>
+    public List<string> TeamPages { get; } = new();
+
+    /// <summary>The tracker's item assignments, keyed by project, lineage and person.</summary>
+    public Dictionary<string, JsonObject> Assigned { get; } = new(StringComparer.Ordinal);
+
+    /// <summary>People the tracker refuses to assign (they have left).</summary>
+    public HashSet<int> PeopleWhoLeft { get; } = new();
+
     protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
     {
         var text = request.Content is null ? null : await request.Content.ReadAsStringAsync(cancellationToken);
@@ -31,8 +46,13 @@ internal sealed class FakeTracker : HttpMessageHandler
         var body = text is null ? null : JsonNode.Parse(text);
         Requests.Add((request.Method, request.RequestUri!.AbsolutePath, headers, body));
 
+        var query = System.Web.HttpUtility.ParseQueryString(request.RequestUri.Query);
         return request.RequestUri.AbsolutePath switch
         {
+            "/api/projects/search/" => Json(200, SearchBody),
+            "/api/assignments/" => TeamPage(int.Parse(query["page"] ?? "1")),
+            "/api/ca/assignments/" when request.Method == HttpMethod.Post => Assign(body!),
+            "/api/ca/assignments/" => ReadAssignments(int.Parse(query["project"]!), headers.GetValueOrDefault("If-None-Match")),
             "/api/auth/me/" => Json(MeStatus, MeStatus == 200
                 ? """{"id": 1, "user": {"id": 7, "username": "casey"}, "person": {"id": 42, "name": "Casey Lead"}}"""
                 : """{"detail": "Invalid token."}"""),
@@ -45,7 +65,7 @@ internal sealed class FakeTracker : HttpMessageHandler
                 status = body["part"]!.GetValue<int>() == body["totalParts"]!.GetValue<int>() ? "applied" : "pending",
                 partsReceived = body["part"]!.GetValue<int>(),
                 counts = new { stored = 0, unchanged = 0, stale = 0, removed = 0, unrouted = 0 },
-                bindings = Array.Empty<object>(),
+                bindings = (body["bindings"]?.AsArray() ?? new JsonArray()).Select(binding => BindingResult(binding!)).ToArray(),
                 resendAll = ResendAll,
                 resendAfterSeconds = ResendAll ? 60 : (int?)null
             })),
@@ -56,6 +76,96 @@ internal sealed class FakeTracker : HttpMessageHandler
 
     private static HttpResponseMessage Json(int status, string body) =>
         new((HttpStatusCode)status) { Content = new StringContent(body, Encoding.UTF8, "application/json") };
+
+    private object BindingResult(JsonNode binding)
+    {
+        var asserted = binding["trackerProjectId"]!.GetValue<int>();
+        var (outcome, projectId, number, name, by) = BindingAnswer?.Invoke(binding) ?? ("recorded", asserted, $"CA-{asserted}", $"Project {asserted}", "Casey Lead");
+        return new
+        {
+            scope = binding["scope"]!.GetValue<string>(),
+            assertedProjectId = asserted,
+            outcome,
+            effective = new { trackerProjectId = projectId, projectNumber = number, projectName = name, assertedByName = by, assertedAt = "2026-10-07T15:00:00Z" }
+        };
+    }
+
+    private HttpResponseMessage TeamPage(int page) =>
+        page <= TeamPages.Count ? Json(200, TeamPages[page - 1]) : Json(404, """{"detail": "Invalid page."}""");
+
+    /// <summary>Latest change wins, like the tracker's ca_tracker/assignments.py.</summary>
+    private HttpResponseMessage Assign(JsonNode body)
+    {
+        var results = new JsonArray();
+        var rows = body["assignments"]!.AsArray();
+        for (var index = 0; index < rows.Count; index++)
+        {
+            var row = rows[index]!;
+            var person = row["personId"]!.GetValue<int>();
+            var active = row["active"]!.GetValue<bool>();
+            if (PeopleWhoLeft.Contains(person) && active)
+            {
+                results.Add(new JsonObject { ["index"] = index, ["outcome"] = "rejected", ["reason"] = "person_inactive", ["assignment"] = null });
+                continue;
+            }
+
+            var key = $"{row["trackerProjectId"]}|{row["providerProject"]!["projectId"]}|{row["itemType"]}|{row["number"]}|{person}";
+            var at = DateTimeOffset.Parse(row["assignedAt"]!.GetValue<string>());
+            string outcome;
+            if (!Assigned.TryGetValue(key, out var kept))
+            {
+                kept = new JsonObject
+                {
+                    ["id"] = Assigned.Count + 1,
+                    ["trackerProjectId"] = row["trackerProjectId"]!.DeepClone(),
+                    ["providerProject"] = row["providerProject"]!.DeepClone(),
+                    ["itemType"] = row["itemType"]!.DeepClone(),
+                    ["number"] = row["number"]!.DeepClone(),
+                    ["personId"] = person,
+                    ["personName"] = $"Person {person}",
+                    ["personActive"] = !PeopleWhoLeft.Contains(person),
+                    ["assignedByName"] = "Casey Lead",
+                    ["assignedAt"] = row["assignedAt"]!.DeepClone(),
+                    ["active"] = active,
+                    ["completedAt"] = null
+                };
+                Assigned[key] = kept;
+                outcome = "created";
+            }
+            else if (at < DateTimeOffset.Parse(kept["assignedAt"]!.GetValue<string>()))
+            {
+                outcome = "stale";
+            }
+            else if (at == DateTimeOffset.Parse(kept["assignedAt"]!.GetValue<string>()) && active == kept["active"]!.GetValue<bool>())
+            {
+                outcome = "unchanged";
+            }
+            else
+            {
+                kept["assignedAt"] = row["assignedAt"]!.DeepClone();
+                kept["active"] = active;
+                outcome = "updated";
+            }
+
+            results.Add(new JsonObject { ["index"] = index, ["outcome"] = outcome, ["reason"] = null, ["assignment"] = kept.DeepClone() });
+        }
+
+        return Json(200, new JsonObject { ["results"] = results }.ToJsonString());
+    }
+
+    private HttpResponseMessage ReadAssignments(int project, string? ifNoneMatch)
+    {
+        var rows = new JsonArray(Assigned.Values
+            .Where(row => row["trackerProjectId"]!.GetValue<int>() == project)
+            .OrderBy(row => row["number"]!.GetValue<string>(), StringComparer.Ordinal)
+            .Select(row => (JsonNode)row.DeepClone())
+            .ToArray());
+        var body = new JsonObject { ["projectId"] = project, ["assignments"] = rows }.ToJsonString();
+        var etag = $"\"{Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(Encoding.UTF8.GetBytes(body)))[..16]}\"";
+        var response = ifNoneMatch == etag ? new HttpResponseMessage(HttpStatusCode.NotModified) { Content = new StringContent("") } : Json(200, body);
+        response.Headers.ETag = new System.Net.Http.Headers.EntityTagHeaderValue(etag);
+        return response;
+    }
 }
 
 public sealed class WorkloadTrackerSyncTests : IDisposable

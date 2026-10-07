@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
@@ -6,7 +7,7 @@ using SmcCaTracker.Core.WorkloadTracker.Contract;
 namespace SmcCaTracker.Core.WorkloadTracker;
 
 /// <summary>A call's outcome: the HTTP status and body, or why the tracker couldn't be reached.</summary>
-public sealed record ApiResult(int Status, string Body, string? NetworkError = null)
+public sealed record ApiResult(int Status, string Body, string? NetworkError = null, string? ETag = null)
 {
     public bool Ok => NetworkError is null && Status is >= 200 and < 300;
 
@@ -92,6 +93,14 @@ public sealed class WorkloadTrackerApi
         return uri.GetLeftPart(UriPartial.Authority);
     }
 
+    /// <summary>Statuses offered when binding: projects that are running (decision D3).</summary>
+    public const string BindableStatuses = "active,active_ca";
+
+    public const int SearchPageSize = 25;
+
+    /// <summary>The tracker's largest page of assignments.</summary>
+    public const int TeamPageSize = 200;
+
     public Task<ApiResult> PostObservationAsync(string address, string token, string clientId, CaObservationPartRequest part, CancellationToken cancel) =>
         SendAsync(HttpMethod.Post, address, "/api/ca/observations/", token, clientId, JsonSerializer.Serialize(part, ContractJson.Options), cancel);
 
@@ -100,6 +109,83 @@ public sealed class WorkloadTrackerApi
 
     public Task<ApiResult> RevokeSessionAsync(string address, string token, string clientId, int sessionId, CancellationToken cancel) =>
         SendAsync(HttpMethod.Post, address, $"/api/auth/sessions/{sessionId}/revoke/", token, clientId, null, cancel);
+
+    /// <summary>Existing tracker projects matching <paramref name="query"/> (number, name or client), running ones only.</summary>
+    public Task<ApiResult> SearchProjectsAsync(string address, string token, string clientId, string query, int page, CancellationToken cancel)
+    {
+        var text = query.Trim();
+        var request = new ProjectSearchRequestRequest
+        {
+            Page = page,
+            PageSize = SearchPageSize,
+            StatusIn = BindableStatuses,
+            SearchTokens = text.Length == 0 ? null : [new SearchTokenProjectRequest { Term = text, Op = OpEnum.And }]
+        };
+        return SendAsync(HttpMethod.Post, address, "/api/projects/search/", token, clientId, JsonSerializer.Serialize(request, ContractJson.Options), cancel);
+    }
+
+    /// <summary>One page of a tracker project's assignments: its team.</summary>
+    public Task<ApiResult> GetTeamPageAsync(string address, string token, string clientId, int projectId, int page, CancellationToken cancel) =>
+        SendAsync(HttpMethod.Get, address, string.Create(CultureInfo.InvariantCulture, $"/api/assignments/?project={projectId}&page={page}&page_size={TeamPageSize}"),
+            token, clientId, null, cancel);
+
+    public Task<ApiResult> PostAssignmentsAsync(string address, string token, string clientId, CaAssignmentBatchRequest batch, CancellationToken cancel) =>
+        SendAsync(HttpMethod.Post, address, "/api/ca/assignments/", token, clientId, JsonSerializer.Serialize(batch, ContractJson.Options), cancel);
+
+    /// <summary>Every item assignment on a tracker project; 304 when <paramref name="etag"/> still matches.</summary>
+    public Task<ApiResult> GetAssignmentsAsync(string address, string token, string clientId, int projectId, string? etag, CancellationToken cancel) =>
+        SendAsync(HttpMethod.Get, address, string.Create(CultureInfo.InvariantCulture, $"/api/ca/assignments/?project={projectId}"), token, clientId, null, cancel, etag);
+
+    /// <summary>
+    /// The projects in a search result. Read field by field: the search returns the tracker's whole
+    /// project row, of which only these fields are used (and checked against the pinned schema in tests).
+    /// </summary>
+    public static (List<TrackerProjectChoice> Projects, bool More) ReadProjectChoices(ApiResult result)
+    {
+        var projects = new List<TrackerProjectChoice>();
+        if (!result.Ok || result.TryRead<JsonElement>() is not { ValueKind: JsonValueKind.Object } root
+            || !root.TryGetProperty("results", out var rows) || rows.ValueKind != JsonValueKind.Array)
+        {
+            return (projects, false);
+        }
+
+        foreach (var row in rows.EnumerateArray())
+        {
+            if (row.ValueKind == JsonValueKind.Object && Int(row, "id") is { } id && String(row, "name") is { Length: > 0 } name)
+            {
+                projects.Add(new TrackerProjectChoice(id, String(row, "projectNumber"), name, String(row, "status"), String(row, "client")));
+            }
+        }
+
+        return (projects, String(root, "next") is { Length: > 0 });
+    }
+
+    /// <summary>The people on one page of a project's assignments (rows without a person are placeholders and left out).</summary>
+    public static (List<TeamMember> Members, bool More) ReadTeamPage(ApiResult result)
+    {
+        var members = new List<TeamMember>();
+        if (!result.Ok || result.TryRead<JsonElement>() is not { ValueKind: JsonValueKind.Object } root
+            || !root.TryGetProperty("results", out var rows) || rows.ValueKind != JsonValueKind.Array)
+        {
+            return (members, false);
+        }
+
+        foreach (var row in rows.EnumerateArray())
+        {
+            if (row.ValueKind == JsonValueKind.Object && Int(row, "person") is { } person)
+            {
+                members.Add(new TeamMember(person, String(row, "personName") ?? $"Person {person}", String(row, "personDepartmentName"), String(row, "roleName")));
+            }
+        }
+
+        return (members, String(root, "next") is { Length: > 0 });
+    }
+
+    private static int? Int(JsonElement row, string name) =>
+        row.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.Number && value.TryGetInt32(out var number) ? number : null;
+
+    private static string? String(JsonElement row, string name) =>
+        row.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.String ? value.GetString() : null;
 
     /// <summary>Reads the person and Workload Tracker person from a <c>/api/auth/me/</c> body.</summary>
     public static TrackerIdentity? ReadIdentity(ApiResult result)
@@ -123,12 +209,18 @@ public sealed class WorkloadTrackerApi
         return new TrackerIdentity(userId, userName, personId, personName);
     }
 
-    private async Task<ApiResult> SendAsync(HttpMethod method, string address, string path, string token, string clientId, string? json, CancellationToken cancel)
+    private async Task<ApiResult> SendAsync(HttpMethod method, string address, string path, string token, string clientId, string? json, CancellationToken cancel,
+        string? ifNoneMatch = null)
     {
         using var request = new HttpRequestMessage(method, address.TrimEnd('/') + path);
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
         request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
         request.Headers.TryAddWithoutValidation(ClientIdHeader, clientId);
+        if (!string.IsNullOrEmpty(ifNoneMatch))
+        {
+            request.Headers.TryAddWithoutValidation("If-None-Match", ifNoneMatch);
+        }
+
         if (json is not null)
         {
             request.Content = new StringContent(json, Encoding.UTF8, "application/json");
@@ -138,7 +230,7 @@ public sealed class WorkloadTrackerApi
         {
             using var response = await http.SendAsync(request, cancel).ConfigureAwait(false);
             var body = await response.Content.ReadAsStringAsync(cancel).ConfigureAwait(false);
-            return new ApiResult((int)response.StatusCode, body);
+            return new ApiResult((int)response.StatusCode, body, ETag: response.Headers.ETag?.ToString());
         }
         catch (HttpRequestException error)
         {

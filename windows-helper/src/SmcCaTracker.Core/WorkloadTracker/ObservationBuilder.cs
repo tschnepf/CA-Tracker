@@ -130,9 +130,7 @@ public static class ObservationBuilder
         return new CaProviderProjectRequest
         {
             Provider = procore ? CaProviderEnum.Procore : CaProviderEnum.Helix,
-            Host = procore
-                ? Text(string.IsNullOrWhiteSpace(connection?.Host) ? ProviderLinks.DefaultProcoreHost : connection!.Host!, 255).ToLowerInvariant()
-                : ProviderLinks.HelixHost,
+            Host = Host(snapshot.Provider, connection?.Host),
             AccountId = procore ? Optional(snapshot.AccountId ?? connection?.AccountId, 64) : null,
             ProjectId = Text(snapshot.ProjectId, 64),
             Name = Text(name, 300),
@@ -277,6 +275,35 @@ public static class ObservationBuilder
             .Select(type => type.Trim().ToLowerInvariant())
             .ToHashSet(StringComparer.Ordinal);
         return SentItemTypes.Where(present.Contains).ToList();
+    }
+
+    /// <summary>The host the tracker keys a provider project by: the Procore instance, or Helix's one host.</summary>
+    public static string Host(string provider, string? connectionHost) =>
+        string.Equals(provider, Providers.Procore, StringComparison.OrdinalIgnoreCase)
+            ? Text(string.IsNullOrWhiteSpace(connectionHost) ? ProviderLinks.DefaultProcoreHost : connectionHost, 255).ToLowerInvariant()
+            : ProviderLinks.HelixHost;
+
+    /// <summary>
+    /// An item as assignments name it (decision D4): provider project, type and number, the same
+    /// values its observations carry. Null for an item the tracker isn't sent.
+    /// </summary>
+    public static WorkloadItemRef? ItemRef(int trackerProjectId, ProviderConnection connection, SnapshotItem item)
+    {
+        var type = TypeOf(item);
+        var number = Text(item.Number, 64);
+        if (!SentItemTypes.Contains(type) || number.Length == 0)
+        {
+            return null;
+        }
+
+        var procore = string.Equals(connection.Provider, Providers.Procore, StringComparison.OrdinalIgnoreCase);
+        return new WorkloadItemRef(
+            trackerProjectId,
+            procore ? CaProviderEnum.Procore : CaProviderEnum.Helix,
+            Host(connection.Provider, connection.Host),
+            Text(connection.ProjectId, 64),
+            type,
+            number);
     }
 
     private static string TypeOf(SnapshotItem item) => item.ItemType.Trim().ToLowerInvariant();
