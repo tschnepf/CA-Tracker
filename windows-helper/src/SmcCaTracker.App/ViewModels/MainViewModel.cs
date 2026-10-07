@@ -74,7 +74,7 @@ public static class Filters
 /// nothing on screen waits on the disk, the Egnyte drive or Helix. Reading and comparing never
 /// changes a CA folder; every change goes through an OperationPlan that the window previews first.
 /// </summary>
-public sealed class MainViewModel : ObservableObject, IDisposable
+public sealed partial class MainViewModel : ObservableObject, IDisposable
 {
     private readonly TrackerStore store;
     private readonly FolderIndex folderIndex;
@@ -112,6 +112,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     private int settingsVersion;
     private bool catalogChanged;
     private bool accountsChanged;
+    private bool assignmentsChanged;
     private int folderTicks;
     private bool folderCheckRunning;
     private bool autoSyncRunning;
@@ -691,7 +692,9 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     public bool CanShowMyWork => YourNames().Count > 0;
 
     public string MyWorkToolTip => CanShowMyWork
-        ? "Your open items in every linked project, by when they're due"
+        ? Settings.WorkloadTracker is { IsPaired: true, PersonId: not null }
+            ? "Your open items in every linked project (in your court, or assigned to you in Workload Tracker), by when they're due"
+            : "Your open items in every linked project, by when they're due"
         : "Sign in to Helix or Procore (Settings → Connections) so CA Tracker knows your name";
 
     private int myWorkOpen;
@@ -772,7 +775,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
             .SelectMany(project => badgeSources.TryGetValue(project.Id, out var source) ? source.Rows : new List<RowViewModel>())
             .Where(row => row.Row.Item is { Closed: false })
             .ToList();
-        var mine = open.Where(row => row.HolderNames.Any(you.Contains)).ToList();
+        var mine = open.Where(row => row.HolderNames.Any(you.Contains) || row.IsAssignedToMe).ToList();
         myWorkOpen = mine.Count;
         myWorkOverdue = mine.Count(row => row.IsOverdue);
         allOverdue = open.Count(row => row.IsOverdue);
@@ -2557,7 +2560,8 @@ public sealed class MainViewModel : ObservableObject, IDisposable
                      nameof(CheckedCount), nameof(HasChecks), nameof(SelectionText), nameof(AllShownChecked),
                      nameof(CanMarkReturned), nameof(MarkReturnedText), nameof(CanMoveBack), nameof(MoveBackText),
                      nameof(CanSetDiscipline), nameof(SetDisciplineText), nameof(CanDownloadChecked), nameof(DownloadCheckedText),
-                     nameof(VerifyCheckedText), nameof(MarkReturnedToolTip), nameof(ShowActionBar)
+                     nameof(VerifyCheckedText), nameof(MarkReturnedToolTip), nameof(ShowActionBar),
+                     nameof(CanAssignChecked), nameof(AssignCheckedText)
                  })
         {
             OnPropertyChanged(name);
@@ -3321,6 +3325,8 @@ public sealed class MainViewModel : ObservableObject, IDisposable
                 view.Compared = hasFolder;
             }
 
+            assignmentIndex = store.AssignmentIndex();
+            ApplyAssignments(rows);
             allRows = rows;
             comparison = SelectedProject is not null && comparisons.TryGetValue(SelectedProject.Id, out var primary) ? primary : null;
             RebuildPersonOptions();
@@ -3668,6 +3674,8 @@ public sealed class MainViewModel : ObservableObject, IDisposable
 
             var waiting = workloadTracker.PendingCount;
             var queued = waiting == 0 ? "" : $" · {waiting} project{(waiting == 1 ? "" : "s")} waiting to send";
+            var assignments = workloadTracker.PendingAssignmentCount;
+            queued += assignments == 0 ? "" : $" · {assignments} assignment change{(assignments == 1 ? "" : "s")} waiting to send";
             if (workloadTracker.LastProblem is { } problem)
             {
                 return $"⚠ {problem}{queued}";
@@ -3687,6 +3695,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         OnPropertyChanged(nameof(IsWorkloadTrackerPaired));
         OnPropertyChanged(nameof(WorkloadTrackerNeedsConnect));
         OnPropertyChanged(nameof(WorkloadTrackerStatusText));
+        OnPropertyChanged(nameof(ShowsAssignments));
         OnPropertyChanged(nameof(ShowSignInBanner));
         OnPropertyChanged(nameof(SignInBannerText));
     }
@@ -3827,6 +3836,12 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     private void RebuildRows()
     {
         using var timing = AppLog.Time("list.rebuild", $"{allRows.Count} rows", 100);
+        var assignedFirst = groupBy is GroupModes.Urgency && !IsFiling && IsMyWorkActive;
+        foreach (var row in allRows)
+        {
+            row.ListAssignedFirst = assignedFirst;
+        }
+
         var visible = allRows
             .Where(MatchesType)
             .Where(Matches)
@@ -3954,6 +3969,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
             foreach (var (view, source) in results)
             {
                 badgeSources[view.Id] = source;
+                ApplyAssignments(source.Rows);
             }
         }
 
@@ -4030,7 +4046,8 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         // only by name may have the company in brackets after it.
         return (rememberCompany && row.Holders.Any(holder => row.Comparison.Company.Matches(holder.CompanyId, holder.Company)
                     || row.Comparison.Company.Matches(null, PersonNames.CompanyIn(holder.Name))))
-            || row.HolderNames.Any(rememberedPeople.Contains);
+            || row.HolderNames.Any(rememberedPeople.Contains)
+            || (row.IsAssignedToMe && YourNames().Any(rememberedPeople.Contains));
     }
 
     /// <summary>
@@ -4049,7 +4066,8 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         }
         else if (groupBy is GroupModes.Urgency)
         {
-            var byUrgency = left.Urgency.CompareTo(right.Urgency);
+            // "Assigned to me" (in My work), then by when it's due.
+            var byUrgency = left.HeadingOrder.CompareTo(right.HeadingOrder);
             if (byUrgency != 0)
             {
                 return byUrgency;
@@ -4105,6 +4123,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         nameof(RowViewModel.DaysTillDue) => row.DaysTillDue is null,
         nameof(RowViewModel.Number) => row.Row.Item is null,
         nameof(RowViewModel.PersonSortKey) => row.HolderNames.Count == 0,
+        nameof(RowViewModel.AssignedSortKey) => row.Assignees.Count == 0,
         nameof(RowViewModel.Status) => false,
         _ => string.IsNullOrWhiteSpace(SortText(row, column))
     };
@@ -4125,6 +4144,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         nameof(RowViewModel.Title) => row.TitleText,
         nameof(RowViewModel.ProviderStatus) => row.ProviderStatus,
         nameof(RowViewModel.PersonSortKey) or nameof(RowViewModel.HolderText) => row.PersonSortKey,
+        nameof(RowViewModel.AssignedSortKey) => row.AssignedSortKey,
         nameof(RowViewModel.FolderName) => row.HasFolder ? row.FolderName : "",
         nameof(RowViewModel.DisciplineText) => row.Row.Discipline?.Label ?? "",
         nameof(RowViewModel.LocationText) => row.LocationText,
@@ -4204,7 +4224,8 @@ public sealed class MainViewModel : ObservableObject, IDisposable
                      nameof(LastSyncFailed), nameof(CanIncludeUnlabeled), nameof(IncludeUnlabeledText), nameof(MarkReturnedToolTip),
                      nameof(HasActiveFilters), nameof(CanClearFilters), nameof(HasHiddenSearchMatches),
                      nameof(IsPlaceholder), nameof(CanEditConnection), nameof(EditButtonText),
-                     nameof(RfiTabText), nameof(SubmittalTabText), nameof(BothTabText), nameof(IsMultiProject), nameof(EmptyText), nameof(HasEmptyText), nameof(Comparison)
+                     nameof(RfiTabText), nameof(SubmittalTabText), nameof(BothTabText), nameof(IsMultiProject), nameof(EmptyText), nameof(HasEmptyText), nameof(Comparison),
+                     nameof(ShowsAssignments)
                  })
         {
             OnPropertyChanged(name);
@@ -4242,6 +4263,9 @@ public sealed class MainViewModel : ObservableObject, IDisposable
                 case StoreChangeKind.Accounts:
                     accountsChanged = true;
                     break;
+                case StoreChangeKind.Assignments:
+                    assignmentsChanged = true;
+                    break;
             }
         }
 
@@ -4264,6 +4288,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         bool catalog;
         bool accounts;
         bool touched;
+        bool assignments;
         lock (changeGate)
         {
             itemLists = new HashSet<string>(changedItemLists, StringComparer.OrdinalIgnoreCase);
@@ -4272,9 +4297,10 @@ public sealed class MainViewModel : ObservableObject, IDisposable
             catalog = catalogChanged;
             accounts = accountsChanged;
             touched = snapshotsTouched;
+            assignments = assignmentsChanged;
             changedItemLists.Clear();
             changedFolderIndexes.Clear();
-            settingsChanged = catalogChanged = accountsChanged = snapshotsTouched = false;
+            settingsChanged = catalogChanged = accountsChanged = snapshotsTouched = assignmentsChanged = false;
         }
 
         if (settings)
@@ -4306,6 +4332,11 @@ public sealed class MainViewModel : ObservableObject, IDisposable
             || (shownBefore.TryGetValue(project.Id, out var before) && !ReferenceEquals(before, project.Project))
             || (project.Project.Connection is { } connection && !project.IsRefreshing
                 && itemLists.Contains($"{connection.Provider}|{connection.ProjectId}")));
+        if (assignments)
+        {
+            OnAssignmentsChanged(rowsWillBeRebuilt: shownChanged);
+        }
+
         if (shownChanged)
         {
             await CompareAsync();

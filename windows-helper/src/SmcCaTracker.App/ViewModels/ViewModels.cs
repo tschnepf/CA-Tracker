@@ -6,6 +6,7 @@ using SmcCaTracker.Core.Models;
 using SmcCaTracker.Core.Operations;
 using SmcCaTracker.Core.Refresh;
 using SmcCaTracker.Core.Storage;
+using SmcCaTracker.Core.WorkloadTracker;
 
 namespace SmcCaTracker.App.ViewModels;
 
@@ -632,6 +633,91 @@ public sealed class RowViewModel : ObservableObject
         && (uri.Scheme == Uri.UriSchemeHttps || uri.Scheme == Uri.UriSchemeHttp);
 
     public string ToolTipText => string.IsNullOrEmpty(Detail) ? StatusText : $"{StatusText}. {Detail}";
+
+    // ---- Workload Tracker assignments (decision D4) ------------------------------------------
+
+    public const string AssignedToMeHeading = "Assigned to me";
+
+    /// <summary>The item as Workload Tracker names it, when its project is bound; null when it can't be assigned.</summary>
+    public WorkloadItemRef? AssignRef { get; private set; }
+
+    /// <summary>Who is assigned to the item in Workload Tracker, names in order.</summary>
+    public IReadOnlyList<WorkloadAssignment> Assignees { get; private set; } = [];
+
+    /// <summary>Assigned to you (the Workload Tracker person you're connected as) and not done.</summary>
+    public bool IsAssignedToMe { get; private set; }
+
+    public bool CanAssign => AssignRef is not null;
+
+    /// <summary>Connected to Workload Tracker: the row's menus offer Assign to… (enabled once the project is bound).</summary>
+    public bool ShowsAssignMenu { get; private set; }
+
+    public string AssignMenuToolTip => CanAssign
+        ? "Choose who on the project's team in Workload Tracker works on this item"
+        : HasItem ? "Bind this project to a Workload Tracker project first (Edit project)" : "Only Helix and Procore items can be assigned";
+
+    /// <summary>The Assigned column: names, with people who have left marked so the item can be reassigned.</summary>
+    public string AssignedText => string.Join(", ", Assignees.Select(row => row.PersonActive ? row.PersonName : $"{row.PersonName} (left)"));
+
+    public string AssignedSortKey => Assignees.Count > 0 ? Assignees[0].PersonName : "\uffff";
+
+    /// <summary>Hover text for the Assigned column: who assigned each person and when, and what isn't sent yet.</summary>
+    public string? AssignedToolTip => Assignees.Count == 0
+        ? CanAssign ? "Nobody is assigned. Right-click → Assign to… to assign someone." : null
+        : string.Join("\n", Assignees.Select(row =>
+        {
+            var by = row.AssignedByName is { Length: > 0 } name ? $" by {name}" : "";
+            var note = row.Pending ? " (not sent yet)"
+                : !row.PersonActive ? " · has left: reassign it"
+                : row.CompletedAt is not null ? " · done" : "";
+            return $"{row.PersonName}: assigned{by} {row.AssignedAt.ToLocalTime():MMM d}{note}";
+        }));
+
+    /// <summary>Set by the list: My work shows items assigned to you first, under their own heading.</summary>
+    public bool ListAssignedFirst { get; set; }
+
+    /// <summary>The heading the list groups this row under when grouped by when it's due.</summary>
+    public string Heading => ListAssignedFirst && IsAssignedToMe ? AssignedToMeHeading : UrgencyText;
+
+    /// <summary>The order of <see cref="Heading"/>: "Assigned to me" first, then by when it's due.</summary>
+    public int HeadingOrder => ListAssignedFirst && IsAssignedToMe ? -1 : (int)Urgency;
+
+    public void SetAssignments(WorkloadItemRef? reference, IReadOnlyList<WorkloadAssignment> assignees, int? me, bool paired)
+    {
+        var mine = me is { } person && assignees.Any(row => row.PersonId == person && row.CompletedAt is null);
+        if (reference == AssignRef && mine == IsAssignedToMe && paired == ShowsAssignMenu
+            && assignees.SequenceEqual(Assignees, AssignmentComparer.Instance))
+        {
+            return;
+        }
+
+        ShowsAssignMenu = paired;
+        AssignRef = reference;
+        Assignees = assignees;
+        IsAssignedToMe = mine;
+        foreach (var name in new[]
+                 {
+                     nameof(AssignRef), nameof(Assignees), nameof(IsAssignedToMe), nameof(CanAssign), nameof(AssignedText),
+                     nameof(ShowsAssignMenu), nameof(AssignMenuToolTip),
+                     nameof(AssignedSortKey), nameof(AssignedToolTip), nameof(Heading), nameof(HeadingOrder)
+                 })
+        {
+            OnPropertyChanged(name);
+        }
+    }
+
+    /// <summary>Two assignment lists show the same thing.</summary>
+    private sealed class AssignmentComparer : IEqualityComparer<WorkloadAssignment>
+    {
+        public static readonly AssignmentComparer Instance = new();
+
+        public bool Equals(WorkloadAssignment? x, WorkloadAssignment? y) =>
+            x is not null && y is not null && x.Key == y.Key && x.Active == y.Active && x.Pending == y.Pending
+            && x.PersonName == y.PersonName && x.PersonActive == y.PersonActive && x.CompletedAt == y.CompletedAt
+            && x.AssignedAt == y.AssignedAt && x.AssignedByName == y.AssignedByName;
+
+        public int GetHashCode(WorkloadAssignment obj) => obj.Key.GetHashCode(StringComparison.Ordinal);
+    }
 }
 
 public sealed class OperationRowViewModel

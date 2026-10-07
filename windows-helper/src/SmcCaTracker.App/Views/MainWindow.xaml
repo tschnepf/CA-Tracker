@@ -24,6 +24,9 @@
                       ToolTip="Check that the item's folder has every file Helix has for it" />
             <Separator />
             <MenuItem Header="Set discipline…" Click="SetRowDiscipline_Click" IsEnabled="{Binding CanSelect}" />
+            <MenuItem Header="Assign to…" Click="AssignRow_Click" IsEnabled="{Binding CanAssign}"
+                      Visibility="{Binding ShowsAssignMenu, Converter={StaticResource Visible}}"
+                      ToolTip="{Binding AssignMenuToolTip}" ToolTipService.ShowOnDisabled="True" />
         </ContextMenu>
 
         <!-- A row's ▾: what isn't on its own buttons (Open and Download are). Not shared, so each ▾ gets its own. -->
@@ -36,6 +39,9 @@
                       ToolTip="Check that the item's folder has every file Helix has for it" />
             <Separator />
             <MenuItem Header="Set discipline…" Click="SetRowDiscipline_Click" IsEnabled="{Binding CanSelect}" />
+            <MenuItem Header="Assign to…" Click="AssignRow_Click" IsEnabled="{Binding CanAssign}"
+                      Visibility="{Binding ShowsAssignMenu, Converter={StaticResource Visible}}"
+                      ToolTip="{Binding AssignMenuToolTip}" ToolTipService.ShowOnDisabled="True" />
         </ContextMenu>
 
         <!-- A view at the top of the project list (My work, Overdue): looks like a project row, highlighted
@@ -910,6 +916,9 @@
                                                             <DataTrigger Binding="{Binding Name}" Value="Due today">
                                                                 <Setter Property="Foreground" Value="{DynamicResource WarningBrush}" />
                                                             </DataTrigger>
+                                                            <DataTrigger Binding="{Binding Name}" Value="Assigned to me">
+                                                                <Setter Property="Foreground" Value="{DynamicResource AccentBrush}" />
+                                                            </DataTrigger>
                                                         </Style.Triggers>
                                                     </Style>
                                                 </TextBlock.Style>
@@ -1014,6 +1023,17 @@
                                     </Style>
                                 </DataGridTextColumn.ElementStyle>
                             </DataGridTextColumn>
+                            <!-- Shown while a shown project is bound to a Workload Tracker project. -->
+                            <DataGridTextColumn x:Name="AssignedColumn" Header="Assigned" Binding="{Binding AssignedText}" Width="150" IsReadOnly="True"
+                                                SortMemberPath="AssignedSortKey">
+                                <DataGridTextColumn.ElementStyle>
+                                    <Style TargetType="TextBlock">
+                                        <Setter Property="ToolTip" Value="{Binding AssignedToolTip}" />
+                                        <Setter Property="TextTrimming" Value="CharacterEllipsis" />
+                                        <Setter Property="VerticalAlignment" Value="Center" />
+                                    </Style>
+                                </DataGridTextColumn.ElementStyle>
+                            </DataGridTextColumn>
                             <DataGridTextColumn x:Name="DaysInCourtColumn" Header="Days in court" Binding="{Binding DaysInCourtText}" Width="95" IsReadOnly="True"
                                                 SortMemberPath="DaysInCourt" />
                             <DataGridTextColumn x:Name="FolderColumn" Header="Folder" Binding="{Binding FolderName}" Width="200" IsReadOnly="True" SortMemberPath="FolderName">
@@ -1100,6 +1120,9 @@
                                         ToolTip="Checks the shown folders that are ready to move to Returned" />
                                 <Button Content="Clear checks" Click="ClearTicks_Click" Margin="0,2,6,2"
                                         Visibility="{Binding HasChecks, Converter={StaticResource Visible}}" />
+                                <Button Content="{Binding AssignCheckedText}" Click="AssignChecked_Click" Margin="0,2,6,2"
+                                        Visibility="{Binding CanAssignChecked, Converter={StaticResource Visible}}"
+                                        ToolTip="Choose who on the Workload Tracker project's team works on the checked items" />
                                 <Button Content="{Binding SetDisciplineText}" Click="SetTickedDiscipline_Click" Margin="0,2,6,2"
                                         Visibility="{Binding CanSetDiscipline, Converter={StaticResource Visible}}"
                                         ToolTip="Set the discipline of the checked items. Items with no folder yet download into that discipline's folder." />

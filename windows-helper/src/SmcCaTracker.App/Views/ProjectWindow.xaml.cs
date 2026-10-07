@@ -6,6 +6,7 @@ using SmcCaTracker.App.ViewModels;
 using SmcCaTracker.Core.Comparison;
 using SmcCaTracker.Core.Models;
 using SmcCaTracker.Core.Storage;
+using SmcCaTracker.Core.WorkloadTracker;
 
 namespace SmcCaTracker.App.Views;
 
@@ -17,6 +18,8 @@ public partial class ProjectWindow : Window
     private readonly TrackerProject project;
     private readonly bool isNew;
     private readonly MainViewModel viewModel;
+    private readonly WorkloadBinding? savedBinding;
+    private TrackerProjectChoice? chosenBinding;
 
     public ProjectWindow(TrackerProject project, bool isNew, MainViewModel viewModel)
     {
@@ -31,6 +34,9 @@ public partial class ProjectWindow : Window
         RemoveButton.Visibility = isNew ? Visibility.Collapsed : Visibility.Visible;
         NameBox.Text = project.Name;
         FolderBox.Text = project.CaFolder;
+        savedBinding = isNew ? null : viewModel.WorkloadBindingFor(project.Id);
+        chosenBinding = savedBinding is null ? null
+            : new TrackerProjectChoice(savedBinding.ProjectId, savedBinding.ProjectNumber, savedBinding.ProjectName, null, null);
         ShowConnection();
         LoadCompanies();
 
@@ -56,10 +62,85 @@ public partial class ProjectWindow : Window
     public TrackerProject? Result { get; private set; }
     public bool RemoveRequested { get; private set; }
 
+    /// <summary>The Workload Tracker project chosen, or null for none (see <see cref="BindingChanged"/>).</summary>
+    public TrackerProjectChoice? Binding => chosenBinding;
+
+    /// <summary>The Workload Tracker project was chosen, changed or unbound here.</summary>
+    public bool BindingChanged => chosenBinding?.Id != savedBinding?.ProjectId;
+
     private void ShowConnection()
     {
         ConnectionText.Text = project.Connection?.Label ?? "Not linked to a Helix or Procore project.";
         DisconnectButton.Visibility = project.Connection is null ? Visibility.Collapsed : Visibility.Visible;
+        ShowBinding();
+    }
+
+    private void ShowBinding()
+    {
+        var sync = viewModel.WorkloadTracker;
+        WorkloadCard.Visibility = sync is { IsPaired: true } ? Visibility.Visible : Visibility.Collapsed;
+        if (sync is not { IsPaired: true })
+        {
+            return;
+        }
+
+        var linked = project.Connection is not null;
+        BindingText.Text = chosenBinding is { } choice ? choice.Label
+            : linked ? "Not bound: this project's items are listed in Workload Tracker for an admin to place."
+            : "Link a Helix or Procore project first.";
+        ChooseBindingButton.IsEnabled = linked;
+        UnbindButton.Visibility = chosenBinding is null ? Visibility.Collapsed : Visibility.Visible;
+
+        // What the tracker said when the binding was last sent (unchanged since).
+        var unchanged = !BindingChanged ? savedBinding : null;
+        if (unchanged is { Outcome: WorkloadBinding.Conflict, TheirLabel: { } theirs })
+        {
+            var by = unchanged.TheirAssertedBy is { Length: > 0 } name ? name : "someone else";
+            ConflictText.Text = $"Workload Tracker files this Helix/Procore project under {theirs}, as {by} chose. Your choice is kept as a conflict for an admin.";
+            UseTheirsButton.Visibility = Visibility.Visible;
+            ConflictPanel.Visibility = Visibility.Visible;
+        }
+        else if (unchanged is { Outcome: WorkloadBinding.Rejected })
+        {
+            ConflictText.Text = "Workload Tracker refused this binding: your account can't see that project. Choose another, or ask an admin.";
+            UseTheirsButton.Visibility = Visibility.Collapsed;
+            ConflictPanel.Visibility = Visibility.Visible;
+        }
+        else
+        {
+            ConflictPanel.Visibility = Visibility.Collapsed;
+        }
+    }
+
+    private void ChooseBinding_Click(object sender, RoutedEventArgs e)
+    {
+        if (viewModel.WorkloadTracker is not { } sync)
+        {
+            return;
+        }
+
+        var search = chosenBinding?.Number ?? project.Connection?.ProjectName ?? NameBox.Text;
+        var window = new TrackerProjectWindow(sync, search) { Owner = this };
+        if (window.ShowDialog() == true && window.Result is not null)
+        {
+            chosenBinding = window.Result;
+            ShowBinding();
+        }
+    }
+
+    private void Unbind_Click(object sender, RoutedEventArgs e)
+    {
+        chosenBinding = null;
+        ShowBinding();
+    }
+
+    private void UseTheirs_Click(object sender, RoutedEventArgs e)
+    {
+        if (savedBinding is { TheirProjectId: { } id, TheirProjectName: { } name })
+        {
+            chosenBinding = new TrackerProjectChoice(id, savedBinding.TheirProjectNumber, name, null, null);
+            ShowBinding();
+        }
     }
 
     private void LoadCompanies()

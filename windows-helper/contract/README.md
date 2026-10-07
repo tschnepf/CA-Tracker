@@ -6,7 +6,7 @@ its serializers in `backend/ca_tracker/serializers.py` define the endpoints, and
 
 | File | What it is |
 | --- | --- |
-| `openapi.json` | The `/api/ca/` paths of Workload Tracker's schema and every component they use. `info.x-source.commit` names the tracker commit it came from. Never edit by hand. |
+| `openapi.json` | The `/api/ca/` paths of Workload Tracker's schema, the two general reads the desktop makes (`POST /api/projects/search/` to bind a project, `GET /api/assignments/` for a project's team), and every component they use. `info.x-source.commit` names the tracker commit it came from. Never edit by hand. |
 | `samples/` | Request bodies the tracker's own tests also use (`backend/ca_tracker/tests/fixtures/`). Keep the two copies identical. |
 | `../src/SmcCaTracker.Core/WorkloadTracker/Contract.g.cs` | DTOs generated from `openapi.json`. Never edit by hand. |
 
@@ -17,6 +17,9 @@ its serializers in `backend/ca_tracker/serializers.py` define the endpoints, and
 - `WorkloadTrackerContractTests` validates every sample and every observation the app builds against
   `openapi.json`, and round-trips the samples through the DTOs. Objects are checked strictly: a
   field the schema does not list fails the test.
+- Project search and team rows are large and loosely typed, so the app reads only the fields it uses
+  (`WorkloadTrackerApi.ReadProjectChoices` and `ReadTeamPage`); a test checks those fields are still in
+  the pinned schema. The pinned general operations are listed in `ContractGenerator.PinnedOperations`.
 
 ## When the tracker's endpoints change
 

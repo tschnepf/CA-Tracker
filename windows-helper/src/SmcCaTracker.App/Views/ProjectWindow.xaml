@@ -44,6 +44,27 @@
                     </StackPanel>
                 </Border>
 
+                <!-- Shown while connected to Workload Tracker (Settings → Connections). -->
+                <Border x:Name="WorkloadCard" Style="{StaticResource Card}" Margin="0,0,0,14" Visibility="Collapsed">
+                    <StackPanel>
+                        <TextBlock Text="WORKLOAD TRACKER PROJECT" Style="{StaticResource SectionTitle}" />
+                        <DockPanel>
+                            <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
+                                <Button x:Name="ChooseBindingButton" Content="C_hoose…" Click="ChooseBinding_Click" Margin="8,0,0,0" />
+                                <Button x:Name="UnbindButton" Content="Unbind" Click="Unbind_Click" Margin="8,0,0,0" />
+                            </StackPanel>
+                            <TextBlock x:Name="BindingText" VerticalAlignment="Center" TextWrapping="Wrap" />
+                        </DockPanel>
+                        <DockPanel x:Name="ConflictPanel" Margin="0,10,0,0" Visibility="Collapsed">
+                            <Button x:Name="UseTheirsButton" DockPanel.Dock="Right" Content="Use theirs" Click="UseTheirs_Click" Margin="8,0,0,0"
+                                    VerticalAlignment="Center" />
+                            <TextBlock x:Name="ConflictText" Foreground="{DynamicResource WarningBrush}" TextWrapping="Wrap" VerticalAlignment="Center" />
+                        </DockPanel>
+                        <TextBlock x:Name="BindingNote" Style="{StaticResource Muted}" Margin="0,8,0,0" FontSize="12" TextWrapping="Wrap"
+                                   Text="The project in Workload Tracker that this project's RFIs and Submittals belong to. Only existing projects that are running can be chosen; choosing one sends this project's items to it." />
+                    </StackPanel>
+                </Border>
+
                 <Border Style="{StaticResource Card}" Margin="0,0,0,14">
                     <StackPanel>
                         <TextBlock Text="BASE BUILD / TENANT FIT OUT" Style="{StaticResource SectionTitle}" />

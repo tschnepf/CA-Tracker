@@ -46,6 +46,7 @@ No Chrome extension or browser add-in is involved.
 | `accounts`, `preferences` | Sign-ins shown in Connections; settings and the last view |
 | `sync_runs` | Each Helix/Procore read: full or changes only, items, changes, errors |
 | `wt_outbox` | While connected to Workload Tracker: for each Helix/Procore project, which items changed or went away since the last send (one row per project, so it stays small). Empty when not connected |
+| `wt_assignments` | While connected: who is assigned to which item, as read back from Workload Tracker, plus changes made here not sent yet. Emptied when disconnecting |
 
 On first start, the JSON files of earlier versions (`settings.json`, `snapshots\`, `catalog.json`,
 `accounts.json`, `view.json`) are imported and moved to `imported-json\` as a backup.
@@ -61,7 +62,11 @@ On first start, the JSON files of earlier versions (`settings.json`, `snapshots\
 - **Workload Tracker (optional):** each person enters the tracker's address in Settings → Connections →
   Workload Tracker and presses **Connect…**; they sign in to the tracker in the window that opens and
   press **Connect CA Tracker** on its Profile page. CA Tracker then sends what it reads every minute
-  while it is open. See [`contract/README.md`](contract/README.md) for the contract.
+  while it is open. In **Edit project**, **Workload Tracker project → Choose…** binds a project to an
+  existing, running tracker project (its items are then filed there); after that, **Assign to…** (an
+  item's right-click or ▾ menu, or the action bar for checked items) assigns people on that project's
+  team, and **My work** lists items assigned to you first. See [`contract/README.md`](contract/README.md)
+  for the contract.
 - **Updates:** publish each new installer with its `latest.json` to the update location; every CA
   Tracker offers **Update to <version>** in the title bar and installs it quietly.
 - **Problems:** the log (Settings → Open the log folder) records timings, errors and crashes.
@@ -273,7 +278,9 @@ downloads aren't supported yet.
   in a window and receives a token that only reaches the CA Tracker endpoints, stored encrypted for your
   Windows user), **Send now** and **Disconnect…** (revokes this PC's connection). Once connected, what
   you read from Helix and Procore is sent every minute while CA Tracker is open: items of projects set
-  up in the app, counts only for the others. CA folder locations and files stay on this PC.
+  up in the app, counts only for the others. CA folder locations and files stay on this PC. A project
+  bound to a Workload Tracker project (Edit project) shows an **Assigned** column; assignments made here
+  show at once and are sent with the next send, and others' are read back every five minutes.
 
 **← Back to projects** (or **← Projects**) returns to the project list.
 

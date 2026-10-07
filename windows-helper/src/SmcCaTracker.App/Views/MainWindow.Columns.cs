@@ -40,6 +40,7 @@ public partial class MainWindow
         new ColumnFit(TitleColumn, row => row.TitleText, 220, 900),
         new ColumnFit(StatusColumn, row => row.ProviderStatus, 0, 220),
         new ColumnFit(CourtColumn, row => row.HolderText, 150, 600),
+        new ColumnFit(AssignedColumn, row => row.AssignedText, 110, 420),
         new ColumnFit(DaysInCourtColumn, row => row.DaysInCourtText, 0, 160),
         new ColumnFit(DaysTillDueColumn, row => row.DueText, 0, 260, Bold: true),
         new ColumnFit(FolderColumn, row => row.FolderName, 140, 520),

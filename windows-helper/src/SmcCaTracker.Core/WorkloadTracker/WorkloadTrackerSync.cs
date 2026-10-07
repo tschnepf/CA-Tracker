@@ -412,6 +412,16 @@ public sealed class WorkloadTrackerSync
         }
     }
 
+    /// <summary>Sends a bound entry's items again in full: what it covers changed (its link, or its part of the project).</summary>
+    public void SendAgain(string localProjectId)
+    {
+        var settings = store.Settings;
+        if (settings.WorkloadTracker.Bindings.ContainsKey(localProjectId) && settings.FindProject(localProjectId)?.Connection is { } connection)
+        {
+            store.QueueFullSets([(connection.Provider, connection.ProjectId)]);
+        }
+    }
+
     /// <summary>On a conflict, takes the binding the tracker uses (someone else's choice) for this entry.</summary>
     public bool UseTheirBinding(string localProjectId)
     {

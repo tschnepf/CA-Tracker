@@ -94,6 +94,7 @@ public partial class MainWindow : Window
                     UpdateSortArrows();
                     break;
                 case nameof(MainViewModel.PersonFilterText):
+                case nameof(MainViewModel.ShowsAssignments):
                     UpdateColumns();
                     break;
                 case nameof(MainViewModel.ShowItemDetails):
@@ -410,6 +411,11 @@ public partial class MainWindow : Window
             CourtColumn.Visibility = Visibility.Collapsed;
         }
 
+        if (!viewModel.ShowsAssignments)
+        {
+            AssignedColumn.Visibility = Visibility.Collapsed;
+        }
+
         ScheduleColumnFit();
     }
 
@@ -419,6 +425,7 @@ public partial class MainWindow : Window
         (DaysTillDueColumn, nameof(DaysTillDueColumn), "Due"),
         (StatusColumn, nameof(StatusColumn), "Item status"),
         (CourtColumn, nameof(CourtColumn), "Ball in court"),
+        (AssignedColumn, nameof(AssignedColumn), "Assigned"),
         (DaysInCourtColumn, nameof(DaysInCourtColumn), "Days in court"),
         (FolderColumn, nameof(FolderColumn), "Folder"),
         (DisciplineColumn, nameof(DisciplineColumn), "Discipline"),
@@ -548,7 +555,8 @@ public partial class MainWindow : Window
 
         if (viewModel.GroupBy is GroupModes.Urgency)
         {
-            view.GroupDescriptions.Add(new PropertyGroupDescription(nameof(RowViewModel.UrgencyText)));
+            // When it's due; in My work, "Assigned to me" comes first.
+            view.GroupDescriptions.Add(new PropertyGroupDescription(nameof(RowViewModel.Heading)));
         }
 
         if (viewModel.GroupBy is GroupModes.Project or GroupModes.ProjectAndType)
@@ -1028,6 +1036,7 @@ public partial class MainWindow : Window
         if (window.ShowDialog() == true && window.Result is not null)
         {
             viewModel.AddProject(window.Result);
+            viewModel.ApplyWorkloadBinding(window.Result.Id, window.BindingChanged, window.Binding, coverageChanged: false);
             await viewModel.CompareAsync();
         }
     }
@@ -1072,7 +1081,8 @@ public partial class MainWindow : Window
             return;
         }
 
-        var window = new ProjectWindow(viewModel.CloneProject(viewModel.SelectedProject.Project), isNew: false, viewModel) { Owner = this };
+        var before = viewModel.SelectedProject.Project;
+        var window = new ProjectWindow(viewModel.CloneProject(before), isNew: false, viewModel) { Owner = this };
         if (window.ShowDialog() != true)
         {
             return;
@@ -1085,6 +1095,7 @@ public partial class MainWindow : Window
         else if (window.Result is not null)
         {
             await viewModel.UpdateProjectAsync(window.Result);
+            viewModel.ApplyWorkloadBinding(window.Result.Id, window.BindingChanged, window.Binding, MainViewModel.CoverageChanged(before, window.Result));
         }
     }
 
