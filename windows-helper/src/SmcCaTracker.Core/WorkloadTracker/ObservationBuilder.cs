@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Text.Json;
 using SmcCaTracker.Core.Comparison;
 using SmcCaTracker.Core.Models;
 using SmcCaTracker.Core.Refresh;
@@ -20,6 +21,12 @@ public static class ObservationBuilder
     public const string SchemaVersion = "1.0";
 
     public const int MaxItemsPerPart = 500;
+
+    /// <summary>
+    /// A part is closed before its body reaches this size, whatever its item count: the tracker refuses
+    /// bodies over 8 MB, and an item with many holders can be tens of kilobytes (decisions section 8).
+    /// </summary>
+    public const int MaxPartBytes = 4 * 1024 * 1024;
 
     private static readonly IReadOnlyList<string> SentItemTypes = [CaItemTypeEnum.Rfi, CaItemTypeEnum.Submittal];
 
@@ -103,10 +110,14 @@ public static class ObservationBuilder
             .ThenBy(item => item.ItemId, StringComparer.Ordinal)
             .Select(Item)
             .ToList();
-        var itemChunks = items.Chunk(partSize).ToList();
         var removedChunks = removed.Chunk(MaxRemovedPerPart).ToList();
-        var total = Math.Max(1, Math.Max(itemChunks.Count, removedChunks.Count));
         var envelope = Envelope(snapshot, project, sender, observationId, CaObservationKindEnum.Items, account);
+
+        // What a part holds besides its items: the envelope, and at most the largest batch of removals.
+        var fixedBytes = Size(envelope with { Part = MaxPartsPerObservation, TotalParts = MaxPartsPerObservation, Bindings = bindings.ToList(), Coverage = coverage })
+            + removedChunks.Select(chunk => Size(chunk)).DefaultIfEmpty(0).Max();
+        var itemChunks = ChunkItems(items, partSize, MaxPartBytes - fixedBytes);
+        var total = Math.Max(1, Math.Max(itemChunks.Count, removedChunks.Count));
         return Enumerable.Range(0, total)
             .Select(index => envelope with
             {
@@ -121,6 +132,38 @@ public static class ObservationBuilder
     }
 
     private const int MaxRemovedPerPart = 5000;
+
+    private const int MaxPartsPerObservation = 200;
+
+    /// <summary>Consecutive items, at most <paramref name="count"/> and about <paramref name="bytes"/> per chunk (never empty).</summary>
+    private static List<List<CaItemRequest>> ChunkItems(List<CaItemRequest> items, int count, int bytes)
+    {
+        var chunks = new List<List<CaItemRequest>>();
+        var current = new List<CaItemRequest>();
+        var size = 0;
+        foreach (var item in items)
+        {
+            var itemBytes = Size(item) + 1; // and its comma
+            if (current.Count > 0 && (current.Count >= count || size + itemBytes > bytes))
+            {
+                chunks.Add(current);
+                current = new List<CaItemRequest>();
+                size = 0;
+            }
+
+            current.Add(item);
+            size += itemBytes;
+        }
+
+        if (current.Count > 0)
+        {
+            chunks.Add(current);
+        }
+
+        return chunks;
+    }
+
+    private static int Size<T>(T value) => JsonSerializer.SerializeToUtf8Bytes(value, ContractJson.Options).Length;
 
     /// <summary>The provider project as the tracker keys it: provider, host and project id.</summary>
     public static CaProviderProjectRequest ProviderProject(ProviderSnapshot snapshot, ProviderConnection? connection, string? company)

@@ -281,6 +281,38 @@ public class WorkloadTrackerContractTests
     }
 
     [Fact]
+    public void APartIsClosedBeforeFourMegabytesWhateverItsItemCount()
+    {
+        // Items as large as the contract allows: 50 holders with long names, companies and emails each.
+        var snapshot = Snapshot(rfis: 600, submittals: 0);
+        foreach (var item in snapshot.Items)
+        {
+            item.Title = new string('T', 500);
+            item.SourceUrl = $"https://app.procore.com/42/project/rfi/show/{item.ItemId}?{new string('q', 1900)}";
+            item.Holders = Enumerable.Range(0, 50).Select(n => new SnapshotHolder
+            {
+                Name = $"{n} {new string('N', 190)}",
+                Company = new string('C', 200),
+                CompanyId = new string('I', 64),
+                ProviderUserId = $"{n}-{new string('U', 60)}",
+                Email = $"{n}{new string('e', 230)}@example.com",
+                State = "current",
+                Since = snapshot.ScannedAt
+            }).ToList();
+        }
+
+        var project = ObservationBuilder.ProviderProject(snapshot, new ProviderConnection { Provider = "procore", ProjectId = "42" }, "Acme");
+        var parts = ObservationBuilder.Complete(snapshot, project, [], new ObservationSender(Guid.NewGuid(), "3.5.0"), Guid.NewGuid());
+        var bodies = parts.Select(part => JsonSerializer.SerializeToUtf8Bytes(part, ContractJson.Options)).ToList();
+
+        Assert.True(parts.Count > 2, $"{parts.Count} parts");
+        Assert.All(bodies, body => Assert.InRange(body.Length, 1, ObservationBuilder.MaxPartBytes));
+        Assert.All(parts, part => Assert.Equal(parts.Count, part.TotalParts));
+        Assert.Equal(600, parts.Sum(part => part.Items.Count));
+        Assert.Empty(PinnedSchema.Problems("CaObservationPartRequest", System.Text.Encoding.UTF8.GetString(bodies[0])));
+    }
+
+    [Fact]
     public void ItemsAreCutToTheContractAndBadHoldersAreLeftOut()
     {
         var item = new SnapshotItem
