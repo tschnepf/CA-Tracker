@@ -249,7 +249,7 @@ public partial class BrowserWindow : Window
             Status = snapshot.Complete && ItemTypes.All.All(snapshot.Covers) ? "complete" : "partial",
             ItemCount = snapshot.Items.Count
         });
-        store.RecordAccount(request.Provider, snapshot.User?.FullName, snapshot.User?.Company, now);
+        store.RecordAccount(request.Provider, snapshot.User?.FullName, snapshot.User?.Company, now, snapshot.User?.ProviderUserId, snapshot.User?.Email);
         if (root.TryGetProperty("catalog", out var catalogElement) && catalogElement.ValueKind == JsonValueKind.Object)
         {
             store.MergeCatalog(catalogElement.Deserialize<CatalogMessage>(TrackerJson.Options), now);

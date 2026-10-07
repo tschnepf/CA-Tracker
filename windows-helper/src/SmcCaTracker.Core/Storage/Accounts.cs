@@ -11,6 +11,12 @@ public sealed class ProviderAccount
     public string? UserName { get; set; }
     public string? Company { get; set; }
 
+    /// <summary>The signed-in person's id on the site (Procore user id, Helix contact id), when known.</summary>
+    public string? ProviderUserId { get; set; }
+
+    /// <summary>The signed-in person's email on the site, when known.</summary>
+    public string? Email { get; set; }
+
     /// <summary>The last background read found the sign-in expired (Connect again to fix it).</summary>
     public bool NeedsSignIn { get; set; }
 }

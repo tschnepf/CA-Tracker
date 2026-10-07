@@ -130,14 +130,22 @@ public static class ProcoreItems
             return holders;
         }
 
-        void AddName(string? name, string? company, string? companyId)
+        void AddName(string? name, string? company, string? companyId, string? userId = null, string? email = null)
         {
             if (string.IsNullOrWhiteSpace(name) || holders.Any(holder => string.Equals(holder.Name, name.Trim(), StringComparison.OrdinalIgnoreCase)))
             {
                 return;
             }
 
-            holders.Add(new SnapshotHolder { Name = name.Trim(), Company = company, CompanyId = companyId, State = "current" });
+            holders.Add(new SnapshotHolder
+            {
+                Name = name.Trim(),
+                Company = company,
+                CompanyId = companyId,
+                State = "current",
+                ProviderUserId = userId,
+                Email = email
+            });
         }
 
         void AddPerson(JsonElement person)
@@ -154,7 +162,14 @@ public static class ProcoreItems
             }
 
             var companyId = TryGet(person, out var vendor, "vendor", "company") && vendor.ValueKind == JsonValueKind.Object ? Id(vendor) : null;
-            AddName(Text(person, "name", "full_name", "login"), Name(person, "vendor", "company") ?? Text(person, "company_name"), companyId);
+            // Procore's login is the person's email address; the user id is the same on every project.
+            var login = Text(person, "login");
+            AddName(
+                Text(person, "name", "full_name", "login"),
+                Name(person, "vendor", "company") ?? Text(person, "company_name"),
+                companyId,
+                Id(person),
+                login is not null && login.Contains('@') ? login : null);
         }
 
         switch (value.ValueKind)

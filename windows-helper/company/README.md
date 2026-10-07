@@ -11,7 +11,6 @@ building the installer; `build.ps1 -Installer` ships it next to the app. It can 
 | `disciplines` | The disciplines offered and detected in folder names (`code`, `label`, `folderToken` as written in folder names, other `aliases`) |
 | `syncIntervalMinutes` | How often tracked Helix projects and Procore projects sync in the background |
 | `updateFeed` | Folder or https address holding `latest.json` and the installers (see below); plain `http://` is refused |
-| `centralServer` | The company's CA Tracker server, when there is one |
 | `locked` | Settings people can't change in the app: `folders`, `disciplines`, `sync` |
 
 ## Publishing an update

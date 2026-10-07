@@ -1,11 +1,11 @@
 using Microsoft.Data.Sqlite;
-using SmcCaTracker.Core.Central;
 using SmcCaTracker.Core.Comparison;
 using SmcCaTracker.Core.Data;
 using SmcCaTracker.Core.Matching;
 using SmcCaTracker.Core.Models;
 using SmcCaTracker.Core.Refresh;
 using SmcCaTracker.Core.Storage;
+using SmcCaTracker.Core.WorkloadTracker;
 using SmcCaTracker.Data;
 
 namespace SmcCaTracker.Core.Tests;
@@ -69,17 +69,6 @@ public class DatabaseTests
             new SnapshotHolder { Name = holder, Company = "SMC", State = "current", Since = new DateTimeOffset(2026, 9, 20, 0, 0, 0, TimeSpan.Zero) }
         }
     };
-
-    private static long ChangeCount(string databaseFile, string entity, string operation)
-    {
-        using var connection = new SqliteConnection($"Data Source={databaseFile};Pooling=False");
-        connection.Open();
-        using var command = connection.CreateCommand();
-        command.CommandText = "SELECT COUNT(*) FROM change_log WHERE entity = $entity AND operation = $operation;";
-        command.Parameters.AddWithValue("$entity", entity);
-        command.Parameters.AddWithValue("$operation", operation);
-        return (long)command.ExecuteScalar()!;
-    }
 
     [Fact]
     public void EverythingSavedComesBackAfterReopening()
@@ -160,9 +149,6 @@ public class DatabaseTests
             Assert.Equal("all", state.View.Filter);
             Assert.Equal("changes", Assert.Single(state.RecentSyncRuns).Mode);
         }
-
-        Assert.Equal(1, ChangeCount(file, "project", "insert"));
-        Assert.Equal(2, ChangeCount(file, "item", "insert"));
     }
 
     [Fact]
@@ -174,17 +160,25 @@ public class DatabaseTests
         {
         }
 
-        // Make it look like a version 1 database: no revision column.
+        // Make it look like a version 1 database: no revision column, none of version 3's additions, a change log.
         using (var connection = new SqliteConnection($"Data Source={file};Pooling=False"))
         {
             connection.Open();
             using var command = connection.CreateCommand();
-            command.CommandText = "ALTER TABLE items DROP COLUMN revision; UPDATE schema_info SET meta_value = '1' WHERE meta_key = 'schema_version';";
+            command.CommandText =
+                "ALTER TABLE items DROP COLUMN revision; " +
+                "ALTER TABLE item_holders DROP COLUMN provider_user_id; ALTER TABLE item_holders DROP COLUMN email; " +
+                "ALTER TABLE provider_snapshots DROP COLUMN user_provider_id; ALTER TABLE provider_snapshots DROP COLUMN user_email; " +
+                "ALTER TABLE accounts DROP COLUMN provider_user_id; ALTER TABLE accounts DROP COLUMN email; DROP TABLE wt_outbox; " +
+                "CREATE TABLE change_log (seq INTEGER PRIMARY KEY AUTOINCREMENT, entity TEXT NOT NULL); " +
+                "INSERT INTO preferences (pref_key, pref_value, updated_at) VALUES ('central', '{}', '2026-01-01'); " +
+                "UPDATE schema_info SET meta_value = '1' WHERE meta_key = 'schema_version';";
             command.ExecuteNonQuery();
         }
 
         var revised = Item("a", "S-1");
         revised.Revision = "3";
+        revised.Holders[0].ProviderUserId = "contact-7";
         using (var database = new SqlitePersistence(file))
         {
             database.SaveSnapshot(SampleSnapshot(revised));
@@ -192,12 +186,77 @@ public class DatabaseTests
 
         using (var database = new SqlitePersistence(file))
         {
-            Assert.Equal("3", Assert.Single(Assert.Single(database.Load().Snapshots).Items).Revision);
+            var item = Assert.Single(Assert.Single(database.Load().Snapshots).Items);
+            Assert.Equal("3", item.Revision);
+            Assert.Equal("contact-7", item.Holders[0].ProviderUserId);
+        }
+
+        // Version 3 retired the company server's change log and settings.
+        using (var connection = new SqliteConnection($"Data Source={file};Pooling=False"))
+        {
+            connection.Open();
+            using var command = connection.CreateCommand();
+            command.CommandText = "SELECT (SELECT COUNT(*) FROM sqlite_master WHERE name = 'change_log') + (SELECT COUNT(*) FROM preferences WHERE pref_key = 'central');";
+            Assert.Equal(0L, (long)command.ExecuteScalar()!);
         }
     }
 
     [Fact]
-    public void ItemChangesAndRemovalsAreLoggedButUnchangedItemsAreNot()
+    public void ProviderIdentitiesAndTheOutboxComeBackAfterReopening()
+    {
+        using var temp = new TempFolder();
+        var file = Path.Combine(temp.Root, "tracker.db");
+        var snapshot = SampleSnapshot(Item("a", "RFI-001"));
+        snapshot.User.ProviderUserId = "contact-1";
+        snapshot.User.Email = "me@smc.example";
+        snapshot.Items[0].Holders[0].ProviderUserId = "contact-2";
+        snapshot.Items[0].Holders[0].Email = "them@vendor.example";
+        var entry = new OutboxEntry
+        {
+            Provider = "helix",
+            ProjectId = snapshot.ProjectId,
+            Account = "tracker.example#7",
+            FullSet = false,
+            Changed = { "rfi|a" },
+            Removed = { "rfi|gone" },
+            Verified = { "rfi" },
+            Version = 4,
+            UpdatedAt = new DateTimeOffset(2026, 10, 7, 12, 0, 0, TimeSpan.Zero),
+            Attempts = 2,
+            NextAttemptAt = new DateTimeOffset(2026, 10, 7, 12, 5, 0, TimeSpan.Zero),
+            LastError = "HTTP 503"
+        };
+        using (var database = new SqlitePersistence(file))
+        {
+            database.SaveSnapshot(snapshot);
+            database.SaveAccounts([new ProviderAccount { Provider = "procore", UserName = "Me", ProviderUserId = "991", Email = "me@smc.example" }]);
+            database.SaveOutboxEntry(entry);
+            database.SaveOutboxEntry(new OutboxEntry { Provider = "procore", ProjectId = "2", Account = "x", UpdatedAt = DateTimeOffset.Now });
+            database.DeleteOutboxEntry("procore", "2");
+        }
+
+        using (var database = new SqlitePersistence(file))
+        {
+            var state = database.Load();
+            var loaded = Assert.Single(state.Snapshots);
+            Assert.Equal(("contact-1", "me@smc.example"), (loaded.User.ProviderUserId, loaded.User.Email));
+            Assert.Equal(("contact-2", "them@vendor.example"), (loaded.Items[0].Holders[0].ProviderUserId, loaded.Items[0].Holders[0].Email));
+            var account = Assert.Single(state.Accounts);
+            Assert.Equal(("991", "me@smc.example"), (account.ProviderUserId, account.Email));
+            var back = Assert.Single(state.Outbox);
+            Assert.Equal(["rfi|a"], back.Changed);
+            Assert.Equal(["rfi|gone"], back.Removed);
+            Assert.Equal(["rfi"], back.Verified);
+            Assert.Equal((4L, 2, "HTTP 503"), (back.Version, back.Attempts, back.LastError));
+            Assert.Equal(entry.NextAttemptAt, back.NextAttemptAt);
+
+            database.ClearOutbox();
+            Assert.Empty(database.Load().Outbox);
+        }
+    }
+
+    [Fact]
+    public void ItemChangesAndRemovalsAreSaved()
     {
         using var temp = new TempFolder();
         var file = Path.Combine(temp.Root, "tracker.db");
@@ -212,97 +271,22 @@ public class DatabaseTests
             Assert.Equal(new[] { "a", "c" }, items.Select(item => item.ItemId).OrderBy(id => id));
             Assert.Equal("Other Person", items.Single(item => item.ItemId == "a").Holders[0].Name);
         }
-
-        Assert.Equal(3, ChangeCount(file, "item", "insert"));
-        Assert.Equal(1, ChangeCount(file, "item", "update"));
-        Assert.Equal(1, ChangeCount(file, "item", "delete"));
     }
 
     [Fact]
-    public void AnItemReadBackFromTheDatabaseIsNotLoggedAgain()
-    {
-        using var temp = new TempFolder();
-        var file = Path.Combine(temp.Root, "tracker.db");
-        // Helix gives local times (-07:00); the database keeps them in UTC.
-        var item = Item("a", "RFI-001");
-        item.CreatedAt = new DateTimeOffset(2026, 9, 1, 8, 30, 0, TimeSpan.FromHours(-7));
-        item.DueAt = new DateTimeOffset(2026, 10, 3, 17, 0, 0, TimeSpan.FromHours(-7));
-        item.Holders[0].Since = new DateTimeOffset(2026, 9, 20, 9, 0, 0, TimeSpan.FromHours(-7));
-        using (var database = new SqlitePersistence(file))
-        {
-            database.SaveSnapshot(SampleSnapshot(item));
-        }
-
-        using (var database = new SqlitePersistence(file))
-        {
-            database.SaveSnapshot(Assert.Single(database.Load().Snapshots));
-        }
-
-        Assert.Equal(1, ChangeCount(file, "item", "insert"));
-        Assert.Equal(0, ChangeCount(file, "item", "update"));
-    }
-
-    [Fact]
-    public void WaitingChangesAreTrimmedWhileNothingIsShared()
-    {
-        using var temp = new TempFolder();
-        using var database = new SqlitePersistence(Path.Combine(temp.Root, "tracker.db"));
-        database.SaveSnapshot(SampleSnapshot(Item("a", "RFI-001"), Item("b", "RFI-002")));
-        database.SaveSnapshot(SampleSnapshot(Item("a", "RFI-001", "Other Person"), Item("b", "RFI-002")));
-
-        // Never shared: nothing waiting is needed (the first share sends everything as it is then).
-        database.PruneChangeLog(sharing: false);
-        Assert.Empty(database.PendingChanges(100));
-
-        // Shared before but not connected now: only the newest change of each item is kept.
-        database.SetMeta(CentralSync.ServerKey, "https://ca.example.com");
-        database.SaveSnapshot(SampleSnapshot(Item("a", "RFI-001"), Item("b", "RFI-002")));
-        database.SaveSnapshot(SampleSnapshot(Item("a", "RFI-001", "Third Person"), Item("b", "RFI-002")));
-        database.SaveSnapshot(SampleSnapshot(Item("a", "RFI-001", "Third Person")));
-        database.PruneChangeLog(sharing: false);
-        var waiting = database.PendingChanges(100);
-        Assert.Equal(2, waiting.Count);
-        Assert.Contains("Third Person", Assert.Single(waiting, change => change.Key.EndsWith("|a")).Payload);
-        Assert.Equal("delete", Assert.Single(waiting, change => change.Key.EndsWith("|b")).Operation);
-
-        // Connected: changes are sent as they are, so nothing is trimmed.
-        database.SaveSnapshot(SampleSnapshot(Item("a", "RFI-001", "Fourth Person")));
-        database.PruneChangeLog(sharing: true);
-        Assert.Equal(3, database.PendingChanges(100).Count);
-    }
-
-    [Fact]
-    public void SendingEverythingKeepsRemovalsThatWereWaiting()
-    {
-        using var temp = new TempFolder();
-        using var database = new SqlitePersistence(Path.Combine(temp.Root, "tracker.db"));
-        database.SaveSnapshot(SampleSnapshot(Item("a", "RFI-001"), Item("b", "RFI-002")));
-        database.SaveSnapshot(SampleSnapshot(Item("a", "RFI-001")));
-
-        database.QueueEverything();
-        var waiting = database.PendingChanges(100);
-        Assert.Equal("update", Assert.Single(waiting, change => change.Key.EndsWith("|a")).Operation);
-        Assert.Equal("delete", Assert.Single(waiting, change => change.Key.EndsWith("|b")).Operation);
-    }
-
-    [Fact]
-    public void RemovedProjectsAreMarkedDeletedAndLogged()
+    public void RemovedProjectsAreMarkedDeleted()
     {
         using var temp = new TempFolder();
         var file = Path.Combine(temp.Root, "tracker.db");
         using (var database = new SqlitePersistence(file))
         {
             database.SaveSettings(SampleSettings());
-            database.SaveSettings(SampleSettings()); // unchanged: no new log entry
+            database.SaveSettings(SampleSettings());
             var empty = SampleSettings();
             empty.Projects.Clear();
             database.SaveSettings(empty);
             Assert.Empty(database.Load().Settings.Projects);
         }
-
-        Assert.Equal(1, ChangeCount(file, "project", "insert"));
-        Assert.Equal(0, ChangeCount(file, "project", "update"));
-        Assert.Equal(1, ChangeCount(file, "project", "delete"));
     }
 
     [Fact]

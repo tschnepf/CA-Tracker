@@ -121,7 +121,10 @@
         companyId: person.companyId ? text(person.companyId, 80) : null,
         company: person.company ? text(person.company, 160) : null,
         state: state.code === "current" ? "current" : "upcoming",
-        since: null
+        since: null,
+        // The contact id is the same person on every project; Helix items carry no email.
+        providerUserId: person.contactId ? text(person.contactId, 80) : null,
+        email: person.email ? text(person.email, 254) : null
       };
       const key = `${holder.name.toLocaleLowerCase()}|${holder.companyId || ""}`;
       if (seen.has(key)) continue;
@@ -221,7 +224,9 @@
       user: {
         fullName: text(user.fullName, 160),
         companyId: user.companyId ? text(user.companyId, 80) : null,
-        company: user.company ? text(user.company, 160) : null
+        company: user.company ? text(user.company, 160) : null,
+        providerUserId: user.contactId ? text(user.contactId, 80) : null,
+        email: user.email ? text(user.email, 254) : null
       },
       items
     };

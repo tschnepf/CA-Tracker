@@ -1,10 +1,13 @@
 using System.Collections.Concurrent;
+using System.Globalization;
+using System.Text;
 using System.Text.Json;
 using SmcCaTracker.Core.Diagnostics;
 using SmcCaTracker.Core.Matching;
 using SmcCaTracker.Core.Models;
 using SmcCaTracker.Core.Refresh;
 using SmcCaTracker.Core.Storage;
+using SmcCaTracker.Core.WorkloadTracker;
 
 namespace SmcCaTracker.Core.Data;
 
@@ -25,6 +28,7 @@ public sealed class TrackerStore : IDisposable
     private readonly Dictionary<string, ProviderSnapshot> snapshots = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, TypeFolderScan> folderScans = new(StringComparer.OrdinalIgnoreCase);
     private readonly List<SyncRun> recentRuns = new();
+    private readonly Dictionary<string, OutboxEntry> outbox = new(StringComparer.OrdinalIgnoreCase);
     private TrackerSettings settings;
     private List<CatalogProject> catalog;
     private List<ProviderAccount> accounts;
@@ -55,7 +59,12 @@ public sealed class TrackerStore : IDisposable
         accounts = state.Accounts ?? new List<ProviderAccount>();
         view = state.View ?? new ViewState();
         recentRuns.AddRange(state.RecentSyncRuns ?? new List<SyncRun>());
-        AppLog.Info("store", $"Loaded {settings.Projects.Count} projects, {snapshots.Count} item lists " +
+        foreach (var entry in state.Outbox ?? new List<OutboxEntry>())
+        {
+            outbox[SnapshotKey(entry.Provider, entry.ProjectId)] = entry;
+        }
+
+        AppLog.Info("store",$"Loaded {settings.Projects.Count} projects, {snapshots.Count} item lists " +
             $"({snapshots.Values.Sum(snapshot => snapshot.Items.Count)} items), {folderScans.Count} folder indexes.");
 
         writer = new Thread(RunWriter) { IsBackground = true, Name = "CA Tracker database" };
@@ -93,12 +102,7 @@ public sealed class TrackerStore : IDisposable
     public TrackerSettings SettingsCopy() => Clone(Settings);
 
     /// <summary>Replaces the settings (projects included) and saves them in the background.</summary>
-    public void SaveSettings(TrackerSettings updated) => ReplaceSettings(updated, fromServer: false);
-
-    /// <summary>Like <see cref="SaveSettings"/>, for changes received from the central server (not sent back).</summary>
-    public void SaveSettingsFromServer(TrackerSettings updated) => ReplaceSettings(updated, fromServer: true);
-
-    private void ReplaceSettings(TrackerSettings updated, bool fromServer)
+    public void SaveSettings(TrackerSettings updated)
     {
         SettingsStore.Normalize(updated);
         var copy = Clone(updated);
@@ -108,14 +112,7 @@ public sealed class TrackerStore : IDisposable
 
             // Queued while holding the lock (here and below), so the database gets saves in the order
             // memory changed, whichever thread made them.
-            if (fromServer)
-            {
-                Enqueue(target => target.RunFromServer(() => target.SaveSettings(copy)));
-            }
-            else
-            {
-                Enqueue(target => target.SaveSettings(copy));
-            }
+            Enqueue(target => target.SaveSettings(copy));
         }
 
         Raise(new StoreChange { Kind = StoreChangeKind.Settings });
@@ -153,6 +150,7 @@ public sealed class TrackerStore : IDisposable
             merged = SnapshotStore.Merge(existing, incoming);
             snapshots[SnapshotKey(merged.Provider, merged.ProjectId)] = merged;
             Enqueue(target => target.SaveSnapshot(merged));
+            RecordOutbox(existing, merged);
         }
 
         Raise(new StoreChange { Kind = StoreChangeKind.Snapshot, Provider = merged.Provider, ProviderProjectId = merged.ProjectId });
@@ -193,6 +191,7 @@ public sealed class TrackerStore : IDisposable
             };
             snapshots[SnapshotKey(provider, projectId)] = touched;
             Enqueue(target => target.SaveSnapshot(touched));
+            RecordOutbox(existing, touched);
         }
 
         Raise(new StoreChange
@@ -205,10 +204,10 @@ public sealed class TrackerStore : IDisposable
     }
 
     /// <summary>
-    /// Adds, replaces or removes items received from the company's central server (another person's
-    /// sync), without touching the rest of the project's items. When the project or an item type hasn't
-    /// been read here, its "read at" time is <paramref name="asOf"/> (when the other person read it); the
-    /// times of reads made here are left as they are. Not sent back to the server.
+    /// Adds, replaces or removes items read back from a server (another person's sync), without
+    /// touching the rest of the project's items. When the project or an item type hasn't been read
+    /// here, its "read at" time is <paramref name="asOf"/> (when the other person read it); the times of
+    /// reads made here are left as they are. Not sent back: the outbox only records this PC's scans.
     /// </summary>
     public void ApplyRemoteItems(
         string provider,
@@ -278,10 +277,227 @@ public sealed class TrackerStore : IDisposable
                 Coverage = coverage
             };
             snapshots[SnapshotKey(provider, projectId)] = updated;
-            Enqueue(target => target.RunFromServer(() => target.SaveSnapshot(updated)));
+            Enqueue(target => target.SaveSnapshot(updated));
         }
 
         Raise(new StoreChange { Kind = StoreChangeKind.Snapshot, Provider = updated.Provider, ProviderProjectId = projectId });
+    }
+
+    // ---- Workload Tracker outbox ----------------------------------------------------------
+
+    /// <summary>What waits to be sent to Workload Tracker, as copies.</summary>
+    public IReadOnlyList<OutboxEntry> Outbox()
+    {
+        lock (gate)
+        {
+            return outbox.Values.Select(entry => entry.Copy()).ToList();
+        }
+    }
+
+    /// <summary>
+    /// A project's entry was sent. It goes away unless a scan merged into it meanwhile; then it stays
+    /// for the next send (sending an item twice is harmless: the latest scan wins).
+    /// </summary>
+    public void CompleteOutbox(string provider, string projectId, long version)
+    {
+        var key = SnapshotKey(provider, projectId);
+        lock (gate)
+        {
+            if (!outbox.TryGetValue(key, out var entry))
+            {
+                return;
+            }
+
+            if (entry.Version == version)
+            {
+                outbox.Remove(key);
+                Enqueue(target => target.DeleteOutboxEntry(provider, projectId));
+                return;
+            }
+
+            entry.Attempts = 0;
+            entry.NextAttemptAt = null;
+            entry.LastError = null;
+            var copy = entry.Copy();
+            Enqueue(target => target.SaveOutboxEntry(copy));
+        }
+    }
+
+    /// <summary>A send failed: try this project again at <paramref name="next"/>.</summary>
+    public void DeferOutbox(string provider, string projectId, DateTimeOffset next, string error)
+    {
+        lock (gate)
+        {
+            if (!outbox.TryGetValue(SnapshotKey(provider, projectId), out var entry))
+            {
+                return;
+            }
+
+            entry.Attempts++;
+            entry.NextAttemptAt = next;
+            entry.LastError = error;
+            var copy = entry.Copy();
+            Enqueue(target => target.SaveOutboxEntry(copy));
+        }
+    }
+
+    /// <summary>
+    /// Queues every item of every project (or of the given ones) to be sent as a full set: pairing, a
+    /// resendAll from the tracker, or a part the tracker refused as inconsistent. Only while paired.
+    /// </summary>
+    public void QueueFullSets(IEnumerable<(string Provider, string ProjectId)>? only = null)
+    {
+        lock (gate)
+        {
+            var sync = settings.WorkloadTracker;
+            if (!sync.IsPaired)
+            {
+                return;
+            }
+
+            var keys = only?.Select(project => SnapshotKey(project.Provider, project.ProjectId)).ToList() ?? snapshots.Keys.ToList();
+            foreach (var key in keys)
+            {
+                if (!snapshots.TryGetValue(key, out var snapshot))
+                {
+                    continue;
+                }
+
+                var entry = EntryFor(snapshot, sync.Account, firstSeen: true);
+                entry.FullSet = true;
+                entry.Changed.Clear();
+                entry.Attempts = 0;
+                entry.NextAttemptAt = null;
+                entry.Version++;
+                entry.UpdatedAt = DateTimeOffset.Now;
+                var copy = entry.Copy();
+                Enqueue(target => target.SaveOutboxEntry(copy));
+            }
+        }
+    }
+
+    /// <summary>Empties the outbox (unpaired: nothing is sent, so nothing is kept).</summary>
+    public void ClearOutbox()
+    {
+        lock (gate)
+        {
+            outbox.Clear();
+            Enqueue(target => target.ClearOutbox());
+        }
+    }
+
+    /// <summary>
+    /// Merges what a scan changed into the project's outbox entry (under the lock). Only while paired:
+    /// unpaired, the app keeps everything to itself as it always has.
+    /// </summary>
+    private void RecordOutbox(ProviderSnapshot? before, ProviderSnapshot after)
+    {
+        var sync = settings.WorkloadTracker;
+        if (!sync.IsPaired)
+        {
+            return;
+        }
+
+        var entry = EntryFor(after, sync.Account, firstSeen: before is null);
+        var previous = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach (var item in before?.Items ?? new List<SnapshotItem>())
+        {
+            previous.TryAdd(OutboxEntry.ItemKey(item.ItemType, item.ItemId), Fingerprint(item));
+        }
+
+        var current = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var item in after.Items)
+        {
+            var key = OutboxEntry.ItemKey(item.ItemType, item.ItemId);
+            if (!current.Add(key) || (previous.TryGetValue(key, out var print) && print == Fingerprint(item)))
+            {
+                continue;
+            }
+
+            entry.Removed.Remove(key);
+            if (!entry.FullSet)
+            {
+                entry.Changed.Add(key);
+            }
+        }
+
+        foreach (var key in previous.Keys.Where(key => !current.Contains(key)))
+        {
+            // The merge only drops items a scan found gone, so their type's presence was verified.
+            entry.Changed.Remove(key);
+            entry.Removed.Add(key);
+            entry.Verified.Add(OutboxEntry.SplitKey(key).ItemType);
+        }
+
+        foreach (var (itemType, coverage) in after.Coverage)
+        {
+            if (coverage.Complete)
+            {
+                entry.Verified.Add(itemType);
+            }
+        }
+
+        if (entry.Changed.Count > OutboxEntry.CollapseThreshold)
+        {
+            entry.FullSet = true;
+            entry.Changed.Clear();
+        }
+
+        entry.Version++;
+        entry.UpdatedAt = DateTimeOffset.Now;
+        var copy = entry.Copy();
+        Enqueue(target => target.SaveOutboxEntry(copy));
+    }
+
+    /// <summary>The project's entry for this account; a new one sends everything when the project is new or the account changed.</summary>
+    private OutboxEntry EntryFor(ProviderSnapshot snapshot, string account, bool firstSeen)
+    {
+        var key = SnapshotKey(snapshot.Provider, snapshot.ProjectId);
+        if (outbox.TryGetValue(key, out var entry) && string.Equals(entry.Account, account, StringComparison.Ordinal))
+        {
+            return entry;
+        }
+
+        // Changes recorded for another account are not sent under this one: everything goes again instead.
+        entry = new OutboxEntry
+        {
+            Provider = snapshot.Provider.ToLowerInvariant(),
+            ProjectId = snapshot.ProjectId,
+            Account = account,
+            FullSet = firstSeen || entry is not null
+        };
+        outbox[key] = entry;
+        return entry;
+    }
+
+    /// <summary>The fields Workload Tracker receives, dates in UTC: other changes don't need sending.</summary>
+    private static string Fingerprint(SnapshotItem item)
+    {
+        var text = new StringBuilder();
+        void Add(string? value) => text.Append(value ?? "").Append('\u001f');
+        static string? When(DateTimeOffset? value) => value?.ToUniversalTime().ToString("O", CultureInfo.InvariantCulture);
+
+        Add(item.Number);
+        Add(item.Revision);
+        Add(item.Title);
+        Add(item.Status);
+        Add(item.Closed ? "1" : "0");
+        Add(item.Contract);
+        Add(When(item.DueAt));
+        Add(When(item.CreatedAt));
+        Add(item.SourceUrl);
+        foreach (var holder in item.Holders)
+        {
+            Add(holder.Name);
+            Add(holder.Company);
+            Add(holder.CompanyId);
+            Add(holder.State);
+            Add(When(holder.Since));
+            Add(holder.ProviderUserId);
+            Add(holder.Email);
+        }
+
+        return text.ToString();
     }
 
     // ---- CA folder index ------------------------------------------------------------------
@@ -402,8 +618,8 @@ public sealed class TrackerStore : IDisposable
         }
     }
 
-    /// <summary>Records a sign-in. A missing name or company keeps the one seen before.</summary>
-    public void RecordAccount(string provider, string? userName, string? company, DateTimeOffset now)
+    /// <summary>Records a sign-in. A missing name, company, id or email keeps the one seen before.</summary>
+    public void RecordAccount(string provider, string? userName, string? company, DateTimeOffset now, string? providerUserId = null, string? email = null)
     {
         if (!Providers.All.Contains(provider, StringComparer.OrdinalIgnoreCase))
         {
@@ -422,6 +638,8 @@ public sealed class TrackerStore : IDisposable
                 SignedInAt = now,
                 UserName = string.IsNullOrWhiteSpace(userName) ? previous?.UserName : userName.Trim(),
                 Company = string.IsNullOrWhiteSpace(company) ? previous?.Company : company.Trim(),
+                ProviderUserId = string.IsNullOrWhiteSpace(providerUserId) ? previous?.ProviderUserId : providerUserId.Trim(),
+                Email = string.IsNullOrWhiteSpace(email) ? previous?.Email : email.Trim(),
                 NeedsSignIn = false
             });
             accounts = updated;
@@ -450,6 +668,8 @@ public sealed class TrackerStore : IDisposable
                 SignedInAt = previous.SignedInAt,
                 UserName = previous.UserName,
                 Company = previous.Company,
+                ProviderUserId = previous.ProviderUserId,
+                Email = previous.Email,
                 NeedsSignIn = true
             });
             accounts = updated;
@@ -524,17 +744,8 @@ public sealed class TrackerStore : IDisposable
             }
 
             Enqueue(target => target.RecordSyncRun(run));
-            if (DateTimeOffset.Now - lastPrune >= TimeSpan.FromHours(1))
-            {
-                // No access token, nothing is sent: keep the change log from growing (once an hour at most).
-                lastPrune = DateTimeOffset.Now;
-                var sharing = !string.IsNullOrEmpty(settings.Central.TokenProtected);
-                Enqueue(target => target.PruneChangeLog(sharing));
-            }
         }
     }
-
-    private DateTimeOffset lastPrune = DateTimeOffset.MinValue;
 
     /// <summary>The latest finished sync of one Helix/Procore project (or the latest that read everything it meant to).</summary>
     public SyncRun? LastSyncRun(string provider, string projectId, bool completeOnly = false)

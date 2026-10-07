@@ -20,16 +20,15 @@ No Chrome extension or other browser add-in is needed.
 |---|---|
 | `windows-helper/src/SmcCaTracker.App` | The WPF app (built-in browser, windows, view models) |
 | `windows-helper/src/SmcCaTracker.App/Scripts` | Read-only scan scripts the built-in browser runs inside Helix and Procore pages |
-| `windows-helper/src/SmcCaTracker.Core` | Folder matching, comparison, returned rule, previews and folder moves, settings, Procore item parsing, sharing with the company server |
-| `windows-helper/src/SmcCaTracker.Data` | The app's SQLite database (`tracker.db`) and its change log |
+| `windows-helper/src/SmcCaTracker.Core` | Folder matching, comparison, returned rule, previews and folder moves, settings, Procore item parsing, sending to Workload Tracker |
+| `windows-helper/src/SmcCaTracker.Data` | The app's SQLite database (`tracker.db`), including the Workload Tracker outbox |
 | `windows-helper/tests` | .NET tests, and Node tests for the scan scripts |
 | `windows-helper/installer`, `windows-helper/company` | The installer and the company settings file |
-| `central` | The optional company server: protocol, PostgreSQL schema, reference server and its tests |
+| `windows-helper/contract`, `windows-helper/tools` | The pinned Workload Tracker schema, sample bodies and the tool that generates the DTOs from it |
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File windows-helper\build.ps1   # test and build into windows-helper\dist
 npm test                                                            # scan-script tests (Node 22+)
-python -m unittest discover central -p "test_*.py"                  # company server tests (Python 3.8+)
 ```
 
 See [`windows-helper/README.md`](windows-helper/README.md) for setup and how everything works.
@@ -41,8 +40,9 @@ using the same requests those pages make, so it sees only what you can see. For 
 listing the companies you belong to and their projects, so projects hosted by other companies are
 found without anything being installed in their Procore accounts. It stores item numbers, titles, statuses, dates and who
 currently holds each item in `%LOCALAPPDATA%\SMC-CA-Tracker` on your PC. It never reads files,
-comments or passwords. It sends nothing to any other server unless your company sets up its own
-CA Tracker server (`central/`) and you enter your access token: it then shares your projects
-(including their CA folder location) and the items you read with that server only. Your Helix/Procore sign-in is kept in
+comments or passwords. It sends nothing to any other server unless you connect it to your company's
+Workload Tracker (Settings → Connections): it then sends that tracker the items it reads (numbers,
+titles, statuses, due dates and who holds each item; never files, attachments or comments), and only
+counts for projects you haven't set up in the app. Your Helix/Procore sign-in is kept in
 the browser window's profile folder, `%LOCALAPPDATA%\SMC-CA-Tracker\browser`; **Settings → Sign out
 of the built-in browser** deletes it.

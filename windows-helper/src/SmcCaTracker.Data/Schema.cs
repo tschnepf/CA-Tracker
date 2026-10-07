@@ -7,7 +7,7 @@ namespace SmcCaTracker.Data;
 /// </summary>
 internal static class Schema
 {
-    public const int CurrentVersion = 2;
+    public const int CurrentVersion = 3;
 
     private static readonly string[][] Versions =
     {
@@ -220,6 +220,39 @@ internal static class Schema
         new[]
         {
             "ALTER TABLE items ADD COLUMN revision TEXT NULL;"
+        },
+
+        // Version 3: Workload Tracker. People's provider ids and emails; the outbox of what scans changed,
+        // one row per provider project (merged, so it stays small); the retired company server's change log goes.
+        new[]
+        {
+            "ALTER TABLE item_holders ADD COLUMN provider_user_id TEXT NULL;",
+            "ALTER TABLE item_holders ADD COLUMN email TEXT NULL;",
+            "ALTER TABLE provider_snapshots ADD COLUMN user_provider_id TEXT NULL;",
+            "ALTER TABLE provider_snapshots ADD COLUMN user_email TEXT NULL;",
+            "ALTER TABLE accounts ADD COLUMN provider_user_id TEXT NULL;",
+            "ALTER TABLE accounts ADD COLUMN email TEXT NULL;",
+            """
+            CREATE TABLE IF NOT EXISTS wt_outbox (
+                provider TEXT NOT NULL,
+                project_id TEXT NOT NULL,
+                account TEXT NOT NULL,
+                full_set INTEGER NOT NULL,
+                changed TEXT NOT NULL,
+                removed TEXT NOT NULL,
+                verified TEXT NOT NULL,
+                version BIGINT NOT NULL,
+                updated_at TEXT NOT NULL,
+                attempts INTEGER NOT NULL,
+                next_attempt_at TEXT NULL,
+                last_error TEXT NULL,
+                PRIMARY KEY (provider, project_id)
+            );
+            """,
+            "DROP INDEX IF EXISTS change_log_unsynced;",
+            "DROP TABLE IF EXISTS change_log;",
+            "DELETE FROM preferences WHERE pref_key = 'central';",
+            "DELETE FROM schema_info WHERE meta_key IN ('central_cursor', 'central_client_id', 'central_server', 'central_send_everything');"
         }
     };
 

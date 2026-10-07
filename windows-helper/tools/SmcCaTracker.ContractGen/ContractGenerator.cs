@@ -13,7 +13,12 @@ namespace SmcCaTracker.ContractGen;
 public static class ContractGenerator
 {
     /// <summary>Path prefixes of the tracker endpoints the desktop calls. Add the existing reads when a slice starts using them.</summary>
-    public static readonly IReadOnlyList<string> PinnedPathPrefixes = ["/api/ca/"];
+    public static readonly IReadOnlyList<string> PinnedPathPrefixes =
+    [
+        "/api/ca/",
+        "/api/auth/me/",
+        "/api/auth/sessions/{session_id}/revoke/"
+    ];
 
     public const string Namespace = "SmcCaTracker.Core.WorkloadTracker.Contract";
 

@@ -3,6 +3,7 @@ using SmcCaTracker.Core.Matching;
 using SmcCaTracker.Core.Models;
 using SmcCaTracker.Core.Refresh;
 using SmcCaTracker.Core.Storage;
+using SmcCaTracker.Core.WorkloadTracker;
 
 namespace SmcCaTracker.Core.Data;
 
@@ -42,37 +43,15 @@ public interface ITrackerPersistence : IDisposable
     /// <summary>Runs several saves as one all-or-nothing change (used by the one-time JSON import).</summary>
     void RunBatch(Action work);
 
-    /// <summary>
-    /// Runs saves of changes that came from the company's central server: as one batch, and without
-    /// adding them to the change log (so they aren't sent back).
-    /// </summary>
-    void RunFromServer(Action work);
+    /// <summary>Keeps (adds or replaces) one project's entry of the Workload Tracker outbox.</summary>
+    void SaveOutboxEntry(OutboxEntry entry);
 
-    /// <summary>Changes not yet sent to the company's central server, oldest first.</summary>
-    IReadOnlyList<ChangeRecord> PendingChanges(int limit);
+    /// <summary>Removes one project's outbox entry (sent, or no longer wanted).</summary>
+    void DeleteOutboxEntry(string provider, string projectId);
 
-    /// <summary>Marks changes up to and including <paramref name="throughSeq"/> as sent.</summary>
-    void MarkChangesSent(long throughSeq);
-
-    /// <summary>What has changes waiting to be sent, as "entity|key" (e.g. "project|6c1d…").</summary>
-    IReadOnlySet<string> PendingKeys();
-
-    /// <summary>
-    /// Puts every project and item in the change log as it is now (what was waiting is marked sent, as
-    /// this replaces it; waiting removals stay): used to send everything to a central server this PC
-    /// hasn't used before.
-    /// </summary>
-    void QueueEverything();
-
-    /// <summary>
-    /// Keeps the change log from growing while nothing is sent (<paramref name="sharing"/> false): drops
-    /// what is waiting if this PC never shared, otherwise all but the newest change of each project or item.
-    /// </summary>
-    void PruneChangeLog(bool sharing);
+    /// <summary>Empties the outbox (unpaired).</summary>
+    void ClearOutbox();
 }
-
-/// <summary>One entry of the change log: a project or item that was added, changed or removed.</summary>
-public sealed record ChangeRecord(long Seq, string Entity, string Key, string Operation, DateTimeOffset ChangedAt, string? Payload);
 
 /// <summary>What <see cref="ITrackerPersistence.Load"/> returns.</summary>
 public sealed class PersistedState
@@ -84,6 +63,7 @@ public sealed class PersistedState
     public List<ProviderAccount> Accounts { get; set; } = new();
     public ViewState View { get; set; } = new();
     public List<SyncRun> RecentSyncRuns { get; set; } = new();
+    public List<OutboxEntry> Outbox { get; set; } = new();
 }
 
 public sealed record FolderScanRecord(string ProjectId, TypeFolderScan Scan);
@@ -145,6 +125,7 @@ public sealed class InMemoryPersistence : ITrackerPersistence
     private List<CatalogProject> catalog = new();
     private List<ProviderAccount> accounts = new();
     private ViewState view = new();
+    private readonly Dictionary<string, OutboxEntry> outbox = new(StringComparer.Ordinal);
 
     public int SaveCount { get; private set; }
 
@@ -158,7 +139,8 @@ public sealed class InMemoryPersistence : ITrackerPersistence
         Catalog = catalog.ToList(),
         Accounts = accounts.ToList(),
         View = view,
-        RecentSyncRuns = runs.ToList()
+        RecentSyncRuns = runs.ToList(),
+        Outbox = outbox.Values.Select(entry => entry.Copy()).ToList()
     };
 
     public string? GetMeta(string key) => meta.TryGetValue(key, out var value) ? value : null;
@@ -209,23 +191,23 @@ public sealed class InMemoryPersistence : ITrackerPersistence
 
     public void RunBatch(Action work) => work();
 
-    public void RunFromServer(Action work) => work();
-
-    public IReadOnlyList<ChangeRecord> PendingChanges(int limit) => Array.Empty<ChangeRecord>();
-
-    public void MarkChangesSent(long throughSeq)
+    public void SaveOutboxEntry(OutboxEntry entry)
     {
+        outbox[$"{entry.Provider.ToLowerInvariant()}|{entry.ProjectId}"] = entry.Copy();
+        SaveCount++;
     }
 
-    public void QueueEverything()
+    public void DeleteOutboxEntry(string provider, string projectId)
     {
+        outbox.Remove($"{provider.ToLowerInvariant()}|{projectId}");
+        SaveCount++;
     }
 
-    public void PruneChangeLog(bool sharing)
+    public void ClearOutbox()
     {
+        outbox.Clear();
+        SaveCount++;
     }
-
-    public IReadOnlySet<string> PendingKeys() => new HashSet<string>();
 
     public void Dispose()
     {

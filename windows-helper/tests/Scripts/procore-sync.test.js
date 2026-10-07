@@ -25,7 +25,7 @@ const win = { location: { hostname: "app.procore.com" } };
 
 test("discovers every company and its active projects with one sign-in", async () => {
   const procore = fakeProcore({
-    "/rest/v1.0/me": { name: "Tim S" },
+    "/rest/v1.0/me": { id: 4242, name: "Tim S", login: "tim@smc.example" },
     "/rest/v1.0/companies": [
       { id: 10, name: "Gilbane Building Company" },
       { id: 20, name: "Ryan Companies" },
@@ -42,7 +42,7 @@ test("discovers every company and its active projects with one sign-in", async (
 
   const result = await ProcoreSync.discover(win, { fetch: procore.fetch });
 
-  assert.equal(result.user.fullName, "Tim S");
+  assert.deepEqual(result.user, { fullName: "Tim S", id: "4242", email: "tim@smc.example" });
   assert.deepEqual(result.projects, [
     { projectId: "111", accountId: "10", accountName: "Gilbane Building Company", name: "J11004.000 - Aligned Data Centers - CMH01", host: "app.procore.com" },
     { projectId: "221", accountId: "20", accountName: "Ryan Companies", name: "007941000 - ADC LBB01 - Lubbock TX", host: "app.procore.com" }

@@ -213,10 +213,9 @@ public partial class SettingsPage : UserControl
     {
         if (section == SettingsSection.Connections && DataContext is MainViewModel model)
         {
-            CentralServerBox.Text = model.CentralServerText;
-            CentralServerBox.IsEnabled = !model.IsCentralServerLocked;
-            CentralTokenBox.Clear();
-            ShowCentralMessage(null);
+            WorkloadAddressBox.Text = model.WorkloadTrackerAddress;
+            WorkloadTokenBox.Clear();
+            ShowWorkloadMessage(null);
             SignOutMessage.Text = "";
         }
 
@@ -418,46 +417,79 @@ public partial class SettingsPage : UserControl
         SavedText.Visibility = Visibility.Visible;
     }
 
-    private void ShowCentralMessage(string? message)
+    private void ShowWorkloadMessage(string? message)
     {
-        CentralMessage.Text = message ?? "";
-        CentralMessage.Visibility = message is null ? Visibility.Collapsed : Visibility.Visible;
-        CentralStatus.Visibility = message is null ? Visibility.Visible : Visibility.Collapsed;
+        WorkloadMessage.Text = message ?? "";
+        WorkloadMessage.Visibility = message is null ? Visibility.Collapsed : Visibility.Visible;
+        WorkloadStatus.Visibility = message is null ? Visibility.Visible : Visibility.Collapsed;
     }
 
-    private async void SaveCentral_Click(object sender, RoutedEventArgs e)
-    {
-        if (DataContext is not MainViewModel model)
-        {
-            return;
-        }
-
-        var server = CentralServerBox.Text.Trim();
-        if (!model.IsCentralServerLocked && server.Length > 0 && !MainViewModel.IsValidCentralServer(server))
-        {
-            ShowCentralMessage("Enter the server's full address, starting with https://");
-            return;
-        }
-
-        ShowCentralMessage("Connecting…");
-        var problem = await model.ConnectCentralAsync(server, CentralTokenBox.Password);
-        CentralTokenBox.Clear();
-        CentralServerBox.Text = model.CentralServerText;
-        ShowCentralMessage(problem ?? "Connected: your data is shared every couple of minutes while CA Tracker is open.");
-    }
-
-    private async void ShareCentral_Click(object sender, RoutedEventArgs e)
+    /// <summary>Opens the tracker's Profile page in the built-in browser; it hands the token over when you press Connect CA Tracker.</summary>
+    private async void ConnectWorkload_Click(object sender, RoutedEventArgs e)
     {
         if (DataContext is not MainViewModel model)
         {
             return;
         }
 
-        ShowCentralMessage("Sharing…");
-        ShowCentralMessage(await model.ShareWithCentralAsync() ?? $"Shared. {model.CentralStatusText}");
+        var address = MainViewModel.NormalizeWorkloadTrackerAddress(WorkloadAddressBox.Text);
+        if (address is null)
+        {
+            ShowWorkloadMessage("Enter the Workload Tracker address, starting with https://");
+            return;
+        }
+
+        WorkloadAddressBox.Text = address;
+        var window = new WorkloadTrackerSignInWindow(address, model.Paths) { Owner = Window.GetWindow(this) };
+        if (window.ShowDialog() != true || window.Token is not { } token)
+        {
+            ShowWorkloadMessage("Not connected: the window closed before Workload Tracker handed over a token.");
+            return;
+        }
+
+        ShowWorkloadMessage("Connecting…");
+        var problem = await model.ConnectWorkloadTrackerAsync(address, token.Token, token.SessionId, token.ExpiresAt);
+        ShowWorkloadMessage(problem ?? "Connected: what CA Tracker reads is sent every minute while it is open.");
     }
 
-    private void DisconnectCentral_Click(object sender, RoutedEventArgs e)
+    private async void PasteWorkloadToken_Click(object sender, RoutedEventArgs e)
+    {
+        if (DataContext is not MainViewModel model)
+        {
+            return;
+        }
+
+        var address = MainViewModel.NormalizeWorkloadTrackerAddress(WorkloadAddressBox.Text);
+        if (address is null)
+        {
+            ShowWorkloadMessage("Enter the Workload Tracker address, starting with https://");
+            return;
+        }
+
+        if (WorkloadTokenBox.Password.Trim().Length == 0)
+        {
+            ShowWorkloadMessage("Paste the token from Workload Tracker first.");
+            return;
+        }
+
+        ShowWorkloadMessage("Connecting…");
+        var problem = await model.ConnectWorkloadTrackerAsync(address, WorkloadTokenBox.Password, null, null);
+        WorkloadTokenBox.Clear();
+        ShowWorkloadMessage(problem ?? "Connected: what CA Tracker reads is sent every minute while it is open. To disconnect this PC later, also revoke it under Active Sessions in Workload Tracker.");
+    }
+
+    private async void SendWorkload_Click(object sender, RoutedEventArgs e)
+    {
+        if (DataContext is not MainViewModel model)
+        {
+            return;
+        }
+
+        ShowWorkloadMessage("Sending…");
+        ShowWorkloadMessage(await model.SendToWorkloadTrackerAsync() ?? $"Sent. {model.WorkloadTrackerStatusText}");
+    }
+
+    private async void DisconnectWorkload_Click(object sender, RoutedEventArgs e)
     {
         if (DataContext is not MainViewModel model)
         {
@@ -466,15 +498,15 @@ public partial class SettingsPage : UserControl
 
         var answer = MessageBox.Show(
             Window.GetWindow(this),
-            $"Stop sharing with {model.CentralServerText}? Your data stays on this PC, and you can connect again later.",
+            $"Stop sending to {model.WorkloadTrackerAddress}? Everything stays on this PC, this PC's connection is revoked in Workload Tracker, and you can connect again later.",
             "Disconnect",
             MessageBoxButton.YesNo,
             MessageBoxImage.Question,
             MessageBoxResult.No);
         if (answer == MessageBoxResult.Yes)
         {
-            model.DisconnectCentral();
-            ShowCentralMessage("Disconnected. Everything stays on this PC until you connect again.");
+            await model.DisconnectWorkloadTrackerAsync();
+            ShowWorkloadMessage("Disconnected. Everything stays on this PC until you connect again.");
         }
     }
 

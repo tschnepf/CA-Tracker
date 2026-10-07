@@ -27,9 +27,6 @@ public sealed class CompanySettings
     /// <summary>Where new versions are published: a folder (e.g. \\server\apps\ca-tracker) or an https address holding latest.json.</summary>
     public string? UpdateFeed { get; set; }
 
-    /// <summary>The company's CA Tracker server, when there is one (shared projects, items and folder links).</summary>
-    public string? CentralServer { get; set; }
-
     /// <summary>Settings people can't change: "folders", "disciplines", "sync".</summary>
     public List<string> Locked { get; set; } = new();
 

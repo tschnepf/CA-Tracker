@@ -35,8 +35,7 @@ No Chrome extension or browser add-in is involved.
 
 ## The database
 
-`tracker.db` is a SQLite database with plain, portable tables, following the same conventions as the
-company server's PostgreSQL tables (text ids, ISO dates, no SQLite-only types):
+`tracker.db` is a SQLite database with plain, portable tables (text ids, ISO dates, no SQLite-only types):
 
 | Table | What |
 |---|---|
@@ -46,7 +45,7 @@ company server's PostgreSQL tables (text ids, ISO dates, no SQLite-only types):
 | `folder_scans`, `folder_entries`, `folder_containers` | The CA folder index |
 | `accounts`, `preferences` | Sign-ins shown in Connections; settings and the last view |
 | `sync_runs` | Each Helix/Procore read: full or changes only, items, changes, errors |
-| `change_log` | Every change to a project (with its discipline choices) or item, until the company server has it. Without an access token nothing is sent, so it is trimmed: emptied if this PC never shared, otherwise down to the newest change of each project or item |
+| `wt_outbox` | While connected to Workload Tracker: for each Helix/Procore project, which items changed or went away since the last send (one row per project, so it stays small). Empty when not connected |
 
 On first start, the JSON files of earlier versions (`settings.json`, `snapshots\`, `catalog.json`,
 `accounts.json`, `view.json`) are imported and moved to `imported-json\` as a backup.
@@ -58,12 +57,11 @@ On first start, the JSON files of earlier versions (`settings.json`, `snapshots\
   with the .NET runtime included, Start-menu shortcut, and a check for the WebView2 Runtime.
 - **Company settings:** put `company\ca-tracker-company.json` (see `company\README.md`) next to the app —
   the installer ships it — to set folder names, the company's disciplines, the sync
-  interval, the update location and the company server for everyone, and lock what people
-  shouldn't change.
-- **Company server (optional):** see [`central/`](../central/README.md). With it, everyone shares what
-  they read from Helix and Procore and each project's discipline choices, and the company gets one
-  database of every RFI and Submittal and whose court it is in (PostgreSQL, ready for the workload
-  tracker). Each person enters their access token in Settings → Connections → Company server.
+  interval and the update location for everyone, and lock what people shouldn't change.
+- **Workload Tracker (optional):** each person enters the tracker's address in Settings → Connections →
+  Workload Tracker and presses **Connect…**; they sign in to the tracker in the window that opens and
+  press **Connect CA Tracker** on its Profile page. CA Tracker then sends what it reads every minute
+  while it is open. See [`contract/README.md`](contract/README.md) for the contract.
 - **Updates:** publish each new installer with its `latest.json` to the update location; every CA
   Tracker offers **Update to <version>** in the title bar and installs it quietly.
 - **Problems:** the log (Settings → Open the log folder) records timings, errors and crashes.
@@ -263,11 +261,11 @@ downloads aren't supported yet.
   Sign-in needed, Not connected), when it last synced, how many projects it has (and how many are
   archived or set to not sync), a progress bar while it syncs, and **Sign in** / **Sync now** buttons;
   **Sign out of Helix and Procore** (saved passwords kept) and **Sign out and forget saved
-  passwords**; and the optional **Company server**: its address (unless the company settings set it) and your
-  access token. Once connected, CA Tracker shares every couple of minutes while it is open: what you
-  read from Helix and Procore and your projects' discipline choices go to everyone tracking the same
-  projects, and theirs come to you. Your projects' names and CA folder locations are sent too (the
-  company database lists them), but someone else's never replace yours.
+  passwords**; and the optional **Workload Tracker**: its address, **Connect…** (signs in to the tracker
+  in a window and receives a token that only reaches the CA Tracker endpoints, stored encrypted for your
+  Windows user), **Send now** and **Disconnect…** (revokes this PC's connection). Once connected, what
+  you read from Helix and Procore is sent every minute while CA Tracker is open: items of projects set
+  up in the app, counts only for the others. CA folder locations and files stay on this PC.
 
 **← Back to projects** (or **← Projects**) returns to the project list.
 

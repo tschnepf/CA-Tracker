@@ -190,6 +190,8 @@
             <DockPanel>
                 <Button DockPanel.Dock="Right" Content="✕" Style="{StaticResource LinkButton}" Click="DismissBanner_Click" Margin="8,0,0,0"
                         ToolTip="Hide this until a sign-in expires again" AutomationProperties.Name="Hide this message" />
+                <Button DockPanel.Dock="Right" Content="Connect Workload Tracker" Click="BannerWorkload_Click" Margin="8,0,0,0"
+                        Style="{StaticResource AccentButton}" Visibility="{Binding WorkloadTrackerNeedsConnect, Converter={StaticResource Visible}}" />
                 <ItemsControl DockPanel.Dock="Right" ItemsSource="{Binding Connections}" Focusable="False">
                     <ItemsControl.ItemsPanel>
                         <ItemsPanelTemplate>

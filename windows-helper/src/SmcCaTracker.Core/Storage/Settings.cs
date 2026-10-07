@@ -20,8 +20,8 @@ public sealed class TrackerSettings
     public BrowserSettings Browser { get; set; } = new();
     public SyncSettings Sync { get; set; } = new();
 
-    /// <summary>The company's CA Tracker server (optional): shares projects, disciplines and items.</summary>
-    public CentralSettings Central { get; set; } = new();
+    /// <summary>The Workload Tracker connection (optional): sends this PC's scans to the company's tracker.</summary>
+    public WorkloadTrackerSettings WorkloadTracker { get; set; } = new();
 
     /// <summary>Procore: projects you chose not to sync, and when your projects were last listed.</summary>
     public SmcCaTracker.Core.Procore.ProcoreSettings Procore { get; set; } = new();
@@ -38,14 +38,32 @@ public sealed class TrackerSettings
             && string.Equals(project.Connection.ProjectId, projectId, StringComparison.Ordinal));
 }
 
-/// <summary>Connection to the company's CA Tracker server.</summary>
-public sealed class CentralSettings
+/// <summary>
+/// The connection to Workload Tracker (decision D2). Without an address and a token the app works on
+/// its own, as it always has.
+/// </summary>
+public sealed class WorkloadTrackerSettings
 {
-    /// <summary>The server's address (the company settings file may set it for everyone).</summary>
-    public string Server { get; set; } = "";
+    /// <summary>The tracker's https address, typed in by the person.</summary>
+    public string Address { get; set; } = "";
 
-    /// <summary>Your access token from the server, encrypted for this Windows user.</summary>
+    /// <summary>This installation's id, sent with every call: a copied token shows up with another one.</summary>
+    public string ClientId { get; set; } = "";
+
+    /// <summary>The CA Tracker token from the tracker, encrypted for this Windows user.</summary>
     public string TokenProtected { get; set; } = "";
+
+    /// <summary>The tracker's session for the token (for Disconnect) and when it ends.</summary>
+    public int? SessionId { get; set; }
+    public DateTimeOffset? ExpiresAt { get; set; }
+
+    /// <summary>Who the token belongs to, from the tracker's /api/auth/me/: tags the outbox and shows "Connected as".</summary>
+    public string Account { get; set; } = "";
+    public string? AccountName { get; set; }
+    public int? PersonId { get; set; }
+    public string? PersonName { get; set; }
+
+    public bool IsPaired => Address.Length > 0 && TokenProtected.Length > 0 && Account.Length > 0;
 }
 
 /// <summary>Keeping Helix items up to date in the background.</summary>
@@ -399,7 +417,11 @@ public sealed class SettingsStore
         settings.Procore ??= new SmcCaTracker.Core.Procore.ProcoreSettings();
         settings.Procore.SkippedProjectIds ??= new List<string>();
         settings.Procore.DiscoverEveryHours = Math.Clamp(settings.Procore.DiscoverEveryHours, 1, 168);
-        settings.Central ??= new CentralSettings();
+        settings.WorkloadTracker ??= new WorkloadTrackerSettings();
+        settings.WorkloadTracker.Address ??= "";
+        settings.WorkloadTracker.ClientId ??= "";
+        settings.WorkloadTracker.TokenProtected ??= "";
+        settings.WorkloadTracker.Account ??= "";
         settings.Sync.IntervalMinutes = Math.Clamp(settings.Sync.IntervalMinutes, 5, 240);
         settings.Sync.FullReadHours = Math.Clamp(settings.Sync.FullReadHours, 1, 168);
         settings.Projects = (settings.Projects ?? new List<TrackerProject>())

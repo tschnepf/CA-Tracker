@@ -1835,6 +1835,9 @@ public partial class MainWindow : Window
 
     private void DismissBanner_Click(object sender, RoutedEventArgs e) => viewModel.DismissSignInBanner();
 
+    /// <summary>Workload Tracker refused the token: Connect is in Settings, Connections.</summary>
+    private void BannerWorkload_Click(object sender, RoutedEventArgs e) => ShowSettings(SettingsSection.Connections);
+
     private void BannerSignIn_Click(object sender, RoutedEventArgs e)
     {
         if (sender is FrameworkElement { DataContext: ConnectionViewModel connection })

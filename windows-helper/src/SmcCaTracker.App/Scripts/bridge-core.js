@@ -253,9 +253,17 @@
         companyId: getIdentityCompanyId(directoryInfo) ? String(getIdentityCompanyId(directoryInfo)) : null,
         company: directoryInfo.refCompany && (directoryInfo.refCompany.name || directoryInfo.refCompany.nameCompany)
           ? String(directoryInfo.refCompany.name || directoryInfo.refCompany.nameCompany)
-          : null
+          : null,
+        email: signedInEmail(windowObject)
       }
     };
+  }
+
+  // The signed-in contact's email. Helix gives it for the person signed in, not for others.
+  function signedInEmail(windowObject) {
+    const contact = windowObject && windowObject.loginObject && windowObject.loginObject.contact;
+    const email = contact && typeof contact.email === "string" ? contact.email.trim() : "";
+    return email.includes("@") ? email : null;
   }
 
   // Who is signed in, read from any Helix page (not only a project page). Null until Helix has
@@ -275,7 +283,8 @@
         contactId: contactId ? String(contactId) : null,
         fullName: String(fullName),
         companyId: companyId ? String(companyId) : null,
-        company: company ? String(company) : null
+        company: company ? String(company) : null,
+        email: signedInEmail(windowObject)
       };
     }
 
@@ -291,7 +300,8 @@
       contactId: String(contactId),
       fullName: String(contactName),
       companyId: companyId ? String(companyId) : null,
-      company: company ? String(company) : null
+      company: company ? String(company) : null,
+      email: signedInEmail(windowObject)
     };
   }
 

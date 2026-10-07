@@ -15,6 +15,5 @@
   ],
   "syncIntervalMinutes": 15,
   "updateFeed": "\\\\server\\apps\\ca-tracker",
-  "centralServer": "",
   "locked": ["folders", "disciplines"]
 }

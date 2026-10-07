@@ -18,6 +18,10 @@ public sealed class ProcoreDiscovery
     /// <summary>The projects found (null when nothing could be listed).</summary>
     public CatalogMessage? Catalog { get; init; }
     public string? UserName { get; init; }
+
+    /// <summary>The signed-in person's Procore user id and login email.</summary>
+    public string? UserId { get; init; }
+    public string? UserEmail { get; init; }
     public int CompanyCount { get; init; }
 
     /// <summary>Projects left out because Procore marks them inactive or closed.</summary>
@@ -272,9 +276,13 @@ public sealed class ProcoreSyncService : IDisposable
 
         var fromPage = value.TryGetProperty("fromPage", out var fromPageElement) && fromPageElement.ValueKind == JsonValueKind.True;
         string? userName = null;
+        string? userId = null;
+        string? userEmail = null;
         if (value.TryGetProperty("user", out var user) && user.ValueKind == JsonValueKind.Object)
         {
             userName = Text(user, "fullName");
+            userId = Text(user, "id");
+            userEmail = Text(user, "email");
         }
 
         var skipped = value.TryGetProperty("skippedInactive", out var skippedElement) && skippedElement.TryGetInt32(out var count) ? count : 0;
@@ -290,6 +298,8 @@ public sealed class ProcoreSyncService : IDisposable
         {
             Catalog = catalog,
             UserName = userName,
+            UserId = userId,
+            UserEmail = userEmail,
             CompanyCount = companyCount,
             SkippedInactive = skipped,
             CompanyProblems = companyProblems,

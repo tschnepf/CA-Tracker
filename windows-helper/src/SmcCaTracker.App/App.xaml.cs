@@ -4,7 +4,7 @@ using System.Windows;
 using SmcCaTracker.App.Services;
 using SmcCaTracker.App.ViewModels;
 using SmcCaTracker.App.Views;
-using SmcCaTracker.Core.Central;
+using SmcCaTracker.Core.WorkloadTracker;
 using SmcCaTracker.Core.Data;
 using SmcCaTracker.Core.Diagnostics;
 using SmcCaTracker.Core.Matching;
@@ -87,7 +87,7 @@ public partial class App : Application
                 var viewModel = new MainViewModel(paths, store, folderIndex, helixSync, procoreSync, protector);
                 viewModel.UseCompanySettings(company, companyPath, companyError);
                 viewModel.UseUpdates(new UpdateService(http));
-                viewModel.UseCentral(new CentralSync(store, http, protector) { CompanyServer = company?.CentralServer });
+                viewModel.UseWorkloadTracker(new WorkloadTrackerSync(store, new WorkloadTrackerApi(http), protector));
                 var window = new MainWindow(viewModel, paths);
                 MainWindow = window;
                 window.Show();

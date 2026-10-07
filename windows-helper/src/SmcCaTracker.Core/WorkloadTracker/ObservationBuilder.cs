@@ -34,35 +34,41 @@ public static class ObservationBuilder
         IReadOnlyList<CaBindingAssertionRequest> bindings,
         ObservationSender sender,
         Guid observationId,
+        int partSize = MaxItemsPerPart,
+        ProviderAccount? account = null)
+    {
+        var types = ItemTypesOf(snapshot);
+        var items = snapshot.Items.Where(item => types.Contains(TypeOf(item)));
+        return Build(snapshot, project, bindings, sender, observationId, items, [], Coverage(snapshot, fullSet: true), account, partSize);
+    }
+
+    /// <summary>
+    /// What an outbox entry names: the items that changed and those that went away, or every item when
+    /// it is a full set. Item content is read from the app's data as it is now.
+    /// </summary>
+    public static IReadOnlyList<CaObservationPartRequest> FromOutbox(
+        OutboxEntry entry,
+        ProviderSnapshot snapshot,
+        CaProviderProjectRequest project,
+        IReadOnlyList<CaBindingAssertionRequest> bindings,
+        ObservationSender sender,
+        Guid observationId,
+        ProviderAccount? account = null,
         int partSize = MaxItemsPerPart)
     {
-        ArgumentOutOfRangeException.ThrowIfLessThan(partSize, 1);
-        ArgumentOutOfRangeException.ThrowIfGreaterThan(partSize, MaxItemsPerPart);
-
         var types = ItemTypesOf(snapshot);
-        var items = snapshot.Items
-            .Where(item => types.Contains(TypeOf(item)))
-            .OrderBy(item => TypeOf(item), StringComparer.Ordinal)
-            .ThenBy(item => item.ItemId, StringComparer.Ordinal)
-            .Select(Item)
+        var items = snapshot.Items.Where(item => types.Contains(TypeOf(item))
+            && (entry.FullSet || entry.Changed.Contains(OutboxEntry.ItemKey(item.ItemType, item.ItemId))));
+        // Removals only count for a type a scan verified; the tracker refuses them otherwise.
+        var removed = entry.Removed
+            .Select(OutboxEntry.SplitKey)
+            .Where(key => types.Contains(key.ItemType) && entry.Verified.Contains(key.ItemType))
+            .OrderBy(key => key.ItemType, StringComparer.Ordinal)
+            .ThenBy(key => key.ItemId, StringComparer.Ordinal)
+            .Select(key => new CaRemovedItemRequest { ItemType = key.ItemType, ProviderItemId = Text(key.ItemId, 64) })
             .ToList();
-        var coverage = Coverage(snapshot, fullSet: true);
-        var chunks = items.Chunk(partSize).ToList();
-        if (chunks.Count == 0)
-        {
-            chunks.Add([]);
-        }
-
-        return chunks
-            .Select((chunk, index) => Envelope(snapshot, project, sender, observationId, CaObservationKindEnum.Items) with
-            {
-                Part = index + 1,
-                TotalParts = chunks.Count,
-                Bindings = bindings.ToList(),
-                Coverage = coverage,
-                Items = chunk.ToList()
-            })
-            .ToList();
+        var coverage = Coverage(snapshot, entry.FullSet, itemType => entry.Verified.Contains(itemType));
+        return Build(snapshot, project, bindings, sender, observationId, items, removed, coverage, account, partSize);
     }
 
     /// <summary>Counts only, for a project that is neither bound nor tracked, so admins can see it exists.</summary>
@@ -70,11 +76,51 @@ public static class ObservationBuilder
         ProviderSnapshot snapshot,
         CaProviderProjectRequest project,
         ObservationSender sender,
-        Guid observationId) =>
-        Envelope(snapshot, project, sender, observationId, CaObservationKindEnum.Catalog) with
+        Guid observationId,
+        ProviderAccount? account = null) =>
+        Envelope(snapshot, project, sender, observationId, CaObservationKindEnum.Catalog, account) with
         {
             Coverage = Coverage(snapshot, fullSet: false)
         };
+
+    private static List<CaObservationPartRequest> Build(
+        ProviderSnapshot snapshot,
+        CaProviderProjectRequest project,
+        IReadOnlyList<CaBindingAssertionRequest> bindings,
+        ObservationSender sender,
+        Guid observationId,
+        IEnumerable<SnapshotItem> source,
+        List<CaRemovedItemRequest> removed,
+        List<CaCoverageRequest> coverage,
+        ProviderAccount? account,
+        int partSize)
+    {
+        ArgumentOutOfRangeException.ThrowIfLessThan(partSize, 1);
+        ArgumentOutOfRangeException.ThrowIfGreaterThan(partSize, MaxItemsPerPart);
+
+        var items = source
+            .OrderBy(TypeOf, StringComparer.Ordinal)
+            .ThenBy(item => item.ItemId, StringComparer.Ordinal)
+            .Select(Item)
+            .ToList();
+        var itemChunks = items.Chunk(partSize).ToList();
+        var removedChunks = removed.Chunk(MaxRemovedPerPart).ToList();
+        var total = Math.Max(1, Math.Max(itemChunks.Count, removedChunks.Count));
+        var envelope = Envelope(snapshot, project, sender, observationId, CaObservationKindEnum.Items, account);
+        return Enumerable.Range(0, total)
+            .Select(index => envelope with
+            {
+                Part = index + 1,
+                TotalParts = total,
+                Bindings = bindings.ToList(),
+                Coverage = coverage,
+                Items = index < itemChunks.Count ? itemChunks[index].ToList() : [],
+                Removed = index < removedChunks.Count ? removedChunks[index].ToList() : []
+            })
+            .ToList();
+    }
+
+    private const int MaxRemovedPerPart = 5000;
 
     /// <summary>The provider project as the tracker keys it: provider, host and project id.</summary>
     public static CaProviderProjectRequest ProviderProject(ProviderSnapshot snapshot, ProviderConnection? connection, string? company)
@@ -95,7 +141,7 @@ public static class ObservationBuilder
     }
 
     /// <summary>Per item type: when it was scanned, whether that scan was complete, and how many items there are.</summary>
-    public static List<CaCoverageRequest> Coverage(ProviderSnapshot snapshot, bool fullSet) =>
+    public static List<CaCoverageRequest> Coverage(ProviderSnapshot snapshot, bool fullSet, Func<string, bool>? presenceVerified = null) =>
         ItemTypesOf(snapshot)
             .Select(type =>
             {
@@ -107,7 +153,8 @@ public static class ObservationBuilder
                     ItemType = type,
                     ScannedAt = coverage?.ScannedAt ?? snapshot.ScannedAt,
                     DetailsComplete = complete,
-                    PresenceVerified = complete,
+                    // A complete read verified presence; an outbox entry also knows of scans that saw items leave.
+                    PresenceVerified = presenceVerified?.Invoke(type) ?? complete,
                     FullSet = fullSet,
                     ItemCount = items.Count,
                     OpenCount = items.Count(item => !item.Closed)
@@ -171,7 +218,8 @@ public static class ObservationBuilder
         CaProviderProjectRequest project,
         ObservationSender sender,
         Guid observationId,
-        string kind) => new()
+        string kind,
+        ProviderAccount? account) => new()
     {
         SchemaVersion = SchemaVersion,
         AppVersion = Text(sender.AppVersion, 32),
@@ -184,15 +232,24 @@ public static class ObservationBuilder
         Bindings = [],
         ScannedAt = snapshot.ScannedAt,
         Coverage = [],
-        Collector = new CaCollectorRequest
-        {
-            Name = Text(snapshot.User.FullName, 200),
-            Company = Optional(snapshot.User.Company, 200),
-            CompanyId = Optional(snapshot.User.CompanyId, 64)
-        },
+        Collector = Collector(snapshot.User, account),
         Items = [],
         Removed = []
     };
+
+    /// <summary>Who scanned: the scan's own user (Helix), else the site's signed-in account (Procore scans carry none).</summary>
+    private static CaCollectorRequest Collector(SnapshotUser? user, ProviderAccount? account)
+    {
+        var scanned = !string.IsNullOrWhiteSpace(user?.FullName);
+        return new CaCollectorRequest
+        {
+            Name = Text(scanned ? user!.FullName : account?.UserName, 200),
+            Company = Optional(scanned ? user!.Company : account?.Company, 200),
+            CompanyId = Optional(user?.CompanyId, 64),
+            ProviderUserId = Optional(user?.ProviderUserId ?? account?.ProviderUserId, 64),
+            Email = Optional(user?.Email ?? account?.Email, 254)
+        };
+    }
 
     private static CaHolderRequest? Holder(SnapshotHolder holder)
     {
@@ -207,6 +264,8 @@ public static class ObservationBuilder
             Name = Text(holder.Name, 200),
             Company = Optional(holder.Company, 200),
             CompanyId = Optional(holder.CompanyId, 64),
+            ProviderUserId = Optional(holder.ProviderUserId, 64),
+            Email = Optional(holder.Email, 254),
             State = state!,
             Since = holder.Since
         };

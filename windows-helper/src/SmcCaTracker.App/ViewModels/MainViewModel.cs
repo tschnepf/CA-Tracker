@@ -4,7 +4,6 @@ using System.Net.Http;
 using System.Text.Json;
 using System.Windows.Threading;
 using SmcCaTracker.App.Services;
-using SmcCaTracker.Core.Central;
 using SmcCaTracker.Core.Comparison;
 using SmcCaTracker.Core.Operations;
 using SmcCaTracker.Core.Data;
@@ -380,7 +379,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     /// A banner under the header while Helix or Procore needs you to sign in (its sign-in expired, or you
     /// signed out while its projects are still listed), so a sync doesn't just look like it failed.
     /// </summary>
-    public bool ShowSignInBanner => !signInBannerDismissed && Connections.Any(connection => connection.WantsSignIn);
+    public bool ShowSignInBanner => !signInBannerDismissed && (Connections.Any(connection => connection.WantsSignIn) || WorkloadTrackerNeedsConnect);
 
     public string SignInBannerText
     {
@@ -388,9 +387,12 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         {
             var sites = Connections.Where(connection => connection.WantsSignIn).ToList();
             var names = string.Join(" and ", sites.Select(site => site.Label));
-            return sites.Count == 0 ? ""
+            var text = sites.Count == 0 ? ""
                 : sites.All(site => site.NeedsSignIn) ? $"Your {names} sign-in has expired. Sign in again to keep your projects up to date."
                 : $"Sign in to {names} to keep your projects up to date.";
+            return WorkloadTrackerNeedsConnect
+                ? $"{text} Workload Tracker needs you to connect again to keep sending.".Trim()
+                : text;
         }
     }
 
@@ -537,7 +539,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
 
     /// <summary>
     /// Archives or unarchives projects for you only: they leave your list and stop syncing. Nothing
-    /// changes in Helix, Procore or on the company server (this is kept with your view on this PC).
+    /// changes in Helix or Procore (this is kept with your view on this PC).
     /// </summary>
     public void SetArchived(IEnumerable<ProjectViewModel> projects, bool archive)
     {
@@ -1388,7 +1390,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
                 var key = row.Row.Folder is not null
                     ? Disciplines.Key(row.Row.ItemType, row.Row.Folder.Name)
                     : Disciplines.ItemKey(row.Row.ItemType, row.Row.Item!.ItemId);
-                // Back to detecting: kept as an empty choice (not removed) so the company server shares it too.
+                // Back to detecting: kept as an empty choice (not removed).
                 edited.Disciplines[key] = code ?? "";
             }
 
@@ -1723,7 +1725,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
             store.MergeCatalog(catalog, now, replace: complete && catalog.Projects.Count > 0);
             if (!string.IsNullOrWhiteSpace(discovery.UserName))
             {
-                store.RecordAccount(Providers.Procore, discovery.UserName, null, now);
+                store.RecordAccount(Providers.Procore, discovery.UserName, null, now, discovery.UserId, discovery.UserEmail);
             }
 
             Settings.Procore.LastDiscoveredAt = now;
@@ -3612,132 +3614,124 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     public bool AreFoldersLocked => company?.IsLocked("folders") == true;
     public bool IsSyncLocked => company?.IsLocked("sync") == true;
 
-    // ---- Company server (optional) ---------------------------------------------------------
+    // ---- Workload Tracker (optional) -------------------------------------------------------
 
-    private CentralSync? central;
-    private DispatcherTimer? centralTimer;
+    private WorkloadTrackerSync? workloadTracker;
+    private DispatcherTimer? workloadTimer;
 
-    /// <summary>Shares with the company's CA Tracker server (when one is set up) shortly after starting, then every two minutes.</summary>
-    public void UseCentral(CentralSync service)
+    /// <summary>Sends what scans changed to Workload Tracker (while paired) shortly after starting, then every minute.</summary>
+    public void UseWorkloadTracker(WorkloadTrackerSync service)
     {
-        central = service;
+        workloadTracker = service;
+        service.StatusChanged += (_, _) => System.Windows.Application.Current?.Dispatcher.BeginInvoke(new Action(RaiseWorkloadTracker));
         var timer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(20) };
-        centralTimer = timer;
+        workloadTimer = timer;
         timer.Tick += async (_, _) =>
         {
-            timer.Interval = TimeSpan.FromMinutes(2);
-            if (service.IsConfigured)
+            timer.Interval = TimeSpan.FromMinutes(1);
+            if (service.IsPaired)
             {
-                await RunTimerAsync("sharing", ShareWithCentralAsync);
+                await RunTimerAsync("Workload Tracker", () => service.SendAsync());
             }
         };
         timer.Start();
-        RaiseCentral();
+        RaiseWorkloadTracker();
     }
 
-    public static bool IsValidCentralServer(string server) => CentralSync.NormalizeServer(server).Length > 0;
+    /// <summary>The tracker's address as https://host, or null when it isn't one.</summary>
+    public static string? NormalizeWorkloadTrackerAddress(string address) => WorkloadTrackerApi.NormalizeAddress(address);
 
-    /// <summary>The server's address (set by the company settings file when it names one).</summary>
-    public string CentralServerText => central?.Server ?? "";
+    public string WorkloadTrackerAddress => Settings.WorkloadTracker.Address;
 
-    public bool IsCentralServerLocked => central?.IsCompanyServer == true;
+    public bool IsWorkloadTrackerPaired => Settings.WorkloadTracker.IsPaired;
 
-    /// <summary>A company server is set up (Share now and Disconnect apply).</summary>
-    public bool IsCentralSetUp => central is { Server.Length: > 0 };
+    /// <summary>The token was refused or can't be read: Connect again (also shown in the sign-in banner).</summary>
+    public bool WorkloadTrackerNeedsConnect => workloadTracker is { NeedsSignIn: true };
 
-    /// <summary>What Settings → Connections shows about the company server.</summary>
-    public string CentralStatusText
+    /// <summary>What Settings → Connections shows about Workload Tracker.</summary>
+    public string WorkloadTrackerStatusText
     {
         get
         {
-            if (central is { IsCompanyServer: true, Server.Length: 0 })
+            var sync = Settings.WorkloadTracker;
+            if (!sync.IsPaired)
             {
-                return "⚠ The company settings file's server address isn't a valid https:// address.";
+                return sync.Address.Length == 0
+                    ? "Not connected: everything stays on this PC."
+                    : $"Not connected. Connect to send your projects to {sync.Address}.";
             }
 
-            if (central is null || central.Server.Length == 0)
+            if (workloadTracker is null)
             {
-                return "Not set up: everything stays on this PC.";
+                return "Workload Tracker isn't available in this version.";
             }
 
-            if (!central.HasToken)
+            var waiting = workloadTracker.PendingCount;
+            var queued = waiting == 0 ? "" : $" · {waiting} project{(waiting == 1 ? "" : "s")} waiting to send";
+            if (workloadTracker.LastProblem is { } problem)
             {
-                return $"Enter your access token for {central.Server}.";
+                return $"⚠ {problem}{queued}";
             }
 
-            if (central.LastProblem is { } problem)
-            {
-                return $"⚠ {problem}";
-            }
-
-            if (central.LastSyncAt is not { } at)
-            {
-                return $"Set up: sharing with {central.Server} starts in a moment.";
-            }
-
-            var who = string.IsNullOrWhiteSpace(central.ConnectedAs) ? "" : $" as {central.ConnectedAs}";
-            var received = central.LastReceived > 0 ? $" · {central.LastReceived} changes from others" : "";
-            return $"Sharing with {central.Server}{who} · last shared {Formatting.When(at)}{received}";
+            var person = sync.PersonId is null
+                ? " ⚠ No person is linked to this account in Workload Tracker, so assignments and My Work can't use it."
+                : "";
+            var sent = workloadTracker.LastSentAt is { } at ? $" · last sent {Formatting.When(at)}" : " · sending starts in a moment";
+            return $"Connected to {sync.Address} as {sync.AccountName}{sent}{queued}.{person}";
         }
     }
 
-    private void RaiseCentral()
+    private void RaiseWorkloadTracker()
     {
-        OnPropertyChanged(nameof(CentralServerText));
-        OnPropertyChanged(nameof(IsCentralServerLocked));
-        OnPropertyChanged(nameof(CentralStatusText));
-        OnPropertyChanged(nameof(IsCentralSetUp));
+        OnPropertyChanged(nameof(WorkloadTrackerAddress));
+        OnPropertyChanged(nameof(IsWorkloadTrackerPaired));
+        OnPropertyChanged(nameof(WorkloadTrackerNeedsConnect));
+        OnPropertyChanged(nameof(WorkloadTrackerStatusText));
+        OnPropertyChanged(nameof(ShowSignInBanner));
+        OnPropertyChanged(nameof(SignInBannerText));
     }
 
-    /// <summary>Saves the server and token, checks them and shares. Null when it worked; otherwise what's wrong.</summary>
-    public async Task<string?> ConnectCentralAsync(string server, string? token)
+    /// <summary>Pairs with Workload Tracker using a token from its Profile page. Null when it worked; otherwise what's wrong.</summary>
+    public async Task<string?> ConnectWorkloadTrackerAsync(string address, string token, int? sessionId, DateTimeOffset? expiresAt)
     {
-        if (central is null)
+        if (workloadTracker is null)
         {
-            return "The company server isn't available in this version.";
+            return "Workload Tracker isn't available in this version.";
         }
 
-        central.Configure(server, token);
-        RaiseCentral();
-        if (central.Server.Length == 0)
-        {
-            return IsCentralServerLocked
-                ? "The company settings file's server address isn't a valid https:// address. Ask whoever manages CA Tracker."
-                : "Saved. With no server address, everything stays on this PC.";
-        }
-
-        var problem = await central.TestAsync();
+        var problem = await workloadTracker.ConnectAsync(address, token, sessionId, expiresAt);
         if (problem is null)
         {
-            problem = (await central.SyncAsync()).Problem;
+            signInBannerDismissed = false;
+            await workloadTracker.SendAsync();
         }
 
-        RaiseCentral();
+        RaiseWorkloadTracker();
         return problem;
     }
 
-    /// <summary>Shares now. Null when it worked; otherwise what's wrong.</summary>
-    public async Task<string?> ShareWithCentralAsync()
+    /// <summary>Sends what is waiting now. Null when it worked; otherwise what's wrong.</summary>
+    public async Task<string?> SendToWorkloadTrackerAsync()
     {
-        if (central is not { IsConfigured: true })
+        if (workloadTracker is not { IsPaired: true })
         {
-            return "Set up the company server first.";
+            return "Connect to Workload Tracker first.";
         }
 
-        if (central.IsRunning)
-        {
-            return "Already sharing; it finishes in a moment.";
-        }
-
-        var result = await central.SyncAsync();
-        RaiseCentral();
-        return result.Problem;
+        await workloadTracker.SendAsync();
+        RaiseWorkloadTracker();
+        return workloadTracker.LastProblem;
     }
 
-    public void DisconnectCentral()
+    /// <summary>Stops sending: revokes this PC's connection in Workload Tracker and keeps everything on this PC.</summary>
+    public async Task DisconnectWorkloadTrackerAsync()
     {
-        central?.Disconnect();
-        RaiseCentral();
+        if (workloadTracker is not null)
+        {
+            await workloadTracker.DisconnectAsync();
+        }
+
+        RaiseWorkloadTracker();
     }
 
     /// <summary>Checks the company's update location now, then every six hours.</summary>
@@ -3807,6 +3801,8 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     {
         // Settings doesn't edit the Procore section (which projects to sync, last look): keep the live one.
         updated.Procore = Settings.Procore;
+        // Nor the Workload Tracker connection, which Connect and Disconnect save as they happen.
+        updated.WorkloadTracker = Settings.WorkloadTracker;
         store.SaveSettings(updated);
         LoadProjects();
         await CompareAsync();
@@ -4287,8 +4283,8 @@ public sealed class MainViewModel : ObservableObject, IDisposable
             settingsVersion++;
         }
 
-        // The tracker projects on screen before reloading: settings saved from elsewhere (such as discipline
-        // choices from the company server) replace them, and then the list is compared again.
+        // The tracker projects on screen before reloading: settings saved from elsewhere replace them, and
+        // then the list is compared again.
         var shownBefore = new Dictionary<string, TrackerProject>(StringComparer.Ordinal);
         foreach (var project in selectedProjects)
         {
@@ -4465,6 +4461,6 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         folderTimer.Stop();
         autoSyncTimer.Stop();
         updateTimer?.Stop();
-        centralTimer?.Stop();
+        workloadTimer?.Stop();
     }
 }

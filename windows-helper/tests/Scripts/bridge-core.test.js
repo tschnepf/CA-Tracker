@@ -76,8 +76,17 @@ test("getContext derives project and user identity from the current Helix page",
     itemType: "rfi",
     itemLabel: "RFI",
     itemLabelPlural: "RFIs",
-    user: { id: user._id, contactId: "contact-current", fullName: user.fullName, companyId: "company-current", company: "Example Co" }
+    user: { id: user._id, contactId: "contact-current", fullName: user.fullName, companyId: "company-current", company: "Example Co", email: null }
   });
+});
+
+test("the signed-in contact's email comes with the user, for Workload Tracker", () => {
+  const page = mockWindow({});
+  page.loginObject = { contact: { _id: "contact-current", email: " current.user@smc.example " } };
+  assert.equal(Bridge.getContext(page).user.email, "current.user@smc.example");
+  assert.equal(Bridge.currentUser(page).email, "current.user@smc.example");
+  page.loginObject.contact.email = "not an email";
+  assert.equal(Bridge.currentUser(page).email, null);
 });
 
 test("Overview scans both current-project RFIs and Submittals", async () => {
@@ -620,7 +629,8 @@ test("on Helix's home page (no directory entry) the signed-in contact says who y
     contactId: "contact-current",
     fullName: "Current User",
     companyId: "company-1",
-    company: "Example Co"
+    company: "Example Co",
+    email: null
   });
 
   // No full name: first and last name.

@@ -6,10 +6,71 @@
     "x-source": {
       "repository": "workload-tracker",
       "file": "backend/openapi.json",
-      "commit": "297478a230cd8466bbf475db060a63d0008c9c68"
+      "commit": "9fc0dbdb0c3b409563866b8717120bc337f515ed"
     }
   },
   "paths": {
+    "/api/auth/me/": {
+      "get": {
+        "operationId": "auth_me_retrieve",
+        "description": "Return the current user's profile with settings and optional person link.",
+        "tags": [
+          "auth"
+        ],
+        "security": [
+          {
+            "cookieAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserProfile"
+                }
+              }
+            },
+            "description": ""
+          }
+        }
+      }
+    },
+    "/api/auth/sessions/{session_id}/revoke/": {
+      "post": {
+        "operationId": "auth_sessions_revoke_create",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "session_id",
+            "schema": {
+              "type": "integer"
+            },
+            "required": true
+          }
+        ],
+        "tags": [
+          "auth"
+        ],
+        "security": [
+          {
+            "cookieAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthSessionRevokeResponse"
+                }
+              }
+            },
+            "description": ""
+          }
+        }
+      }
+    },
     "/api/ca/assignments/": {
       "get": {
         "operationId": "ca_assignments_retrieve",
@@ -55,7 +116,7 @@
                 }
               }
             },
-            "description": "Invalid body (code invalid) or unsupported schemaVersion."
+            "description": "Invalid request."
           },
           "501": {
             "content": {
@@ -66,6 +127,16 @@
               }
             },
             "description": "Not implemented yet."
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CaError"
+                }
+              }
+            },
+            "description": "CA Tracker sync is turned off."
           }
         }
       },
@@ -119,7 +190,7 @@
                 }
               }
             },
-            "description": "Invalid body (code invalid) or unsupported schemaVersion."
+            "description": "Invalid body."
           },
           "501": {
             "content": {
@@ -130,6 +201,16 @@
               }
             },
             "description": "Not implemented yet."
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CaError"
+                }
+              }
+            },
+            "description": "CA Tracker sync is turned off."
           }
         }
       }
@@ -187,7 +268,7 @@
             },
             "description": "Invalid body (code invalid) or unsupported schemaVersion."
           },
-          "501": {
+          "409": {
             "content": {
               "application/json": {
                 "schema": {
@@ -195,7 +276,27 @@
                 }
               }
             },
-            "description": "Not implemented yet."
+            "description": "The part disagrees with earlier parts (observation_mismatch)."
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CaError"
+                }
+              }
+            },
+            "description": "Body too large; send smaller parts."
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CaError"
+                }
+              }
+            },
+            "description": "CA Tracker sync is turned off (ingest_disabled); retry later."
           }
         }
       }
@@ -203,6 +304,17 @@
   },
   "components": {
     "schemas": {
+      "AuthSessionRevokeResponse": {
+        "type": "object",
+        "properties": {
+          "revoked": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "revoked"
+        ]
+      },
       "CaAssignment": {
         "type": "object",
         "properties": {
@@ -1084,6 +1196,51 @@
       "NullEnum": {
         "enum": [
           null
+        ]
+      },
+      "UserProfile": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer",
+            "readOnly": true
+          },
+          "user": {
+            "type": "object",
+            "additionalProperties": {},
+            "readOnly": true
+          },
+          "person": {
+            "type": "object",
+            "additionalProperties": {},
+            "nullable": true,
+            "readOnly": true
+          },
+          "masquerade": {
+            "type": "object",
+            "additionalProperties": {},
+            "nullable": true,
+            "readOnly": true
+          },
+          "settings": {},
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "readOnly": true
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time",
+            "readOnly": true
+          }
+        },
+        "required": [
+          "created_at",
+          "id",
+          "masquerade",
+          "person",
+          "updated_at",
+          "user"
         ]
       }
     },

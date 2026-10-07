@@ -139,7 +139,14 @@
     let user = null;
     try {
       const me = await getJson(fetchImpl, "/rest/v1.0/me", null);
-      user = me && typeof me === "object" ? { fullName: text(me.name || me.login) || null } : null;
+      user = me && typeof me === "object"
+        ? {
+            fullName: text(me.name || me.login) || null,
+            // Procore's user id and login (an email) say who this is on every project.
+            id: text(me.id) || null,
+            email: text(me.login).includes("@") ? text(me.login) : null
+          }
+        : null;
     } catch (error) {
       if (error && (error.status === 401 || error.status === 406)) throw error;
     }

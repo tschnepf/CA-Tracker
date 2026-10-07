@@ -273,12 +273,12 @@
                     </DockPanel>
                 </Border>
 
-                <!-- Company server (optional) -->
+                <!-- Workload Tracker (optional) -->
                 <Border Style="{StaticResource Card}" Margin="0,0,0,14">
                     <StackPanel>
-                        <TextBlock Text="COMPANY SERVER (OPTIONAL)" Style="{StaticResource SectionTitle}" />
+                        <TextBlock Text="WORKLOAD TRACKER (OPTIONAL)" Style="{StaticResource SectionTitle}" />
                         <TextBlock Style="{StaticResource Muted}" TextWrapping="Wrap" Margin="0,0,0,10"
-                                   Text="With your company's CA Tracker server, everyone shares what they read from Helix and Procore and the discipline choices made for each project. Your CA folder locations stay on this PC. Without it, everything stays on this PC." />
+                                   Text="Connected to your company's Workload Tracker, CA Tracker sends what it reads from Helix and Procore: item numbers, titles, statuses, due dates and who holds each item, never files or attachments. Items then show on people's My Work. Without it, everything stays on this PC." />
                         <Grid Margin="0,0,0,8" MaxWidth="720" HorizontalAlignment="Left">
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="120" />
@@ -287,26 +287,30 @@
                             <Grid.RowDefinitions>
                                 <RowDefinition Height="Auto" />
                                 <RowDefinition Height="Auto" />
-                                <RowDefinition Height="Auto" />
-                                <RowDefinition Height="Auto" />
                             </Grid.RowDefinitions>
-                            <TextBlock Text="Server address" VerticalAlignment="Center" />
-                            <TextBox x:Name="CentralServerBox" Grid.Column="1" AutomationProperties.Name="Server address" />
+                            <TextBlock Text="Address" VerticalAlignment="Center" />
+                            <TextBox x:Name="WorkloadAddressBox" Grid.Column="1" AutomationProperties.Name="Workload Tracker address" />
                             <TextBlock Grid.Row="1" Grid.Column="1" Style="{StaticResource Muted}" FontSize="12" Margin="0,2,0,6"
                                        Text="For example https://workload.yourcompany.com" />
-                            <TextBlock Grid.Row="2" Text="Access token" VerticalAlignment="Center" />
-                            <PasswordBox x:Name="CentralTokenBox" Grid.Row="2" Grid.Column="1" AutomationProperties.Name="Access token" />
-                            <TextBlock Grid.Row="3" Grid.Column="1" Style="{StaticResource Muted}" FontSize="12" Margin="0,2,0,0" TextWrapping="Wrap"
-                                       Text="From the server's administrator. Leave it empty to keep the token already saved; it is stored encrypted for your Windows user." />
                         </Grid>
                         <StackPanel Orientation="Horizontal">
-                            <Button Content="Save and connect" Click="SaveCentral_Click" Margin="0,0,8,0" />
-                            <Button Content="Share now" Click="ShareCentral_Click" Margin="0,0,8,0" IsEnabled="{Binding IsCentralSetUp}" />
-                            <Button Content="Disconnect…" Click="DisconnectCentral_Click" IsEnabled="{Binding IsCentralSetUp}" />
+                            <Button Content="Connect…" Click="ConnectWorkload_Click" Margin="0,0,8,0" />
+                            <Button Content="Send now" Click="SendWorkload_Click" Margin="0,0,8,0" IsEnabled="{Binding IsWorkloadTrackerPaired}" />
+                            <Button Content="Disconnect…" Click="DisconnectWorkload_Click" IsEnabled="{Binding IsWorkloadTrackerPaired}" />
                         </StackPanel>
-                        <!-- One status line: what just happened, or else how sharing stands. -->
-                        <TextBlock x:Name="CentralStatus" Text="{Binding CentralStatusText}" Margin="0,8,0,0" TextWrapping="Wrap" />
-                        <TextBlock x:Name="CentralMessage" Foreground="{DynamicResource AccentBrush}" Margin="0,8,0,0" TextWrapping="Wrap"
+                        <Expander Header="Paste a token instead" Margin="0,10,0,0" Foreground="{DynamicResource TextSecondary}">
+                            <StackPanel Margin="0,8,0,0" MaxWidth="720" HorizontalAlignment="Left">
+                                <TextBlock Style="{StaticResource Muted}" FontSize="12" TextWrapping="Wrap" Margin="0,0,0,6"
+                                           Text="If the sign-in window can't hand the token over: in Workload Tracker open Profile, CA Tracker, press Connect CA Tracker, copy the token and paste it here." />
+                                <DockPanel>
+                                    <Button DockPanel.Dock="Right" Content="Connect with this token" Click="PasteWorkloadToken_Click" Margin="8,0,0,0" />
+                                    <PasswordBox x:Name="WorkloadTokenBox" AutomationProperties.Name="Workload Tracker token" />
+                                </DockPanel>
+                            </StackPanel>
+                        </Expander>
+                        <!-- One status line: what just happened, or else how sending stands. -->
+                        <TextBlock x:Name="WorkloadStatus" Text="{Binding WorkloadTrackerStatusText}" Margin="0,8,0,0" TextWrapping="Wrap" />
+                        <TextBlock x:Name="WorkloadMessage" Foreground="{DynamicResource AccentBrush}" Margin="0,8,0,0" TextWrapping="Wrap"
                                    Visibility="Collapsed" />
                     </StackPanel>
                 </Border>
