@@ -10,11 +10,12 @@ namespace SmcCaTracker.App.Views;
 public enum SettingsSection
 {
     General,
-    Connections
+    Connections,
+    People
 }
 
 /// <summary>
-/// The Settings page inside the main window: a sidebar with General settings and Connections.
+/// The Settings page inside the main window: a sidebar with General settings, Connections and People.
 /// General edits a copy of the settings and applies it on Save (the theme is saved as soon as it's
 /// picked); leaving with unsaved changes asks first. Connections shows each site's sign-in and last
 /// sync, with Sign in and Sync buttons handled by the main window.
@@ -56,7 +57,7 @@ public partial class SettingsPage : UserControl
         settingsSource = source;
         paths = appPaths;
         Populate(source());
-        SectionList.SelectedItem = section == SettingsSection.Connections ? ConnectionsItem : GeneralItem;
+        SectionList.SelectedItem = ItemFor(section);
         ShowSection(section);
     }
 
@@ -197,15 +198,24 @@ public partial class SettingsPage : UserControl
     /// <summary>Switches section without reloading the settings being edited.</summary>
     public void ShowSectionFromOutside(SettingsSection section)
     {
-        SectionList.SelectedItem = section == SettingsSection.Connections ? ConnectionsItem : GeneralItem;
+        SectionList.SelectedItem = ItemFor(section);
         ShowSection(section);
     }
+
+    private ListBoxItem ItemFor(SettingsSection section) => section switch
+    {
+        SettingsSection.Connections => ConnectionsItem,
+        SettingsSection.People => PeopleItem,
+        _ => GeneralItem
+    };
 
     private void Section_Changed(object sender, SelectionChangedEventArgs e)
     {
         if (SectionList.SelectedItem is not null)
         {
-            ShowSection(SectionList.SelectedItem == ConnectionsItem ? SettingsSection.Connections : SettingsSection.General);
+            ShowSection(SectionList.SelectedItem == ConnectionsItem ? SettingsSection.Connections
+                : SectionList.SelectedItem == PeopleItem ? SettingsSection.People
+                : SettingsSection.General);
         }
     }
 
@@ -221,6 +231,11 @@ public partial class SettingsPage : UserControl
 
         GeneralPanel.Visibility = section == SettingsSection.General ? Visibility.Visible : Visibility.Collapsed;
         ConnectionsPanel.Visibility = section == SettingsSection.Connections ? Visibility.Visible : Visibility.Collapsed;
+        PeoplePanel.Visibility = section == SettingsSection.People ? Visibility.Visible : Visibility.Collapsed;
+        if (section == SettingsSection.People && DataContext is MainViewModel viewModel)
+        {
+            _ = PeoplePanel.OpenAsync(viewModel);
+        }
     }
 
     private void Back_Click(object sender, RoutedEventArgs e)

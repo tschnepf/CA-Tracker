@@ -65,8 +65,10 @@ On first start, the JSON files of earlier versions (`settings.json`, `snapshots\
   while it is open. In **Edit project**, **Workload Tracker project → Choose…** binds a project to an
   existing, running tracker project (its items are then filed there); after that, **Assign to…** (an
   item's right-click or ▾ menu, or the action bar for checked items) assigns people on that project's
-  team, and **My work** lists items assigned to you first. See [`contract/README.md`](contract/README.md)
-  for the contract.
+  team, and **My work** lists items assigned to you first. **Settings → People** links the people seen
+  in Helix and Procore to Workload Tracker people (names that match the project's team are suggested and
+  linked only when confirmed), so the items in their court show on their My Work. See
+  [`contract/README.md`](contract/README.md) for the contract.
 - **Updates:** publish each new installer with its `latest.json` to the update location; every CA
   Tracker offers **Update to <version>** in the title bar and installs it quietly.
 - **Problems:** the log (Settings → Open the log folder) records timings, errors and crashes.
