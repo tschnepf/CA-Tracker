@@ -1,5 +1,7 @@
 using System.IO;
 using System.Net.Http;
+using System.Security.Cryptography;
+using System.Text;
 using System.Windows;
 using SmcCaTracker.App.Services;
 using SmcCaTracker.App.ViewModels;
@@ -25,10 +27,14 @@ public partial class App : Application
     protected override void OnStartup(StartupEventArgs e)
     {
         base.OnStartup(e);
-        var paths = AppPaths.Default;
+        var paths = AppPaths.ForArguments(e.Args);
 
-        // One CA Tracker at a time: two copies would overwrite each other's changes.
-        instance = new Mutex(true, @"Local\SMC-CA-Tracker", out var first);
+        // One CA Tracker at a time: two copies would overwrite each other's changes. A copy run with
+        // --data-folder has data of its own, so it only excludes another copy on the same folder.
+        var instanceName = paths.IsDefault
+            ? @"Local\SMC-CA-Tracker"
+            : $@"Local\SMC-CA-Tracker-{Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(paths.Root.ToLowerInvariant())))[..16]}";
+        instance = new Mutex(true, instanceName, out var first);
         if (!first)
         {
             MessageBox.Show("CA Tracker is already open.", "CA Tracker", MessageBoxButton.OK, MessageBoxImage.Information);

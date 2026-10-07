@@ -415,3 +415,19 @@ public sealed class WorkloadTrackerSyncTests : IDisposable
         Assert.Equal(expected, WorkloadTrackerApi.NormalizeAddress(address));
     }
 }
+
+public class AppPathsTests
+{
+    [Fact]
+    public void ADataFolderArgumentRunsASeparateCopy()
+    {
+        var test = AppPaths.ForArguments(["--data-folder", @"C:\Temp\ca-tracker-test"]);
+        Assert.Equal(@"C:\Temp\ca-tracker-test", test.Root);
+        Assert.False(test.IsDefault);
+        Assert.Equal(@"C:\Temp\ca-tracker-test\tracker.db", test.DatabaseFile);
+
+        Assert.True(AppPaths.ForArguments([]).IsDefault);
+        Assert.True(AppPaths.ForArguments(["--data-folder"]).IsDefault);
+        Assert.True(AppPaths.ForArguments(["--something-else", "x"]).IsDefault);
+    }
+}

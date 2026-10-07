@@ -77,6 +77,14 @@ powershell -ExecutionPolicy Bypass -File windows-helper\build.ps1
 This runs the tests and publishes `SmcCaTracker.exe` into `windows-helper\dist`. Use `-SelfContained` to build a copy for PCs without .NET 10 installed.
 Close the app before rebuilding, because Windows locks a running exe.
 
+To try a build without touching your real data, run it with its own data folder; it can stay open
+beside the installed app. A newer build upgrades the database it opens, and older versions can't use
+an upgraded one.
+
+```powershell
+windows-helper\dist\SmcCaTracker.exe --data-folder C:\Temp\ca-tracker-test
+```
+
 ## First run
 
 1. Run `windows-helper\dist\SmcCaTracker.exe`.

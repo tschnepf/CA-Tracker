@@ -16,6 +16,27 @@ public sealed class AppPaths
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
         "SMC-CA-Tracker"));
 
+    /// <summary>
+    /// Where this run keeps its data: <c>--data-folder &lt;path&gt;</c> runs a separate copy (database, logs,
+    /// browser sign-ins) for testing a build without touching the real one; otherwise <see cref="Default"/>.
+    /// </summary>
+    public static AppPaths ForArguments(IReadOnlyList<string> args)
+    {
+        for (var index = 0; index < args.Count - 1; index++)
+        {
+            if (string.Equals(args[index], "--data-folder", StringComparison.OrdinalIgnoreCase) && !string.IsNullOrWhiteSpace(args[index + 1]))
+            {
+                return new AppPaths(Path.GetFullPath(args[index + 1]));
+            }
+        }
+
+        return Default;
+    }
+
+    /// <summary>True for the usual %LOCALAPPDATA%\SMC-CA-Tracker folder.</summary>
+    public bool IsDefault => string.Equals(
+        Path.TrimEndingDirectorySeparator(Root), Path.TrimEndingDirectorySeparator(Default.Root), StringComparison.OrdinalIgnoreCase);
+
     public string Root { get; }
     public string SnapshotsDirectory => Path.Combine(Root, "snapshots");
     public string SettingsFile => Path.Combine(Root, "settings.json");
