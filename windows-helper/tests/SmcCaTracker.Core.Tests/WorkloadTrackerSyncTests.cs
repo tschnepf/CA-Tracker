@@ -513,6 +513,42 @@ public sealed class WorkloadTrackerSyncTests : IDisposable
         Assert.Equal(("552", (string?)null), (holders[1].ProviderUserId, holders[1].Email));
     }
 
+    [Fact]
+    public async Task ACallWhoseConnectionDropsIsRepeatedOnceStraightAway()
+    {
+        var flaky = new DroppingHandler(drops: 1);
+        var api = new WorkloadTrackerApi(new HttpClient(flaky), TimeSpan.Zero);
+        var result = await api.GetMeAsync(Address, "token-1", Guid.NewGuid().ToString(), CancellationToken.None);
+        Assert.True(result.Ok);
+        Assert.Equal(2, flaky.Calls);
+
+        var down = new DroppingHandler(drops: int.MaxValue);
+        api = new WorkloadTrackerApi(new HttpClient(down), TimeSpan.Zero);
+        result = await api.GetMeAsync(Address, "token-1", Guid.NewGuid().ToString(), CancellationToken.None);
+        Assert.Equal((0, 2), (result.Status, down.Calls));
+        Assert.Contains("closed", result.NetworkError);
+    }
+
+    /// <summary>Drops the connection on the first calls, then answers.</summary>
+    private sealed class DroppingHandler(int drops) : HttpMessageHandler
+    {
+        public int Calls { get; private set; }
+
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            Calls++;
+            if (Calls <= drops)
+            {
+                throw new HttpRequestException("The server closed the connection before answering.");
+            }
+
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent("""{"id": 1, "user": {"id": 7, "username": "casey"}}""", Encoding.UTF8, "application/json")
+            });
+        }
+    }
+
     [Theory]
     [InlineData("tracker.example", "https://tracker.example")]
     [InlineData("https://tracker.example/profile?x=1", "https://tracker.example")]

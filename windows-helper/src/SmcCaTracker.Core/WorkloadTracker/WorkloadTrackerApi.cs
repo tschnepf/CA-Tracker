@@ -56,10 +56,13 @@ public sealed class WorkloadTrackerApi
     public const string ClientIdHeader = "X-CA-Client-Id";
 
     private readonly HttpClient http;
+    private readonly TimeSpan retryDelay;
 
-    public WorkloadTrackerApi(HttpClient http)
+    /// <param name="retryDelay">Wait before repeating a call the connection dropped (default half a second).</param>
+    public WorkloadTrackerApi(HttpClient http, TimeSpan? retryDelay = null)
     {
         this.http = http;
+        this.retryDelay = retryDelay ?? TimeSpan.FromMilliseconds(500);
     }
 
     /// <summary>
@@ -209,36 +212,48 @@ public sealed class WorkloadTrackerApi
         return new TrackerIdentity(userId, userName, personId, personName);
     }
 
+    /// <summary>
+    /// Sends one call. A call whose connection drops before any answer (a reused connection the server had
+    /// just closed) is repeated once: every call here is safe to repeat, since observation parts are stored
+    /// by id, assignments are decided by their time, and the rest only read.
+    /// </summary>
     private async Task<ApiResult> SendAsync(HttpMethod method, string address, string path, string token, string clientId, string? json, CancellationToken cancel,
         string? ifNoneMatch = null)
     {
-        using var request = new HttpRequestMessage(method, address.TrimEnd('/') + path);
-        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
-        request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
-        request.Headers.TryAddWithoutValidation(ClientIdHeader, clientId);
-        if (!string.IsNullOrEmpty(ifNoneMatch))
+        for (var attempt = 1; ; attempt++)
         {
-            request.Headers.TryAddWithoutValidation("If-None-Match", ifNoneMatch);
-        }
+            using var request = new HttpRequestMessage(method, address.TrimEnd('/') + path);
+            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+            request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
+            request.Headers.TryAddWithoutValidation(ClientIdHeader, clientId);
+            if (!string.IsNullOrEmpty(ifNoneMatch))
+            {
+                request.Headers.TryAddWithoutValidation("If-None-Match", ifNoneMatch);
+            }
 
-        if (json is not null)
-        {
-            request.Content = new StringContent(json, Encoding.UTF8, "application/json");
-        }
+            if (json is not null)
+            {
+                request.Content = new StringContent(json, Encoding.UTF8, "application/json");
+            }
 
-        try
-        {
-            using var response = await http.SendAsync(request, cancel).ConfigureAwait(false);
-            var body = await response.Content.ReadAsStringAsync(cancel).ConfigureAwait(false);
-            return new ApiResult((int)response.StatusCode, body, ETag: response.Headers.ETag?.ToString());
-        }
-        catch (HttpRequestException error)
-        {
-            return new ApiResult(0, "", error.Message);
-        }
-        catch (TaskCanceledException) when (!cancel.IsCancellationRequested)
-        {
-            return new ApiResult(0, "", "Workload Tracker didn't answer in time.");
+            try
+            {
+                using var response = await http.SendAsync(request, cancel).ConfigureAwait(false);
+                var body = await response.Content.ReadAsStringAsync(cancel).ConfigureAwait(false);
+                return new ApiResult((int)response.StatusCode, body, ETag: response.Headers.ETag?.ToString());
+            }
+            catch (HttpRequestException) when (attempt == 1 && !cancel.IsCancellationRequested)
+            {
+                await Task.Delay(retryDelay, cancel).ConfigureAwait(false);
+            }
+            catch (HttpRequestException error)
+            {
+                return new ApiResult(0, "", error.Message);
+            }
+            catch (TaskCanceledException) when (!cancel.IsCancellationRequested)
+            {
+                return new ApiResult(0, "", "Workload Tracker didn't answer in time.");
+            }
         }
     }
 }
