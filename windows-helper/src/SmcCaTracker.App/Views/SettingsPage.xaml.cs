@@ -308,6 +308,31 @@ public partial class SettingsPage : UserControl
         }
     }
 
+    private async void ExportFixtures_Click(object sender, RoutedEventArgs e)
+    {
+        if (DataContext is not MainViewModel model)
+        {
+            return;
+        }
+
+        ErrorText.Text = "";
+        try
+        {
+            var (folder, problem) = await model.ExportWorkloadTrackerFixturesAsync();
+            if (folder is null)
+            {
+                ErrorText.Text = $"No fixtures exported: {problem}";
+                return;
+            }
+
+            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("explorer.exe", $"\"{folder}\"") { UseShellExecute = true });
+        }
+        catch (Exception error) when (error is System.IO.IOException or UnauthorizedAccessException or System.ComponentModel.Win32Exception)
+        {
+            ErrorText.Text = $"No fixtures exported: {error.Message}";
+        }
+    }
+
     private async void ClearBrowser_Click(object sender, RoutedEventArgs e) => await SignOutAsync(forgetPasswords: false);
 
     private async void ForgetBrowser_Click(object sender, RoutedEventArgs e) => await SignOutAsync(forgetPasswords: true);

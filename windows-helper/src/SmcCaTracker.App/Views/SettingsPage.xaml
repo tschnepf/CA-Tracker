@@ -160,11 +160,18 @@
                                            Text="Timings and errors, one file per day. Send today's file along when something is slow or fails." />
                             </DockPanel>
                             <Expander Header="Developer tools" Margin="0,12,0,0" Foreground="{DynamicResource TextSecondary}">
-                                <DockPanel Margin="0,8,0,0">
-                                    <Button DockPanel.Dock="Left" Content="Export a Helix test sample" Click="ExportSample_Click" VerticalAlignment="Center" />
-                                    <TextBlock Style="{StaticResource Muted}" FontSize="12" Margin="12,0,0,0" VerticalAlignment="Center"
-                                               Text="Saves an anonymized copy of the selected Helix project's items (names, companies and titles replaced), so a wrong ball-in-court result can become a test case." />
-                                </DockPanel>
+                                <StackPanel Margin="0,8,0,0">
+                                    <DockPanel>
+                                        <Button DockPanel.Dock="Left" Content="Export a Helix test sample" Click="ExportSample_Click" VerticalAlignment="Center" />
+                                        <TextBlock Style="{StaticResource Muted}" FontSize="12" Margin="12,0,0,0" VerticalAlignment="Center"
+                                                   Text="Saves an anonymized copy of the selected Helix project's items (names, companies and titles replaced), so a wrong ball-in-court result can become a test case." />
+                                    </DockPanel>
+                                    <DockPanel Margin="0,8,0,0">
+                                        <Button DockPanel.Dock="Left" Content="Export Workload Tracker fixtures" Click="ExportFixtures_Click" VerticalAlignment="Center" />
+                                        <TextBlock Style="{StaticResource Muted}" FontSize="12" Margin="12,0,0,0" VerticalAlignment="Center"
+                                                   Text="Saves anonymized observations of every Helix and Procore project's items, as Workload Tracker would receive them (people, companies, emails, titles, ids and links replaced), as test fixtures for the Workload Tracker connection." />
+                                    </DockPanel>
+                                </StackPanel>
                             </Expander>
                         </StackPanel>
                     </Border>

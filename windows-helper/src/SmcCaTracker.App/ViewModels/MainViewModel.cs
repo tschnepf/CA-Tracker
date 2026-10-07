@@ -15,6 +15,7 @@ using SmcCaTracker.Core.Procore;
 using SmcCaTracker.Core.Refresh;
 using SmcCaTracker.Core.Storage;
 using SmcCaTracker.Core.Updates;
+using SmcCaTracker.Core.WorkloadTracker;
 
 namespace SmcCaTracker.App.ViewModels;
 
@@ -3543,6 +3544,33 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         await File.WriteAllTextAsync(file, json);
         AppLog.Info("export", $"Exported an anonymized Helix sample to {file}.");
         return (file, null);
+    }
+
+    /// <summary>
+    /// Saves anonymized Workload Tracker observations built from the app's own data to a new folder in the
+    /// exports folder: projects set up in the app as item observations (a sample of up to 600 items each),
+    /// the others as catalog observations. Returns the folder, or a reason it couldn't.
+    /// </summary>
+    public async Task<(string? Folder, string? Problem)> ExportWorkloadTrackerFixturesAsync()
+    {
+        var snapshots = store.Snapshots();
+        if (snapshots.Count == 0)
+        {
+            return (null, "Refresh a Helix or Procore project first.");
+        }
+
+        var projects = store.SettingsCopy().Projects;
+        var files = await Task.Run(() => FixtureExport.Build(snapshots, projects, TrackerVersion.Current));
+
+        var folder = Path.Combine(Paths.ExportsDirectory, $"workload-tracker-fixtures-{DateTime.Now:yyyyMMdd-HHmmss}");
+        Directory.CreateDirectory(folder);
+        foreach (var file in files)
+        {
+            await File.WriteAllTextAsync(Path.Combine(folder, file.Name), file.Json);
+        }
+
+        AppLog.Info("export", $"Exported {files.Count} anonymized Workload Tracker fixtures to {folder}.");
+        return (folder, null);
     }
 
     // ---- Company settings and updates ------------------------------------------------------

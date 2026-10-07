@@ -1,0 +1,158 @@
+{
+  "schemaVersion": "1.0",
+  "appVersion": "3.4.0",
+  "clientId": "00000000-0000-4000-8000-000000000001",
+  "observationId": "00000000-0000-4000-8000-000000000001",
+  "part": 1,
+  "totalParts": 1,
+  "observationKind": "items",
+  "providerProject": {
+    "provider": "procore",
+    "host": "app.procore.com",
+    "accountId": "account-1",
+    "projectId": "project-1",
+    "name": "Project 1",
+    "company": null
+  },
+  "bindings": [],
+  "scannedAt": "2026-10-07T14:00:00+00:00",
+  "coverage": [
+    {
+      "itemType": "rfi",
+      "scannedAt": "2026-10-07T14:00:00+00:00",
+      "detailsComplete": true,
+      "presenceVerified": true,
+      "fullSet": true,
+      "itemCount": 3,
+      "openCount": 2
+    },
+    {
+      "itemType": "submittal",
+      "scannedAt": "2026-10-07T13:58:00+00:00",
+      "detailsComplete": true,
+      "presenceVerified": true,
+      "fullSet": true,
+      "itemCount": 2,
+      "openCount": 2
+    }
+  ],
+  "collector": {
+    "providerUserId": null,
+    "email": null,
+    "name": "Person 1",
+    "company": "Company A",
+    "companyId": "company-1"
+  },
+  "items": [
+    {
+      "itemType": "rfi",
+      "providerItemId": "item-1",
+      "number": "BB-RFI-012",
+      "revision": null,
+      "title": "Item BB-RFI-012",
+      "status": "Open",
+      "closed": false,
+      "dueDate": "2026-10-12",
+      "createdDate": "2026-09-27T14:00:00Z",
+      "scopeTag": "base_build",
+      "sourceUrl": "https://app.procore.com/project-1/project/rfi/show/item-1",
+      "holders": [
+        {
+          "name": "Person 2",
+          "company": "Company B",
+          "companyId": "company-2",
+          "providerUserId": null,
+          "email": null,
+          "state": "current",
+          "since": "2026-10-05T14:00:00+00:00"
+        }
+      ]
+    },
+    {
+      "itemType": "rfi",
+      "providerItemId": "item-2",
+      "number": "TFO-RFI-004",
+      "revision": null,
+      "title": "Item TFO-RFI-004",
+      "status": "Closed",
+      "closed": true,
+      "dueDate": null,
+      "createdDate": "2026-09-27T14:00:00Z",
+      "scopeTag": "tenant_fit_out",
+      "sourceUrl": "https://app.procore.com/project-1/project/rfi/show/item-2",
+      "holders": []
+    },
+    {
+      "itemType": "rfi",
+      "providerItemId": "item-3",
+      "number": "RFI-020",
+      "revision": null,
+      "title": "Item RFI-020",
+      "status": "Open",
+      "closed": false,
+      "dueDate": "2026-10-09T21:30:00Z",
+      "createdDate": "2026-09-27T14:00:00Z",
+      "scopeTag": "unlabeled",
+      "sourceUrl": "https://app.procore.com/project-1/project/rfi/show/item-3",
+      "holders": [
+        {
+          "name": "Person 1",
+          "company": "Company A",
+          "companyId": "company-1",
+          "providerUserId": null,
+          "email": null,
+          "state": "upcoming",
+          "since": null
+        },
+        {
+          "name": "Person 2",
+          "company": "Company B",
+          "companyId": "company-2",
+          "providerUserId": null,
+          "email": null,
+          "state": "current",
+          "since": "2026-10-05T14:00:00+00:00"
+        }
+      ]
+    },
+    {
+      "itemType": "submittal",
+      "providerItemId": "item-4",
+      "number": "23 05 00-1",
+      "revision": "0",
+      "title": "Item 23 05 00-1",
+      "status": "Revise and Resubmit",
+      "closed": false,
+      "dueDate": "2026-09-30",
+      "createdDate": "2026-09-27T14:00:00Z",
+      "scopeTag": "unlabeled",
+      "sourceUrl": "https://app.procore.com/project-1/project/submittal_logs/item-4",
+      "holders": []
+    },
+    {
+      "itemType": "submittal",
+      "providerItemId": "item-5",
+      "number": "23 05 00-1",
+      "revision": "1",
+      "title": "Item 23 05 00-1",
+      "status": "Open",
+      "closed": false,
+      "dueDate": "2026-10-20",
+      "createdDate": "2026-09-27T14:00:00Z",
+      "scopeTag": "unlabeled",
+      "sourceUrl": "https://app.procore.com/project-1/project/submittal_logs/item-5",
+      "holders": [
+        {
+          "name": "Person 2",
+          "company": "Company B",
+          "companyId": "company-2",
+          "providerUserId": null,
+          "email": null,
+          "state": "current",
+          "since": "2026-10-05T14:00:00+00:00"
+        }
+      ]
+    }
+  ],
+  "removed": []
+}

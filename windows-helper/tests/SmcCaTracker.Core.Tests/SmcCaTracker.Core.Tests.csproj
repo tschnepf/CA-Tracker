@@ -5,6 +5,7 @@
     <IsTestProject>true</IsTestProject>
   </PropertyGroup>
   <ItemGroup>
+    <PackageReference Include="JsonSchema.Net" Version="9.4.0" />
     <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.13.0" />
     <PackageReference Include="xunit" Version="2.9.3" />
     <PackageReference Include="xunit.runner.visualstudio" Version="3.1.0" />
@@ -15,6 +16,8 @@
   <ItemGroup>
     <ProjectReference Include="..\..\src\SmcCaTracker.Core\SmcCaTracker.Core.csproj" />
     <ProjectReference Include="..\..\src\SmcCaTracker.Data\SmcCaTracker.Data.csproj" />
+    <!-- The Workload Tracker contract generator, so the tests can check the generated DTOs. -->
+    <ProjectReference Include="..\..\tools\SmcCaTracker.ContractGen\SmcCaTracker.ContractGen.csproj" />
   </ItemGroup>
   <ItemGroup>
     <!-- App code without WPF, tested here. -->

@@ -1,0 +1,1098 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "Workload Tracker API (CA Tracker subset)",
+    "version": "0.1.0",
+    "x-source": {
+      "repository": "workload-tracker",
+      "file": "backend/openapi.json",
+      "commit": "297478a230cd8466bbf475db060a63d0008c9c68"
+    }
+  },
+  "paths": {
+    "/api/ca/assignments/": {
+      "get": {
+        "operationId": "ca_assignments_retrieve",
+        "description": "Every CA item assignment on one tracker project the user can view, for read-back.",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "project",
+            "schema": {
+              "type": "integer"
+            },
+            "description": "Tracker project id.",
+            "required": true
+          }
+        ],
+        "tags": [
+          "ca"
+        ],
+        "security": [
+          {
+            "cookieAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CaProjectAssignments"
+                }
+              }
+            },
+            "description": ""
+          },
+          "304": {
+            "description": "Not modified (ETag)."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CaError"
+                }
+              }
+            },
+            "description": "Invalid body (code invalid) or unsupported schemaVersion."
+          },
+          "501": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CaError"
+                }
+              }
+            },
+            "description": "Not implemented yet."
+          }
+        }
+      },
+      "post": {
+        "operationId": "ca_assignments_create",
+        "description": "Assign or unassign people on CA items, idempotently; per row the latest assignedAt wins.",
+        "tags": [
+          "ca"
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CaAssignmentBatchRequest"
+              }
+            },
+            "application/x-www-form-urlencoded": {
+              "schema": {
+                "$ref": "#/components/schemas/CaAssignmentBatchRequest"
+              }
+            },
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/CaAssignmentBatchRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "security": [
+          {
+            "cookieAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CaAssignmentBatchResult"
+                }
+              }
+            },
+            "description": ""
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CaError"
+                }
+              }
+            },
+            "description": "Invalid body (code invalid) or unsupported schemaVersion."
+          },
+          "501": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CaError"
+                }
+              }
+            },
+            "description": "Not implemented yet."
+          }
+        }
+      }
+    },
+    "/api/ca/observations/": {
+      "post": {
+        "operationId": "ca_observations_create",
+        "description": "Store one part of a scan of one provider project. Parts are idempotent: a retry of a stored part returns the stored result.",
+        "tags": [
+          "ca"
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CaObservationPartRequest"
+              }
+            },
+            "application/x-www-form-urlencoded": {
+              "schema": {
+                "$ref": "#/components/schemas/CaObservationPartRequest"
+              }
+            },
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/CaObservationPartRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "security": [
+          {
+            "cookieAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CaObservationResult"
+                }
+              }
+            },
+            "description": ""
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CaError"
+                }
+              }
+            },
+            "description": "Invalid body (code invalid) or unsupported schemaVersion."
+          },
+          "501": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CaError"
+                }
+              }
+            },
+            "description": "Not implemented yet."
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "CaAssignment": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer"
+          },
+          "trackerProjectId": {
+            "type": "integer"
+          },
+          "providerProject": {
+            "$ref": "#/components/schemas/CaProviderProjectRef"
+          },
+          "itemType": {
+            "$ref": "#/components/schemas/CaItemTypeEnum"
+          },
+          "number": {
+            "type": "string"
+          },
+          "personId": {
+            "type": "integer"
+          },
+          "personName": {
+            "type": "string"
+          },
+          "assignedByName": {
+            "type": "string",
+            "nullable": true
+          },
+          "assignedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "active": {
+            "type": "boolean"
+          },
+          "completedAt": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true,
+            "description": "Set when the item closed or was removed in the provider."
+          }
+        },
+        "required": [
+          "active",
+          "assignedAt",
+          "assignedByName",
+          "completedAt",
+          "id",
+          "itemType",
+          "number",
+          "personId",
+          "personName",
+          "providerProject",
+          "trackerProjectId"
+        ]
+      },
+      "CaAssignmentBatchRequest": {
+        "type": "object",
+        "properties": {
+          "assignments": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CaAssignmentWriteRequest"
+            },
+            "maxItems": 500,
+            "minItems": 1
+          }
+        },
+        "required": [
+          "assignments"
+        ]
+      },
+      "CaAssignmentBatchResult": {
+        "type": "object",
+        "properties": {
+          "results": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CaAssignmentWriteResult"
+            }
+          }
+        },
+        "required": [
+          "results"
+        ]
+      },
+      "CaAssignmentOutcomeEnum": {
+        "enum": [
+          "created",
+          "updated",
+          "unchanged",
+          "stale",
+          "rejected"
+        ],
+        "type": "string",
+        "description": "* `created` - Created\n* `updated` - Updated\n* `unchanged` - Unchanged\n* `stale` - Older than the stored assignment\n* `rejected` - Rejected"
+      },
+      "CaAssignmentRejectionEnum": {
+        "enum": [
+          "project_not_visible",
+          "project_not_bound",
+          "person_not_found",
+          "person_inactive"
+        ],
+        "type": "string",
+        "description": "* `project_not_visible` - Project not visible to the user\n* `project_not_bound` - Provider project not bound to the tracker project\n* `person_not_found` - Person not found\n* `person_inactive` - Person inactive"
+      },
+      "CaAssignmentWriteRequest": {
+        "type": "object",
+        "description": "Assign or unassign one person on one item lineage (provider project, type and number).",
+        "properties": {
+          "trackerProjectId": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "The bound tracker project whose team the person was chosen from."
+          },
+          "providerProject": {
+            "$ref": "#/components/schemas/CaProviderProjectRefRequest"
+          },
+          "itemType": {
+            "$ref": "#/components/schemas/CaItemTypeEnum"
+          },
+          "number": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64
+          },
+          "personId": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "active": {
+            "type": "boolean",
+            "description": "false unassigns."
+          },
+          "assignedAt": {
+            "type": "string",
+            "format": "date-time",
+            "description": "When the user made the change; the latest change wins."
+          }
+        },
+        "required": [
+          "active",
+          "assignedAt",
+          "itemType",
+          "number",
+          "personId",
+          "providerProject",
+          "trackerProjectId"
+        ]
+      },
+      "CaAssignmentWriteResult": {
+        "type": "object",
+        "properties": {
+          "index": {
+            "type": "integer",
+            "description": "Position of the row in the request."
+          },
+          "outcome": {
+            "$ref": "#/components/schemas/CaAssignmentOutcomeEnum"
+          },
+          "reason": {
+            "nullable": true,
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/CaAssignmentRejectionEnum"
+              },
+              {
+                "$ref": "#/components/schemas/NullEnum"
+              }
+            ]
+          },
+          "assignment": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/CaAssignment"
+              }
+            ],
+            "nullable": true
+          }
+        },
+        "required": [
+          "assignment",
+          "index",
+          "outcome",
+          "reason"
+        ]
+      },
+      "CaBindingAssertionRequest": {
+        "type": "object",
+        "description": "One local project entry's choice of tracker project for this provider project.",
+        "properties": {
+          "trackerProjectId": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "scope": {
+            "$ref": "#/components/schemas/CaBindingScopeEnum"
+          },
+          "includeUnlabeled": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "includeUnlabeled",
+          "scope",
+          "trackerProjectId"
+        ]
+      },
+      "CaBindingOutcomeEnum": {
+        "enum": [
+          "recorded",
+          "unchanged",
+          "conflict",
+          "rejected"
+        ],
+        "type": "string",
+        "description": "* `recorded` - Recorded\n* `unchanged` - Unchanged\n* `conflict` - Conflicts with another user's binding\n* `rejected` - Rejected"
+      },
+      "CaBindingResult": {
+        "type": "object",
+        "properties": {
+          "scope": {
+            "$ref": "#/components/schemas/CaBindingScopeEnum"
+          },
+          "assertedProjectId": {
+            "type": "integer"
+          },
+          "outcome": {
+            "$ref": "#/components/schemas/CaBindingOutcomeEnum"
+          },
+          "effective": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/CaBoundProject"
+              }
+            ],
+            "nullable": true,
+            "description": "The binding the tracker uses; on a conflict, the other user's choice."
+          }
+        },
+        "required": [
+          "assertedProjectId",
+          "effective",
+          "outcome",
+          "scope"
+        ]
+      },
+      "CaBindingScopeEnum": {
+        "enum": [
+          "whole",
+          "base_build",
+          "tenant_fit_out"
+        ],
+        "type": "string",
+        "description": "* `whole` - Whole project\n* `base_build` - Base Build\n* `tenant_fit_out` - Tenant Fit Out"
+      },
+      "CaBoundProject": {
+        "type": "object",
+        "properties": {
+          "trackerProjectId": {
+            "type": "integer"
+          },
+          "projectNumber": {
+            "type": "string",
+            "nullable": true
+          },
+          "projectName": {
+            "type": "string"
+          },
+          "assertedByName": {
+            "type": "string",
+            "nullable": true
+          },
+          "assertedAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "required": [
+          "assertedAt",
+          "assertedByName",
+          "projectName",
+          "projectNumber",
+          "trackerProjectId"
+        ]
+      },
+      "CaCollectorRequest": {
+        "type": "object",
+        "description": "The provider identity signed in on the desktop that made the scan.",
+        "properties": {
+          "providerUserId": {
+            "type": "string",
+            "nullable": true,
+            "minLength": 1,
+            "maxLength": 64
+          },
+          "email": {
+            "type": "string",
+            "nullable": true,
+            "minLength": 1,
+            "maxLength": 254
+          },
+          "name": {
+            "type": "string",
+            "maxLength": 200
+          },
+          "company": {
+            "type": "string",
+            "nullable": true,
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "companyId": {
+            "type": "string",
+            "nullable": true,
+            "minLength": 1,
+            "maxLength": 64
+          }
+        },
+        "required": [
+          "name"
+        ]
+      },
+      "CaCoverageRequest": {
+        "type": "object",
+        "description": "What one scan saw of one item type.",
+        "properties": {
+          "itemType": {
+            "$ref": "#/components/schemas/CaItemTypeEnum"
+          },
+          "scannedAt": {
+            "type": "string",
+            "format": "date-time",
+            "description": "When this item type was scanned; the latest scan of an item wins."
+          },
+          "detailsComplete": {
+            "type": "boolean",
+            "description": "Every item of this type was read in full."
+          },
+          "presenceVerified": {
+            "type": "boolean",
+            "description": "The scan confirmed which items of this type exist, so removals can be applied."
+          },
+          "fullSet": {
+            "type": "boolean",
+            "description": "The items of this type across all parts are every item the desktop holds (first contact, resendAll, a collapsed outbox), not only changes. With presenceVerified, stored items of this type that are absent are removed."
+          },
+          "itemCount": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Items of this type after the scan."
+          },
+          "openCount": {
+            "type": "integer",
+            "minimum": 0,
+            "nullable": true
+          }
+        },
+        "required": [
+          "detailsComplete",
+          "fullSet",
+          "itemCount",
+          "itemType",
+          "presenceVerified",
+          "scannedAt"
+        ]
+      },
+      "CaError": {
+        "type": "object",
+        "properties": {
+          "code": {
+            "$ref": "#/components/schemas/CaErrorCodeEnum"
+          },
+          "detail": {
+            "type": "string"
+          },
+          "errors": {
+            "type": "object",
+            "additionalProperties": {},
+            "description": "Field errors when code is invalid, keyed like the request body."
+          }
+        },
+        "required": [
+          "code",
+          "detail"
+        ]
+      },
+      "CaErrorCodeEnum": {
+        "enum": [
+          "invalid",
+          "unsupported_schema_version",
+          "observation_mismatch",
+          "ingest_disabled",
+          "not_implemented"
+        ],
+        "type": "string",
+        "description": "* `invalid` - The request body is invalid\n* `unsupported_schema_version` - Update CA Tracker\n* `observation_mismatch` - A part disagrees with earlier parts of the observation\n* `ingest_disabled` - CA ingestion is turned off; retry later\n* `not_implemented` - Not implemented yet"
+      },
+      "CaHolderRequest": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "company": {
+            "type": "string",
+            "nullable": true,
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "companyId": {
+            "type": "string",
+            "nullable": true,
+            "minLength": 1,
+            "maxLength": 64
+          },
+          "providerUserId": {
+            "type": "string",
+            "nullable": true,
+            "minLength": 1,
+            "maxLength": 64
+          },
+          "email": {
+            "type": "string",
+            "nullable": true,
+            "minLength": 1,
+            "maxLength": 254
+          },
+          "state": {
+            "$ref": "#/components/schemas/CaHolderStateEnum"
+          },
+          "since": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          }
+        },
+        "required": [
+          "name",
+          "state"
+        ]
+      },
+      "CaHolderStateEnum": {
+        "enum": [
+          "current",
+          "upcoming"
+        ],
+        "type": "string",
+        "description": "* `current` - Current\n* `upcoming` - Upcoming"
+      },
+      "CaItemRequest": {
+        "type": "object",
+        "properties": {
+          "itemType": {
+            "$ref": "#/components/schemas/CaItemTypeEnum"
+          },
+          "providerItemId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64
+          },
+          "number": {
+            "type": "string",
+            "maxLength": 64
+          },
+          "revision": {
+            "type": "string",
+            "nullable": true,
+            "minLength": 1,
+            "maxLength": 32
+          },
+          "title": {
+            "type": "string",
+            "maxLength": 500
+          },
+          "status": {
+            "type": "string",
+            "maxLength": 100
+          },
+          "closed": {
+            "type": "boolean"
+          },
+          "dueDate": {
+            "type": "string",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}(T\\d{2}:\\d{2}(:\\d{2}(\\.\\d{1,7})?)?(Z|[+-]\\d{2}:\\d{2}))?$",
+            "description": "A date (YYYY-MM-DD) when the provider gives only a day, otherwise a date-time with an offset. Kept as sent so date-only values are not shifted by time zones.",
+            "nullable": true,
+            "minLength": 1,
+            "maxLength": 40
+          },
+          "createdDate": {
+            "type": "string",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}(T\\d{2}:\\d{2}(:\\d{2}(\\.\\d{1,7})?)?(Z|[+-]\\d{2}:\\d{2}))?$",
+            "description": "A date (YYYY-MM-DD) when the provider gives only a day, otherwise a date-time with an offset. Kept as sent so date-only values are not shifted by time zones.",
+            "nullable": true,
+            "minLength": 1,
+            "maxLength": 40
+          },
+          "scopeTag": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/CaItemScopeTagEnum"
+              }
+            ],
+            "description": "Base Build / Tenant Fit Out as detected by the desktop from number, title and contract.\n\n* `base_build` - Base Build\n* `tenant_fit_out` - Tenant Fit Out\n* `unlabeled` - Unlabeled"
+          },
+          "sourceUrl": {
+            "type": "string",
+            "nullable": true,
+            "minLength": 1,
+            "description": "https link to the item or its list; dropped at ingest unless the host is allowlisted.",
+            "maxLength": 2048
+          },
+          "holders": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CaHolderRequest"
+            },
+            "description": "Current and upcoming holders.",
+            "maxItems": 50
+          }
+        },
+        "required": [
+          "closed",
+          "holders",
+          "itemType",
+          "number",
+          "providerItemId",
+          "scopeTag",
+          "status",
+          "title"
+        ]
+      },
+      "CaItemScopeTagEnum": {
+        "enum": [
+          "base_build",
+          "tenant_fit_out",
+          "unlabeled"
+        ],
+        "type": "string",
+        "description": "* `base_build` - Base Build\n* `tenant_fit_out` - Tenant Fit Out\n* `unlabeled` - Unlabeled"
+      },
+      "CaItemTypeEnum": {
+        "enum": [
+          "rfi",
+          "submittal"
+        ],
+        "type": "string",
+        "description": "* `rfi` - RFI\n* `submittal` - Submittal"
+      },
+      "CaObservationCounts": {
+        "type": "object",
+        "properties": {
+          "stored": {
+            "type": "integer",
+            "description": "Items created or changed by this part."
+          },
+          "unchanged": {
+            "type": "integer"
+          },
+          "stale": {
+            "type": "integer",
+            "description": "Items skipped because a later scan is already stored."
+          },
+          "removed": {
+            "type": "integer",
+            "description": "Items removed; non-zero only once the observation is applied."
+          },
+          "unrouted": {
+            "type": "integer",
+            "description": "Items no binding accepts."
+          }
+        },
+        "required": [
+          "removed",
+          "stale",
+          "stored",
+          "unchanged",
+          "unrouted"
+        ]
+      },
+      "CaObservationKindEnum": {
+        "enum": [
+          "items",
+          "catalog"
+        ],
+        "type": "string",
+        "description": "* `items` - Items\n* `catalog` - Catalog"
+      },
+      "CaObservationPartRequest": {
+        "type": "object",
+        "description": "One part of one scan of one provider project (decision D7).\n\nEvery part repeats the envelope. Parts are stored as they arrive; completeness,\nremovals and counts are applied when the last part has arrived.",
+        "properties": {
+          "schemaVersion": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": "^\\d+\\.\\d+$",
+            "maxLength": 16
+          },
+          "appVersion": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 32
+          },
+          "clientId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "observationId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "part": {
+            "type": "integer",
+            "maximum": 200,
+            "minimum": 1
+          },
+          "totalParts": {
+            "type": "integer",
+            "maximum": 200,
+            "minimum": 1
+          },
+          "observationKind": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/CaObservationKindEnum"
+              }
+            ],
+            "description": "items for bound or tracked projects; catalog (counts only) for every other project.\n\n* `items` - Items\n* `catalog` - Catalog"
+          },
+          "providerProject": {
+            "$ref": "#/components/schemas/CaProviderProjectRequest"
+          },
+          "bindings": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CaBindingAssertionRequest"
+            },
+            "maxItems": 3
+          },
+          "scannedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "coverage": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CaCoverageRequest"
+            },
+            "maxItems": 2,
+            "minItems": 1
+          },
+          "collector": {
+            "$ref": "#/components/schemas/CaCollectorRequest"
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CaItemRequest"
+            },
+            "maxItems": 500
+          },
+          "removed": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CaRemovedItemRequest"
+            },
+            "description": "Items gone since the last scan; applied on the last part when presence is verified.",
+            "maxItems": 5000
+          }
+        },
+        "required": [
+          "appVersion",
+          "bindings",
+          "clientId",
+          "collector",
+          "coverage",
+          "items",
+          "observationId",
+          "observationKind",
+          "part",
+          "providerProject",
+          "removed",
+          "scannedAt",
+          "schemaVersion",
+          "totalParts"
+        ]
+      },
+      "CaObservationResult": {
+        "type": "object",
+        "properties": {
+          "observationId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "part": {
+            "type": "integer"
+          },
+          "totalParts": {
+            "type": "integer"
+          },
+          "status": {
+            "$ref": "#/components/schemas/CaObservationStatusEnum"
+          },
+          "partsReceived": {
+            "type": "integer"
+          },
+          "counts": {
+            "$ref": "#/components/schemas/CaObservationCounts"
+          },
+          "bindings": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CaBindingResult"
+            }
+          },
+          "resendAll": {
+            "type": "boolean",
+            "description": "Send complete observations of every project again."
+          },
+          "resendAfterSeconds": {
+            "type": "integer",
+            "nullable": true,
+            "description": "When resendAll is true: wait this long first, so desktops do not resend at once."
+          }
+        },
+        "required": [
+          "bindings",
+          "counts",
+          "observationId",
+          "part",
+          "partsReceived",
+          "resendAfterSeconds",
+          "resendAll",
+          "status",
+          "totalParts"
+        ]
+      },
+      "CaObservationStatusEnum": {
+        "enum": [
+          "pending",
+          "applied"
+        ],
+        "type": "string",
+        "description": "* `pending` - Waiting for more parts\n* `applied` - All parts received and applied"
+      },
+      "CaProjectAssignments": {
+        "type": "object",
+        "properties": {
+          "projectId": {
+            "type": "integer"
+          },
+          "assignments": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CaAssignment"
+            }
+          }
+        },
+        "required": [
+          "assignments",
+          "projectId"
+        ]
+      },
+      "CaProviderEnum": {
+        "enum": [
+          "helix",
+          "procore"
+        ],
+        "type": "string",
+        "description": "* `helix` - Helix\n* `procore` - Procore"
+      },
+      "CaProviderProjectRef": {
+        "type": "object",
+        "properties": {
+          "provider": {
+            "$ref": "#/components/schemas/CaProviderEnum"
+          },
+          "host": {
+            "type": "string",
+            "maxLength": 255
+          },
+          "projectId": {
+            "type": "string",
+            "maxLength": 64
+          }
+        },
+        "required": [
+          "host",
+          "projectId",
+          "provider"
+        ]
+      },
+      "CaProviderProjectRefRequest": {
+        "type": "object",
+        "properties": {
+          "provider": {
+            "$ref": "#/components/schemas/CaProviderEnum"
+          },
+          "host": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 255
+          },
+          "projectId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64
+          }
+        },
+        "required": [
+          "host",
+          "projectId",
+          "provider"
+        ]
+      },
+      "CaProviderProjectRequest": {
+        "type": "object",
+        "properties": {
+          "provider": {
+            "$ref": "#/components/schemas/CaProviderEnum"
+          },
+          "host": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Provider host, e.g. app.procore.com or project.helixteam.com.",
+            "maxLength": 255
+          },
+          "accountId": {
+            "type": "string",
+            "nullable": true,
+            "minLength": 1,
+            "description": "Procore company id; null for Helix.",
+            "maxLength": 64
+          },
+          "projectId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64
+          },
+          "name": {
+            "type": "string",
+            "maxLength": 300
+          },
+          "company": {
+            "type": "string",
+            "nullable": true,
+            "minLength": 1,
+            "maxLength": 200
+          }
+        },
+        "required": [
+          "host",
+          "name",
+          "projectId",
+          "provider"
+        ]
+      },
+      "CaRemovedItemRequest": {
+        "type": "object",
+        "properties": {
+          "itemType": {
+            "$ref": "#/components/schemas/CaItemTypeEnum"
+          },
+          "providerItemId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64
+          }
+        },
+        "required": [
+          "itemType",
+          "providerItemId"
+        ]
+      },
+      "NullEnum": {
+        "enum": [
+          null
+        ]
+      }
+    },
+    "securitySchemes": {
+      "cookieAuth": {
+        "type": "apiKey",
+        "in": "cookie",
+        "name": "sessionid"
+      }
+    }
+  }
+}
