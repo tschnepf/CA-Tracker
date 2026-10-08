@@ -512,8 +512,17 @@ public sealed class RowViewModel : ObservableObject
     public IReadOnlyList<SnapshotHolder> Holders { get; }
     public IReadOnlyList<string> HolderNames { get; }
 
-    /// <summary>Who has it: names, or the court summary when the site doesn't name anyone.</summary>
-    public string HolderText => HolderNames.Count > 0 ? string.Join(", ", HolderNames) : Row.Item is null ? "" : Row.Item.Closed ? "Closed" : CourtText;
+    /// <summary>
+    /// Who has it: names, or the court summary when Helix doesn't name anyone. Procore's Ball In Court is
+    /// shown as Procore has it, so an item nobody holds there (a Draft submittal) is blank.
+    /// </summary>
+    public string HolderText => HolderNames.Count > 0 ? string.Join(", ", HolderNames)
+        : Row.Item is null ? ""
+        : Row.Item.Closed ? "Closed"
+        : IsProcore ? ""
+        : CourtText;
+
+    private bool IsProcore => string.Equals(Comparison.Snapshot?.Provider, Providers.Procore, StringComparison.OrdinalIgnoreCase);
 
     /// <summary>Sorts people A–Z, with items that have nobody named last.</summary>
     public string PersonSortKey => HolderNames.Count > 0 ? HolderNames[0] : "\uffff";
@@ -560,6 +569,9 @@ public sealed class RowViewModel : ObservableObject
         : $"{Title}\nFolder: {LocationText}\\{Row.Folder.Name}\nDouble-click the row (or press Enter) to open the folder.";
     public string ProviderStatus => Row.Item?.Status ?? "";
     public string CourtText { get; }
+
+    /// <summary>Hover text for who has it: whose court it is, or none when that can't be told.</summary>
+    public string? CourtToolTip => CourtText.Length > 0 ? CourtText : null;
     public string FolderName => Row.Folder?.Name ?? "—";
     public string LocationText { get; }
     public string Detail => Row.Detail;
@@ -591,7 +603,7 @@ public sealed class RowViewModel : ObservableObject
         .Where(part => part.Length > 0));
 
     /// <summary>Who has it now and for how long, for the details pane.</summary>
-    public string WithText => HolderNames.Count == 0 ? (Row.Item is null ? "—" : HolderText)
+    public string WithText => HolderNames.Count == 0 ? (HolderText.Length > 0 ? HolderText : "—")
         : DaysInCourt is null ? string.Join(", ", HolderNames)
         : $"{string.Join(", ", HolderNames)} · {DaysInCourtText}";
 

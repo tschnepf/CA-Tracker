@@ -203,6 +203,8 @@ public class CourtTests
         var item = Build.Item("1", "1");
         Assert.Equal(CourtState.Unknown, CourtEvaluator.Evaluate(item, Smc, holdersReported: false));
         Assert.False(CourtEvaluator.IsReturned(item, CourtState.Unknown, new ReturnedRule()));
+        // Nothing stands in for an unknown court: the list shows Procore's Ball In Court as it is.
+        Assert.Equal("", CourtEvaluator.Describe(CourtState.Unknown, Smc));
     }
 }
 
@@ -385,6 +387,25 @@ public class ComparisonAndOperationTests
             var blocked = OperationPlanner.PlanMarkReturned(rows, ProjectComparer.Compare(Snapshot(), mapping, settings));
             Assert.Contains(blocked.Operations, operation => operation.IsBlocked && operation.Title.Contains("RFI-001"));
             Assert.Contains(blocked.Operations, operation => operation.Warning is not null && operation.Title.Contains("RFI-001"));
+        }
+    }
+
+    [Fact]
+    public void MarkingAProcoreItemReturnedWarnsItIsStillOpenWhenWhoseCourtIsUnknown()
+    {
+        var (temp, settings, mapping) = Setup();
+        using (temp)
+        {
+            mapping.Connection = new ProviderConnection { Provider = Providers.Procore, ProjectId = "p1" };
+            // Procore's Ball In Court names people without their company: whose court can't be told.
+            var snapshot = Build.Snapshot(Build.Item("1", "RFI-001", holders: new SnapshotHolder { Name = "Kenton Blaschka", State = "current" }));
+            snapshot.Provider = Providers.Procore;
+            var comparison = ProjectComparer.Compare(snapshot, mapping, settings);
+            var row = Assert.Single(comparison.For(ItemTypes.Rfi).Rows, candidate => candidate.Item?.Number == "RFI-001");
+            Assert.Equal(CourtState.Unknown, row.Court);
+
+            var operation = Assert.Single(OperationPlanner.PlanMarkReturned(new[] { row }, comparison).Operations);
+            Assert.Equal("The provider still shows this as open.", operation.Warning);
         }
     }
 

@@ -74,7 +74,7 @@
                             </DockPanel>
                             <DockPanel Margin="0,3">
                                 <TextBlock Text="With" Style="{StaticResource Label}" />
-                                <TextBlock Text="{Binding WithText}" Style="{StaticResource Value}" ToolTip="{Binding CourtText}" />
+                                <TextBlock Text="{Binding WithText}" Style="{StaticResource Value}" ToolTip="{Binding CourtToolTip}" />
                             </DockPanel>
                             <DockPanel Margin="0,3" Visibility="{Binding HasNext, Converter={StaticResource Visible}}">
                                 <TextBlock Text="Next" Style="{StaticResource Label}" />

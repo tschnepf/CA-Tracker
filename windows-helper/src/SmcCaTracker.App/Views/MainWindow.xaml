@@ -1009,7 +1009,7 @@
                                                 SortMemberPath="PersonSortKey">
                                 <DataGridTextColumn.ElementStyle>
                                     <Style TargetType="TextBlock">
-                                        <Setter Property="ToolTip" Value="{Binding CourtText}" />
+                                        <Setter Property="ToolTip" Value="{Binding CourtToolTip}" />
                                         <Setter Property="TextTrimming" Value="CharacterEllipsis" />
                                         <Setter Property="VerticalAlignment" Value="Center" />
                                     </Style>
