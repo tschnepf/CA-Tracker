@@ -70,8 +70,6 @@ public partial class MainWindow : Window
             viewModel.Dispose();
         };
         ItemPanel.CloseRequested += (_, _) => ShowItemPanel(false);
-        ItemPanel.IsVisibleChanged += (_, _) => Dispatcher.BeginInvoke(new Action(PlaceStatusOverlay), System.Windows.Threading.DispatcherPriority.Loaded);
-        ItemPanel.SizeChanged += (_, _) => PlaceStatusOverlay();
         // An item worked on in Helix's new app: sync its project, as the panel can't see the changes there.
         ItemPanel.ProjectSyncRequested += async helixProjectId => await viewModel.SyncHelixProjectAsync(helixProjectId);
         InitDetailsPanel();
@@ -1244,23 +1242,6 @@ public partial class MainWindow : Window
             project.Connection = window.Result;
             await viewModel.UpdateProjectAsync(project);
         }
-    }
-
-    private void DismissStatus_Click(object sender, RoutedEventArgs e) => viewModel.DismissStatus();
-
-    /// <summary>
-    /// The status card sits in the window's bottom-right corner, or left of the item panel while that is
-    /// open: the panel's browser is drawn over anything WPF puts on top of it.
-    /// </summary>
-    private void PlaceStatusOverlay()
-    {
-        var right = 24.0;
-        if (ItemPanel.IsVisible && Content is FrameworkElement root)
-        {
-            right = Math.Max(right, root.ActualWidth - PanelSplitter.TranslatePoint(new Point(0, 0), root).X + 8);
-        }
-
-        StatusOverlay.Margin = new Thickness(0, 0, right, 24);
     }
 
     private void OpenCaFolder_Click(object sender, RoutedEventArgs e) =>

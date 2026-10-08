@@ -1443,27 +1443,29 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         }
     }
 
-    // Work that ends this quickly (most reads from the saved folder lists) never shows the status at all.
+    // Work that ends this quickly (most reads from the saved folder lists) never shows in the status bar.
     private readonly DispatcherTimer busyShowDelay = new() { Interval = TimeSpan.FromMilliseconds(300) };
 
+    /// <summary>The app's own status shows: work going on once it has taken a moment, or a message.</summary>
+    private bool ShowsOwnStatus => isBusy ? busyShown : statusMessage.Length > 0;
+
     /// <summary>
-    /// The status in the window's bottom-right corner, over the page so nothing moves: work going on
-    /// ("Reading 3 projects…") once it has taken a moment, or a message until it is dismissed or replaced.
+    /// The status bar's text: what the app is doing ("Reading 3 projects…") once it has taken a moment, or
+    /// its last message; otherwise how syncing the shown project went. The bar is always there, so this
+    /// changing never moves the page.
     /// </summary>
-    public bool ShowsStatus => isBusy ? busyShown : statusMessage.Length > 0;
+    public string StatusText => ShowsOwnStatus ? (statusMessage.Length > 0 ? statusMessage : "Working…") : refreshMessage;
 
-    public string StatusText => statusMessage.Length > 0 ? statusMessage : "Working…";
+    public bool HasStatusText => StatusText.Length > 0;
 
-    /// <summary>A message (not work in progress) can be dismissed; while working the status lets clicks through.</summary>
-    public bool CanDismissStatus => !isBusy && statusMessage.Length > 0;
-
-    public void DismissStatus() => StatusMessage = "";
+    /// <summary>The shown project's sync failed (said in the status bar's text).</summary>
+    public bool StatusIsError => !ShowsOwnStatus && refreshMessageIsError && refreshMessage.Length > 0;
 
     private void OnStatusChanged()
     {
-        OnPropertyChanged(nameof(ShowsStatus));
         OnPropertyChanged(nameof(StatusText));
-        OnPropertyChanged(nameof(CanDismissStatus));
+        OnPropertyChanged(nameof(HasStatusText));
+        OnPropertyChanged(nameof(StatusIsError));
     }
 
     /// <summary>Helix and Procore, for the Connections settings page, the sign-in banner and Sync all.</summary>
@@ -2299,10 +2301,6 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
     public string FolderTimestampText => comparison is null || !HasCaFolder
         ? ""
         : $"CA folder rescanned {Formatting.When(comparison.ComparedAt)}";
-
-    public string RefreshMessage => refreshMessage;
-    public bool HasRefreshMessage => refreshMessage.Length > 0;
-    public bool RefreshMessageIsError => refreshMessageIsError;
 
     public string ProjectSubtitle
     {
@@ -3291,9 +3289,7 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
     {
         refreshMessage = message;
         refreshMessageIsError = isError;
-        OnPropertyChanged(nameof(RefreshMessage));
-        OnPropertyChanged(nameof(HasRefreshMessage));
-        OnPropertyChanged(nameof(RefreshMessageIsError));
+        OnStatusChanged();
 
         // How a sync went fades after a while (the times above the list keep it); progress and errors stay.
         refreshMessageHide.Stop();
