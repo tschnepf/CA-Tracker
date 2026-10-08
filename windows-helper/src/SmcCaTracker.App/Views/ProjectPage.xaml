@@ -5,22 +5,31 @@
     <UserControl.Resources>
         <BooleanToVisibilityConverter x:Key="Visible" />
     </UserControl.Resources>
-    <!-- New project / Edit project, shown in place of the project list. Save keeps the page open. -->
-    <Grid Margin="16">
+    <!-- A project's settings, shown in place of its item list (the project list and header stay). Changes save
+         as they are made. -->
+    <Grid Margin="0,10,0,0">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto" />
             <RowDefinition Height="*" />
             <RowDefinition Height="Auto" />
         </Grid.RowDefinitions>
 
-        <StackPanel Grid.Row="0" Margin="4,0,0,12">
-            <TextBlock x:Name="TitleText" FontSize="20" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
+        <StackPanel Grid.Row="0" Margin="4,0,0,10">
+            <TextBlock x:Name="TitleText" Text="Project settings" FontSize="16" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
             <TextBlock Style="{StaticResource Muted}" FontSize="12" Margin="0,2,0,0"
-                       Text="Changes apply when you save. Nothing in the CA folder changes." />
+                       Text="Changes save as you make them, so you can click another project in the list to set it up next. Nothing in the CA folder changes." />
         </StackPanel>
 
-        <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
-            <StackPanel MaxWidth="900" HorizontalAlignment="Left">
+        <!-- A Helix or Procore project with no CA folder yet has no settings until it is set up. -->
+        <Border x:Name="NotSetUpPanel" Grid.Row="1" Style="{StaticResource Card}" VerticalAlignment="Top" Visibility="Collapsed">
+            <StackPanel>
+                <TextBlock x:Name="NotSetUpText" TextWrapping="Wrap" Margin="0,0,0,12" />
+                <Button Content="Set up this project…" Click="SetUp_Click" Style="{StaticResource AccentButton}" HorizontalAlignment="Left" />
+            </StackPanel>
+        </Border>
+
+        <ScrollViewer x:Name="SettingsScroll" Grid.Row="1" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+            <StackPanel MaxWidth="1000" HorizontalAlignment="Left">
                     <Border Style="{StaticResource Card}" Margin="0,0,0,14">
                         <StackPanel>
                             <TextBlock Text="PROJECT" Style="{StaticResource SectionTitle}" />
@@ -68,7 +77,7 @@
                                 <TextBlock x:Name="ConflictText" Foreground="{DynamicResource WarningBrush}" TextWrapping="Wrap" VerticalAlignment="Center" />
                             </DockPanel>
                             <TextBlock x:Name="BindingNote" Style="{StaticResource Muted}" Margin="0,8,0,0" FontSize="12" TextWrapping="Wrap"
-                                       Text="The project in Workload Tracker that this project's RFIs and Submittals belong to. Only existing projects that are running can be chosen; choosing one sends this project's items to it when you save." />
+                                       Text="The project in Workload Tracker that this project's RFIs and Submittals belong to. Only existing projects that are running can be chosen; choosing one sends this project's items to it." />
 
                             <!-- The Workload Tracker project's team, each linked to who they are in Helix or Procore. -->
                             <StackPanel x:Name="TeamPanel" Margin="0,18,0,0" Visibility="Collapsed">
@@ -208,21 +217,14 @@
             </StackPanel>
         </ScrollViewer>
 
-        <Border Grid.Row="2" Style="{StaticResource Card}" Margin="0,14,0,0" Padding="16,10">
-            <DockPanel LastChildFill="False">
+        <Border Grid.Row="2" Style="{StaticResource Card}" Margin="0,10,0,0" Padding="16,10">
+            <DockPanel LastChildFill="True">
                 <Button x:Name="RemoveButton" DockPanel.Dock="Left" Content="Remove from tracker…" Click="Remove_Click" />
-                <TextBlock x:Name="ErrorText" DockPanel.Dock="Left" Foreground="{DynamicResource DangerBrush}"
-                           TextWrapping="Wrap" VerticalAlignment="Center" MaxWidth="420" Margin="12,0,0,0" />
-                <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
-                    <TextBlock x:Name="SavedText" Text="Saved" Foreground="{DynamicResource SuccessBrush}" VerticalAlignment="Center"
-                               Margin="0,0,12,0" Visibility="Collapsed" />
-                    <TextBlock x:Name="UnsavedText" Text="Unsaved changes" Foreground="{DynamicResource TextSecondary}" VerticalAlignment="Center"
-                               Margin="0,0,12,0" Visibility="Collapsed" />
-                    <Button x:Name="CloseButton" Content="Close" Click="Close_Click" Margin="0,0,8,0" ToolTip="Back to the projects (Esc)" />
-                    <Button x:Name="SaveCloseButton" Content="Save and close" Click="SaveAndClose_Click" Margin="0,0,8,0" />
-                    <Button x:Name="SaveButton" Content="_Save" Style="{StaticResource AccentButton}" Click="Save_Click" MinWidth="80"
-                            ToolTip="Save and keep editing (Ctrl+S)" />
-                </StackPanel>
+                <Button x:Name="CloseButton" DockPanel.Dock="Right" Content="Close" Click="Close_Click" Style="{StaticResource AccentButton}" MinWidth="80"
+                        ToolTip="Back to the item list (Esc). Changes are already saved." />
+                <!-- Saved / Saving… / what stops a change being saved. -->
+                <TextBlock x:Name="StatusText" VerticalAlignment="Center" TextWrapping="Wrap" Margin="12,0,12,0"
+                           Foreground="{DynamicResource TextSecondary}" />
             </DockPanel>
         </Border>
     </Grid>

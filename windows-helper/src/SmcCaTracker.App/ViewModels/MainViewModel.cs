@@ -2314,7 +2314,7 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
 
             if (!comparison.Company.IsKnown)
             {
-                return "Returned: closed items only until your company is known (sync, or choose it in Edit project).";
+                return "Returned: closed items only until your company is known (sync, or choose it in Project settings).";
             }
 
             var rule = Settings.Returned;
@@ -2372,7 +2372,7 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
     /// <summary>The CA folder and link (Details) describe one project, so they hide when several are shown.</summary>
     public bool CanShowProjectDetails => HasProject && !IsMultiProject;
 
-    /// <summary>Edit project / Choose CA folder acts on one project: hidden while several are shown (My work, Ctrl-click).</summary>
+    /// <summary>Project settings / Choose CA folder acts on one project: hidden while several are shown (My work, Ctrl-click).</summary>
     public bool CanEditProject => HasProject && !IsMultiProject;
 
     // ---- The header's counts by when items are due (each a quick Due filter) ----------------
@@ -2427,7 +2427,7 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
 
     /// <summary>
     /// Counts folders and items that say neither BB nor TFO as the selected project's part (the "Also
-    /// include…" box in Edit project). Only the tracker's settings change.
+    /// include…" box in Project settings). Only the tracker's settings change.
     /// </summary>
     public async Task IncludeUnlabeledAsync()
     {
@@ -2461,7 +2461,7 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
     /// <summary>The selected project is a Helix/Procore project with no CA folder chosen yet.</summary>
     public bool IsPlaceholder => SelectedProject?.IsPlaceholder == true;
     public bool CanEditConnection => HasProject && !IsPlaceholder;
-    public string EditButtonText => IsPlaceholder ? "Choose CA folder…" : "Edit project…";
+    public string EditButtonText => IsPlaceholder ? "Choose CA folder…" : "Project settings";
 
     public bool CanCreateTypeFolders => comparison is not null
         && HasCaFolder
@@ -2473,7 +2473,7 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
 
     public string EmptyText => !HasProject ? ""
         : IsPlaceholder && Rows.Count == 0 ? "Select Choose CA folder… to track this project's RFIs and Submittals against its CA folder."
-        : !HasCaFolder && Rows.Count == 0 ? "Choose this project's CA folder in Edit project."
+        : !HasCaFolder && Rows.Count == 0 ? "Choose this project's CA folder in Project settings."
         : !IsConnected && Rows.Count == 0 ? "Link this project to its Helix or Procore project (Link… above), then Sync, to compare its items."
         : Rows.Count == 0 && HasItemSearch ? SearchEmptyText()
         : Rows.Count == 0 && IsFiling ? Filter switch

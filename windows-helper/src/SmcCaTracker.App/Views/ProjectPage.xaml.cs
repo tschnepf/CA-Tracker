@@ -3,6 +3,7 @@ using System.IO;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
+using System.Windows.Threading;
 using Microsoft.Win32;
 using SmcCaTracker.App.ViewModels;
 using SmcCaTracker.Core.Comparison;
@@ -15,22 +16,26 @@ namespace SmcCaTracker.App.Views;
 
 public sealed record CompanyOption(string? Id, string? Name, string Label);
 
-/// <summary>What Save hands the main window: the project as edited, and what changed for Workload Tracker.</summary>
-public sealed record ProjectSaved(TrackerProject Project, bool IsNew, bool BindingChanged, TrackerProjectChoice? Binding, bool CoverageChanged);
+/// <summary>What a save hands the main window: the project as edited, and what changed for Workload Tracker.</summary>
+public sealed record ProjectSaved(TrackerProject Project, bool BindingChanged, TrackerProjectChoice? Binding, bool CoverageChanged);
 
 /// <summary>
-/// New project / Edit project, as a page in the main window (in place of the project list). Save keeps the
-/// page open; Save and close and Close go back to the projects, Close asking about unsaved changes. It
+/// A project's settings, shown in place of its item list while the project list stays beside it, so
+/// several projects can be set up one after another. Every change saves on its own a moment later (a
+/// change that can't be saved yet says why), so moving to another project never loses anything. It
 /// changes only the tracker's settings, never the CA folder. While connected to Workload Tracker it also
 /// binds the project and links the Workload Tracker project's team to who they are in Helix or Procore.
 /// </summary>
 public partial class ProjectPage : UserControl
 {
+    private static readonly TimeSpan SaveDelay = TimeSpan.FromMilliseconds(600);
+
     private readonly TeamOptions teamOptions = new();
+    private readonly DispatcherTimer autoSave = new() { Interval = SaveDelay };
     private MainViewModel viewModel = null!;
     private TrackerProject project = new();
     private TrackerProject saved = new();
-    private bool isNew;
+    private ProjectViewModel? placeholder;
     private WorkloadBinding? savedBinding;
     private TrackerProjectChoice? chosenBinding;
     private string baseline = "";
@@ -46,6 +51,7 @@ public partial class ProjectPage : UserControl
     {
         InitializeComponent();
         TeamList.DataContext = teamOptions;
+        autoSave.Tick += async (_, _) => await SaveIfValidAsync();
         foreach (var box in new[] { NameBox, FolderBox, RfiBox, SubmittalBox, ReturnedBox })
         {
             box.TextChanged += (_, _) => OnEdited();
@@ -71,34 +77,42 @@ public partial class ProjectPage : UserControl
         public ObservableCollection<ProviderOption> Options { get; } = new();
     }
 
-    /// <summary>Save was pressed and the project is valid: the main window saves it (and binds it).</summary>
+    /// <summary>A change is ready to keep: the main window saves the project (and binds it).</summary>
     public event Func<ProjectSaved, Task>? SaveRequested;
 
-    /// <summary>Back to the projects (after Close, Save and close, or removing the project).</summary>
+    /// <summary>Back to the item list (Close, or Esc).</summary>
     public event EventHandler? CloseRequested;
 
     /// <summary>Remove from tracker was confirmed for this project.</summary>
     public event EventHandler<string>? RemoveRequested;
 
-    public bool IsDirty => !loading && Signature() != baseline;
+    /// <summary>Set up a Helix or Procore project that has no CA folder yet.</summary>
+    public event EventHandler<ProjectViewModel>? SetUpRequested;
 
-    public string ProjectId => project.Id;
+    public bool IsDirty => placeholder is null && !loading && Signature() != baseline;
 
-    /// <summary>Shows a project to edit (a copy), or a new one when <paramref name="createNew"/>.</summary>
-    public void Open(TrackerProject projectToEdit, bool createNew, MainViewModel model)
+    /// <summary>The project (or not-set-up Helix/Procore project) whose settings are showing.</summary>
+    public string ShownId => placeholder?.Id ?? project.Id;
+
+    /// <summary>Shows a project's settings (on a copy; saved changes go back through <see cref="SaveRequested"/>).</summary>
+    public void Open(TrackerProject projectToEdit, MainViewModel model)
     {
+        autoSave.Stop();
         loading = true;
         viewModel = model;
+        placeholder = null;
         project = Clone(projectToEdit);
         saved = Clone(projectToEdit);
-        isNew = createNew;
-        savedBinding = createNew ? null : model.WorkloadBindingFor(project.Id);
+        savedBinding = model.WorkloadBindingFor(project.Id);
         chosenBinding = savedBinding is null ? null
             : new TrackerProjectChoice(savedBinding.ProjectId, savedBinding.ProjectNumber, savedBinding.ProjectName, null, null);
         teamLoadedFor = null;
         teamRows = new List<TeamLinkRow>();
         TeamList.ItemsSource = null;
         TeamPanel.Visibility = Visibility.Collapsed;
+        NotSetUpPanel.Visibility = Visibility.Collapsed;
+        SettingsScroll.Visibility = Visibility.Visible;
+        RemoveButton.Visibility = Visibility.Visible;
 
         NameBox.Text = project.Name;
         FolderBox.Text = project.CaFolder;
@@ -122,21 +136,26 @@ public partial class ProjectPage : UserControl
         IncludeUnlabeledBox.IsChecked = scope.IncludeUnlabeled;
         PhaseOptions.IsEnabled = scope.IsSplit;
 
-        ErrorText.Text = "";
-        SavedText.Visibility = Visibility.Collapsed;
-        ShowTitle();
+        TitleText.Text = $"Project settings — {project.Name}";
+        SetStatus("Changes save as you make them.", null);
         loading = false;
         baseline = Signature();
-        OnEdited();
-        Dispatcher.BeginInvoke(() => NameBox.Focus());
     }
 
-    private void ShowTitle()
+    /// <summary>A Helix or Procore project with no CA folder yet: nothing to set until it is set up.</summary>
+    public void OpenPlaceholder(ProjectViewModel notSetUp, MainViewModel model)
     {
-        TitleText.Text = isNew ? "New project" : $"Edit project — {project.Name}";
-        SaveButton.Content = isNew ? "_Create project" : "_Save";
-        SaveCloseButton.Content = isNew ? "Create and close" : "Save and close";
-        RemoveButton.Visibility = isNew ? Visibility.Collapsed : Visibility.Visible;
+        autoSave.Stop();
+        viewModel = model;
+        placeholder = notSetUp;
+        teamVersion++;
+        TitleText.Text = $"Project settings — {notSetUp.Name}";
+        NotSetUpText.Text = $"{notSetUp.Name} isn't set up in CA Tracker yet: it has no CA folder. Set it up to choose its folder, "
+            + "its part of the job and its Workload Tracker project.";
+        NotSetUpPanel.Visibility = Visibility.Visible;
+        SettingsScroll.Visibility = Visibility.Collapsed;
+        RemoveButton.Visibility = Visibility.Collapsed;
+        SetStatus("", null);
     }
 
     /// <summary>Every field the page edits, to tell whether anything changed since it was opened or saved.</summary>
@@ -146,111 +165,51 @@ public partial class ProjectPage : UserControl
         OverrideFoldersBox.IsChecked, RfiBox.Text.Trim(), SubmittalBox.Text.Trim(), ReturnedBox.Text.Trim(),
         SelectedPhase, FilterItemsBox.IsChecked, FilterFoldersBox.IsChecked, IncludeUnlabeledBox.IsChecked);
 
+    /// <summary>Something changed: it is saved a moment later, once typing pauses.</summary>
     private void OnEdited()
     {
-        if (loading)
+        if (loading || placeholder is not null)
         {
             return;
         }
 
-        var dirty = IsDirty;
-        UnsavedText.Visibility = dirty ? Visibility.Visible : Visibility.Collapsed;
-        if (dirty)
+        autoSave.Stop();
+        if (IsDirty)
         {
-            SavedText.Visibility = Visibility.Collapsed;
+            autoSave.Start();
         }
     }
 
-    // ---- Save, Save and close, Close ---------------------------------------------------------------
+    // ---- Saving ------------------------------------------------------------------------------------
 
-    private async void Save_Click(object sender, RoutedEventArgs e) => await SaveAsync();
-
-    private async void SaveAndClose_Click(object sender, RoutedEventArgs e)
+    private async Task<bool> SaveIfValidAsync()
     {
-        if (await SaveAsync())
-        {
-            CloseRequested?.Invoke(this, EventArgs.Empty);
-        }
-    }
-
-    private async void Close_Click(object sender, RoutedEventArgs e)
-    {
-        if (await ConfirmLeaveAsync())
-        {
-            CloseRequested?.Invoke(this, EventArgs.Empty);
-        }
-    }
-
-    private async void Page_PreviewKeyDown(object sender, KeyEventArgs e)
-    {
-        if (e.Key == Key.S && Keyboard.Modifiers == ModifierKeys.Control)
-        {
-            e.Handled = true;
-            await SaveAsync();
-        }
-        else if (e.Key == Key.Escape && Keyboard.Modifiers == ModifierKeys.None && !InOpenDropDown(e.OriginalSource as DependencyObject))
-        {
-            e.Handled = true;
-            if (await ConfirmLeaveAsync())
-            {
-                CloseRequested?.Invoke(this, EventArgs.Empty);
-            }
-        }
-    }
-
-    private static bool InOpenDropDown(DependencyObject? source)
-    {
-        for (var node = source; node is not null; node = System.Windows.Media.VisualTreeHelper.GetParent(node) ?? LogicalTreeHelper.GetParent(node))
-        {
-            if (node is ComboBox { IsDropDownOpen: true })
-            {
-                return true;
-            }
-        }
-
-        return false;
-    }
-
-    /// <summary>
-    /// True when the page may be left: nothing changed, or the changes were saved or discarded. Asks
-    /// first when something changed.
-    /// </summary>
-    public async Task<bool> ConfirmLeaveAsync()
-    {
-        if (saveInFlight is { } pending)
-        {
-            await pending; // leaving right after Save: let it finish rather than ask
-        }
-
+        autoSave.Stop();
         if (!IsDirty)
         {
             return true;
         }
 
-        var answer = MessageBox.Show(
-            Window.GetWindow(this)!,
-            isNew ? "Create this project before leaving?" : $"Save your changes to \"{NameBox.Text.Trim()}\"?",
-            "Unsaved changes",
-            MessageBoxButton.YesNoCancel,
-            MessageBoxImage.Question,
-            MessageBoxResult.Yes);
-        return answer switch
+        var problems = Validate();
+        if (problems.Count > 0)
         {
-            MessageBoxResult.Yes => await SaveAsync(),
-            MessageBoxResult.No => true,
-            _ => false
-        };
+            SetStatus($"Not saved yet: {string.Join(" ", problems)}", "DangerBrush");
+            return false;
+        }
+
+        return await SaveAsync();
     }
 
     /// <summary>
-    /// Checks the fields and, when they are fine, saves through the main window. False when something needs
-    /// fixing. Pressed again while a save is going (Ctrl+S twice), it waits for that one instead.
+    /// Saves what is on the page through the main window. A save asked for while one is going waits for
+    /// it; changes made during a save are saved after it.
     /// </summary>
-    public async Task<bool> SaveAsync()
+    private async Task<bool> SaveAsync()
     {
         if (saveInFlight is { } pending)
         {
-            return await pending;
+            await pending;
+            return await SaveIfValidAsync();
         }
 
         var save = SaveOnceAsync();
@@ -272,14 +231,7 @@ public partial class ProjectPage : UserControl
 
     private async Task<bool> SaveOnceAsync()
     {
-        var problems = Validate();
-        if (problems.Count > 0)
-        {
-            ErrorText.Text = string.Join(" ", problems);
-            return false;
-        }
-
-        ErrorText.Text = "";
+        var signature = Signature();
         var company = CompanyList.SelectedItem as CompanyOption;
         var result = Clone(project);
         result.Name = NameBox.Text.Trim();
@@ -297,32 +249,119 @@ public partial class ProjectPage : UserControl
             IncludeUnlabeled = SelectedPhase != ProjectPhase.Whole && IncludeUnlabeledBox.IsChecked == true
         };
 
-        var bindingChanged = chosenBinding?.Id != savedBinding?.ProjectId;
-        var coverageChanged = !isNew && MainViewModel.CoverageChanged(saved, result);
-        SaveButton.IsEnabled = SaveCloseButton.IsEnabled = false;
-        try
+        var binding = chosenBinding;
+        var bindingChanged = binding?.Id != savedBinding?.ProjectId;
+        var coverageChanged = MainViewModel.CoverageChanged(saved, result);
+        SetStatus("Saving…", null);
+        if (SaveRequested is { } save)
         {
-            if (SaveRequested is { } save)
-            {
-                await save(new ProjectSaved(Clone(result), isNew, bindingChanged, chosenBinding, coverageChanged));
-            }
-        }
-        finally
-        {
-            SaveButton.IsEnabled = SaveCloseButton.IsEnabled = true;
+            await save(new ProjectSaved(Clone(result), bindingChanged, binding, coverageChanged));
         }
 
-        // Keep editing the project as saved (a new one is now an existing one).
-        project = Clone(result);
+        // What was saved becomes the baseline; anything typed meanwhile goes in the next save.
         saved = Clone(result);
-        isNew = false;
         savedBinding = viewModel.WorkloadBindingFor(project.Id);
-        ShowTitle();
+        baseline = signature;
+        TitleText.Text = $"Project settings — {result.Name}";
         ShowBinding();
-        baseline = Signature();
-        UnsavedText.Visibility = Visibility.Collapsed;
-        SavedText.Visibility = Visibility.Visible;
+        SetStatus($"All changes saved · {DateTime.Now:t}", "SuccessBrush");
+        if (IsDirty)
+        {
+            autoSave.Start();
+        }
+
         return true;
+    }
+
+    /// <summary>
+    /// True when the page may be left: any change is saved first. A change that can't be saved (an empty
+    /// name, a folder another project uses) is discarded only if the person agrees.
+    /// </summary>
+    public async Task<bool> LeaveAsync()
+    {
+        autoSave.Stop();
+        if (saveInFlight is { } pending)
+        {
+            await pending;
+        }
+
+        if (!IsDirty)
+        {
+            return true;
+        }
+
+        var problems = Validate();
+        if (problems.Count == 0)
+        {
+            return await SaveAsync();
+        }
+
+        var answer = MessageBox.Show(
+            Window.GetWindow(this)!,
+            $"The last changes to \"{saved.Name}\" can't be saved:\n\n{string.Join("\n", problems)}\n\nDiscard them? (No goes back to fix them.)",
+            "Changes not saved",
+            MessageBoxButton.YesNo,
+            MessageBoxImage.Warning,
+            MessageBoxResult.No);
+        if (answer != MessageBoxResult.Yes)
+        {
+            return false;
+        }
+
+        Open(saved, viewModel);
+        return true;
+    }
+
+    private void SetStatus(string text, string? brush)
+    {
+        StatusText.Text = text;
+        StatusText.SetResourceReference(TextBlock.ForegroundProperty, brush ?? "TextSecondary");
+    }
+
+    private async void Close_Click(object sender, RoutedEventArgs e)
+    {
+        if (await LeaveAsync())
+        {
+            CloseRequested?.Invoke(this, EventArgs.Empty);
+        }
+    }
+
+    private void SetUp_Click(object sender, RoutedEventArgs e)
+    {
+        if (placeholder is not null)
+        {
+            SetUpRequested?.Invoke(this, placeholder);
+        }
+    }
+
+    private async void Page_PreviewKeyDown(object sender, KeyEventArgs e)
+    {
+        if (e.Key == Key.S && Keyboard.Modifiers == ModifierKeys.Control)
+        {
+            e.Handled = true;
+            await SaveIfValidAsync();
+        }
+        else if (e.Key == Key.Escape && Keyboard.Modifiers == ModifierKeys.None && !InOpenDropDown(e.OriginalSource as DependencyObject))
+        {
+            e.Handled = true;
+            if (await LeaveAsync())
+            {
+                CloseRequested?.Invoke(this, EventArgs.Empty);
+            }
+        }
+    }
+
+    private static bool InOpenDropDown(DependencyObject? source)
+    {
+        for (var node = source; node is not null; node = System.Windows.Media.VisualTreeHelper.GetParent(node) ?? LogicalTreeHelper.GetParent(node))
+        {
+            if (node is ComboBox { IsDropDownOpen: true })
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private List<string> Validate()
@@ -368,13 +407,14 @@ public partial class ProjectPage : UserControl
     {
         var answer = MessageBox.Show(
             Window.GetWindow(this)!,
-            $"Remove \"{project.Name}\" from the tracker?\n\nThe CA folder and everything in it stay exactly as they are.",
+            $"Remove \"{saved.Name}\" from the tracker?\n\nThe CA folder and everything in it stay exactly as they are.",
             "Remove project",
             MessageBoxButton.YesNo,
             MessageBoxImage.Question,
             MessageBoxResult.No);
         if (answer == MessageBoxResult.Yes)
         {
+            autoSave.Stop();
             RemoveRequested?.Invoke(this, project.Id);
         }
     }

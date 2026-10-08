@@ -440,7 +440,7 @@ public sealed class WorkloadTrackerSync
             && string.Equals(project.Connection.Provider, provider, StringComparison.OrdinalIgnoreCase)
             && string.Equals(project.Connection.ProjectId, projectId, StringComparison.Ordinal));
 
-    /// <summary>Keeps what the tracker said about each binding sent, so Edit project can show a conflict.</summary>
+    /// <summary>Keeps what the tracker said about each binding sent, so Project settings can show a conflict.</summary>
     private void RecordBindingResults(string provider, string projectId, ApiResult? result)
     {
         if (result?.TryRead<CaObservationResult>() is not { Bindings: { Count: > 0 } answers })
@@ -899,7 +899,7 @@ public sealed class WorkloadTrackerSync
     private static string RejectionText(string? reason) => reason switch
     {
         CaAssignmentRejectionEnum.ProjectNotVisible => "your Workload Tracker account can't see that project.",
-        CaAssignmentRejectionEnum.ProjectNotBound => "the project isn't bound to this Helix or Procore project in Workload Tracker (check Edit project).",
+        CaAssignmentRejectionEnum.ProjectNotBound => "the project isn't bound to this Helix or Procore project in Workload Tracker (check Project settings).",
         CaAssignmentRejectionEnum.PersonNotFound => "that person isn't in Workload Tracker.",
         CaAssignmentRejectionEnum.PersonInactive => "that person has left.",
         _ => "Workload Tracker refused it."

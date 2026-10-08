@@ -27,7 +27,7 @@ public sealed partial class MainViewModel
         Settings.WorkloadTracker.Bindings.TryGetValue(projectId, out var binding) ? binding : null;
 
     /// <summary>
-    /// After Edit project or New project is saved: binds or unbinds the entry when that changed, and
+    /// After project settings are saved: binds or unbinds the entry when that changed, and
     /// otherwise sends its items again in full when what it covers changed (its link or its part).
     /// </summary>
     public void ApplyWorkloadBinding(string projectId, bool bindingChanged, TrackerProjectChoice? choice, bool coverageChanged)

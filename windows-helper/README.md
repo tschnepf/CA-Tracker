@@ -62,8 +62,9 @@ On first start, the JSON files of earlier versions (`settings.json`, `snapshots\
 - **Workload Tracker (optional):** each person enters the tracker's address in Settings → Connections →
   Workload Tracker and presses **Connect…**; they sign in to the tracker in the window that opens and
   press **Connect CA Tracker** on its Profile page. CA Tracker then sends what it reads every minute
-  while it is open. **Edit project** (a page in the main window: **Save** keeps it open, **Save and close**
-  and **Close** go back) has a **Workload Tracker** section: **Choose…** binds the project to an existing,
+  while it is open. **Project settings** (the header button, or right-click a project in the list) shows
+  a project's settings in place of its item list, with the project list beside it so several projects can
+  be set up in turn; changes save as they are made. Its **Workload Tracker** section: **Choose…** binds the project to an existing,
   running tracker project (its items are then filed there), and **Team in Workload Tracker** links each
   person on that project's team to who they are in Helix or Procore (matching names are suggested and
   linked only when confirmed). After that, **Assign to…** (an
@@ -284,7 +285,7 @@ downloads aren't supported yet.
   Windows user), **Send now** and **Disconnect…** (revokes this PC's connection). Once connected, what
   you read from Helix and Procore is sent every minute while CA Tracker is open: items of projects set
   up in the app, counts only for the others. CA folder locations and files stay on this PC. A project
-  bound to a Workload Tracker project (Edit project) shows an **Assigned** column; assignments made here
+  bound to a Workload Tracker project (Project settings) shows an **Assigned** column; assignments made here
   show at once and are sent with the next send, and others' are read back every five minutes.
 
 **← Back to projects** (or **← Projects**) returns to the project list.
@@ -379,7 +380,7 @@ by the newest revision (shown as `03 30 00-1 Rev 2`), and older revisions aren't
 ## Base Build and Tenant Fit Out
 
 A job split into Base Build (BB) and Tenant Fit Out (TFO) is set up as two projects, for example
-"CMH04 BB" and "CMH04 TFO". Each has its own sync, timestamps and list. In **Edit project → Base
+"CMH04 BB" and "CMH04 TFO". Each has its own sync, timestamps and list. In **Project settings → Base
 Build / Tenant Fit Out**, choose the part, then pick how the two are separated:
 
 - **Separate Helix/Procore projects or separate CA folders:** connect or choose each project's own.
@@ -420,7 +421,7 @@ anything is created. The choice stays with the item after its folder exists.
 
 By default an item is returned when **no one from the selected company holds it**, including when
 it is closed. The company defaults to the one on your Helix login and can be changed per project in
-**Edit project**.
+**Project settings**.
 "Holds" uses Helix's review order: whoever the item is with now (In court) or next (Coming up). Settings can also:
 
 - count items where your company only has a later step (coming up) as returned

@@ -88,6 +88,11 @@ public partial class MainWindow : Window
                 case nameof(MainViewModel.SelectedProjects):
                     SyncProjectList();
                     UpdateColumns();
+                    if (editingProject)
+                    {
+                        _ = FollowSelectionAsync();
+                    }
+
                     break;
                 case nameof(MainViewModel.SortColumn):
                 case nameof(MainViewModel.SortDescending):
@@ -108,12 +113,13 @@ public partial class MainWindow : Window
         };
         SettingsView.BackRequested += (_, _) => ShowProjects();
         ProjectView.SaveRequested += SaveProjectAsync;
-        ProjectView.CloseRequested += (_, _) => ShowProjects();
+        ProjectView.CloseRequested += (_, _) => ShowItemList();
         ProjectView.RemoveRequested += (_, projectId) =>
         {
+            ShowItemList();
             viewModel.RemoveProject(projectId);
-            ShowProjects();
         };
+        ProjectView.SetUpRequested += async (_, notSetUp) => await CreateProjectAsync(notSetUp);
         Closing += MainWindow_Closing;
         SettingsView.SaveRequested += async edited =>
         {
@@ -306,6 +312,9 @@ public partial class MainWindow : Window
 
         static Visibility Show(bool value) => value ? Visibility.Visible : Visibility.Collapsed;
         var count = selected.Count;
+        ProjectSettingsMenu.Header = count == 1 && selected[0].IsPlaceholder ? "Set up project (choose CA folder)…" : "Project settings";
+        ProjectSettingsMenu.Visibility = Show(count == 1);
+        ProjectSettingsSeparator.Visibility = Show(count == 1);
         ArchiveProjectMenu.Header = count > 1 ? $"Archive these {count} projects (hide and stop syncing)" : "Archive (hide and stop syncing)";
         UnarchiveProjectMenu.Header = count > 1 ? $"Unarchive these {count} projects" : "Unarchive";
         FavoriteProjectMenu.Header = count > 1 ? $"Add these {count} to favorites" : "Add to favorites";
@@ -796,9 +805,9 @@ public partial class MainWindow : Window
 
     // ---- Watchlists ------------------------------------------------------------------------------
 
-    private void ShowWatchlist_Click(object sender, RoutedEventArgs e)
+    private async void ShowWatchlist_Click(object sender, RoutedEventArgs e)
     {
-        if (sender is FrameworkElement { DataContext: WatchlistItemViewModel item })
+        if (sender is FrameworkElement { DataContext: WatchlistItemViewModel item } && await LeaveSettingsForListAsync())
         {
             viewModel.ShowWatchlist(item.Watchlist);
             ShowFilterChoices();
@@ -886,15 +895,25 @@ public partial class MainWindow : Window
     }
 
     /// <summary>My work: your open items in every linked project. The filter boxes follow.</summary>
-    private void ShowMyWork_Click(object sender, RoutedEventArgs e)
+    private async void ShowMyWork_Click(object sender, RoutedEventArgs e)
     {
+        if (!await LeaveSettingsForListAsync())
+        {
+            return;
+        }
+
         viewModel.ShowMyWork();
         ShowFilterChoices();
     }
 
     /// <summary>Overdue, all projects: every overdue item in every linked project.</summary>
-    private void ShowAllOverdue_Click(object sender, RoutedEventArgs e)
+    private async void ShowAllOverdue_Click(object sender, RoutedEventArgs e)
     {
+        if (!await LeaveSettingsForListAsync())
+        {
+            return;
+        }
+
         viewModel.ShowAllOverdue();
         ShowFilterChoices();
     }
@@ -1040,7 +1059,12 @@ public partial class MainWindow : Window
         {
             draft.Name = $"{draft.Name} {Phases.Short(phase)}";
         }
-        ShowProjectPage(draft, isNew: true);
+        viewModel.AddProject(draft);
+        await viewModel.CompareAsync();
+        if (!editingProject)
+        {
+            ShowProjectSettings();
+        }
     }
 
     /// <summary>
@@ -1083,46 +1107,169 @@ public partial class MainWindow : Window
             return;
         }
 
-        ShowProjectPage(viewModel.SelectedProject.Project, isNew: false);
+        ShowProjectSettings();
     }
 
-    /// <summary>Shows New project / Edit project in place of the project list.</summary>
-    private void ShowProjectPage(TrackerProject project, bool isNew)
-    {
-        ProjectView.Open(project, isNew, viewModel);
-        ProjectsPage.Visibility = Visibility.Collapsed;
-        SettingsView.Visibility = Visibility.Collapsed;
-        ProjectView.Visibility = Visibility.Visible;
-    }
+    // ---- Project settings (in place of the item list) ----------------------------------------------
 
-    /// <summary>The project page's Save: adds or updates the project, then binds it in Workload Tracker when that changed.</summary>
-    private async Task SaveProjectAsync(ProjectSaved saved)
+    private bool editingProject;
+    private bool following;
+
+    /// <summary>The header's Project settings: opens the selected project's settings, or goes back to its items.</summary>
+    private async void ProjectSettingsButton_Click(object sender, RoutedEventArgs e)
     {
-        if (saved.IsNew)
+        if (viewModel.SelectedProject is { IsPlaceholder: true } placeholder)
         {
-            viewModel.AddProject(saved.Project);
-            viewModel.ApplyWorkloadBinding(saved.Project.Id, saved.BindingChanged, saved.Binding, coverageChanged: false);
-            await viewModel.CompareAsync();
+            await CreateProjectAsync(placeholder);
+        }
+        else if (editingProject)
+        {
+            if (await ProjectView.LeaveAsync())
+            {
+                ShowItemList();
+            }
         }
         else
         {
-            await viewModel.UpdateProjectAsync(saved.Project);
-            viewModel.ApplyWorkloadBinding(saved.Project.Id, saved.BindingChanged, saved.Binding, saved.CoverageChanged);
+            ShowProjectSettings();
         }
+    }
+
+    /// <summary>Project settings from the project list's right-click menu (or ⋯).</summary>
+    private async void ProjectSettingsMenu_Click(object sender, RoutedEventArgs e)
+    {
+        if (ProjectsInSelection() is [var chosen])
+        {
+            if (chosen.IsPlaceholder)
+            {
+                await CreateProjectAsync(chosen);
+                return;
+            }
+
+            viewModel.SelectedProject = chosen;
+            ShowProjectSettings();
+        }
+    }
+
+    /// <summary>Shows the selected project's settings where its item list was; the project list stays.</summary>
+    private void ShowProjectSettings()
+    {
+        if (viewModel.SelectedProject is not { } selected)
+        {
+            return;
+        }
+
+        if (selected.IsPlaceholder)
+        {
+            ProjectView.OpenPlaceholder(selected, viewModel);
+        }
+        else
+        {
+            ProjectView.Open(selected.Project, viewModel);
+        }
+
+        editingProject = true;
+        FilterBar.Visibility = Visibility.Collapsed;
+        ItemsArea.Visibility = Visibility.Collapsed;
+        ProjectView.Visibility = Visibility.Visible;
+        ProjectSettingsButton.SetResourceReference(StyleProperty, "AccentButton");
+        ShowProjects();
+    }
+
+    /// <summary>Back to the item list (the settings were saved as they changed).</summary>
+    private void ShowItemList()
+    {
+        editingProject = false;
+        ProjectView.Visibility = Visibility.Collapsed;
+        FilterBar.Visibility = Visibility.Visible;
+        ItemsArea.Visibility = Visibility.Visible;
+        ProjectSettingsButton.SetResourceReference(StyleProperty, typeof(Button));
+    }
+
+    /// <summary>
+    /// Another project was clicked while settings are open: the change in progress is saved, then that
+    /// project's settings show. Several projects at once (or a view) go back to the item list.
+    /// </summary>
+    private async Task FollowSelectionAsync()
+    {
+        if (following)
+        {
+            return;
+        }
+
+        following = true;
+        try
+        {
+            var target = viewModel.SelectedProject;
+            if (target?.Id == ProjectView.ShownId && !viewModel.IsMultiProject)
+            {
+                return;
+            }
+
+            if (!await ProjectView.LeaveAsync())
+            {
+                // A change that can't be saved yet: stay on it.
+                viewModel.SelectedProject = viewModel.Projects.FirstOrDefault(project => project.Id == ProjectView.ShownId) ?? viewModel.SelectedProject;
+                return;
+            }
+
+            if (target is null || viewModel.IsMultiProject)
+            {
+                ShowItemList();
+            }
+            else
+            {
+                ShowProjectSettings();
+            }
+        }
+        finally
+        {
+            following = false;
+        }
+
+        // Another project was clicked while that one was being saved: follow it too.
+        if (editingProject && !viewModel.IsMultiProject && viewModel.SelectedProject is { } now && now.Id != ProjectView.ShownId)
+        {
+            await FollowSelectionAsync();
+        }
+    }
+
+    /// <summary>Before showing a view (My work, Overdue, a watchlist): saves and closes project settings. False to stay.</summary>
+    private async Task<bool> LeaveSettingsForListAsync()
+    {
+        if (!editingProject)
+        {
+            return true;
+        }
+
+        if (!await ProjectView.LeaveAsync())
+        {
+            return false;
+        }
+
+        ShowItemList();
+        return true;
+    }
+
+    /// <summary>A project page change: updates the project, then binds it in Workload Tracker when that changed.</summary>
+    private async Task SaveProjectAsync(ProjectSaved saved)
+    {
+        await viewModel.UpdateProjectAsync(saved.Project);
+        viewModel.ApplyWorkloadBinding(saved.Project.Id, saved.BindingChanged, saved.Binding, saved.CoverageChanged);
     }
 
     private bool closingConfirmed;
 
-    /// <summary>Unsaved changes on the project page are saved or discarded before the window closes.</summary>
+    /// <summary>A change in progress on the project page is saved before the window closes.</summary>
     private async void MainWindow_Closing(object? sender, System.ComponentModel.CancelEventArgs e)
     {
-        if (closingConfirmed || ProjectView.Visibility != Visibility.Visible || !ProjectView.IsDirty)
+        if (closingConfirmed || !editingProject || !ProjectView.IsDirty)
         {
             return;
         }
 
         e.Cancel = true;
-        if (await ProjectView.ConfirmLeaveAsync())
+        if (await ProjectView.LeaveAsync())
         {
             closingConfirmed = true;
             Close();
@@ -1262,7 +1409,7 @@ public partial class MainWindow : Window
         }
 
         var answer = MessageBox.Show(this,
-            $"Also include folders and items that mention neither BB nor TFO in \"{project.Name}\"?\n\nNothing in the folders changes. You can turn this off again in Edit project → Base Build / Tenant Fit Out.",
+            $"Also include folders and items that mention neither BB nor TFO in \"{project.Name}\"?\n\nNothing in the folders changes. You can turn this off again in Project settings → Base Build / Tenant Fit Out.",
             "Include them", MessageBoxButton.YesNo, MessageBoxImage.Question, MessageBoxResult.Yes);
         if (answer == MessageBoxResult.Yes)
         {
@@ -1823,14 +1970,9 @@ public partial class MainWindow : Window
     /// <summary>Shows the Settings page in place of the project list (or of the project page, once it may be left).</summary>
     private async void ShowSettings(SettingsSection section)
     {
-        if (ProjectView.Visibility == Visibility.Visible)
+        if (editingProject && !await ProjectView.LeaveAsync())
         {
-            if (!await ProjectView.ConfirmLeaveAsync())
-            {
-                return;
-            }
-
-            ProjectView.Visibility = Visibility.Collapsed;
+            return;
         }
 
         viewModel.RefreshAccounts();
@@ -1850,7 +1992,6 @@ public partial class MainWindow : Window
     private void ShowProjects()
     {
         SettingsView.Visibility = Visibility.Collapsed;
-        ProjectView.Visibility = Visibility.Collapsed;
         ProjectsPage.Visibility = Visibility.Visible;
     }
 

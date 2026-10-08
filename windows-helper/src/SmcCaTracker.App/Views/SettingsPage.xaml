@@ -98,7 +98,7 @@
                             </Grid>
                             <TextBlock x:Name="FoldersError" Style="{StaticResource FieldError}" />
                             <TextBlock Style="{StaticResource Muted}" Margin="0,8,0,0" FontSize="12"
-                                       Text="Example: CA\RFIs\~Returned. Renaming here does not rename any folders on disk. A project can use its own names in Edit project → Folder names." />
+                                       Text="Example: CA\RFIs\~Returned. Renaming here does not rename any folders on disk. A project can use its own names in Project settings → Folder names." />
                         </StackPanel>
                     </Border>
 
@@ -107,7 +107,7 @@
                         <StackPanel>
                             <TextBlock Text="WHEN IS AN ITEM RETURNED?" Style="{StaticResource SectionTitle}" />
                             <TextBlock Style="{StaticResource Muted}" FontSize="12" Margin="0,0,0,8"
-                                       Text="For every project. Each project's company is chosen in Edit project." />
+                                       Text="For every project. Each project's company is chosen in Project settings." />
                             <CheckBox x:Name="WhenNotHeldBox" Content="No one from your company holds it (default)" Margin="0,0,0,6" />
                             <CheckBox x:Name="WhenClosedBox" Content="It is closed, complete, or voided" Margin="0,0,0,6" />
                             <CheckBox x:Name="WhenComingUpBox" Content="Also when your company only has a review step coming up later" Margin="0,0,0,10" />

@@ -654,7 +654,7 @@ public sealed class RowViewModel : ObservableObject
 
     public string AssignMenuToolTip => CanAssign
         ? "Choose who on the project's team in Workload Tracker works on this item"
-        : HasItem ? "Bind this project to a Workload Tracker project first (Edit project)" : "Only Helix and Procore items can be assigned";
+        : HasItem ? "Bind this project to a Workload Tracker project first (Project settings)" : "Only Helix and Procore items can be assigned";
 
     /// <summary>The Assigned column: names, with people who have left marked so the item can be reassigned.</summary>
     public string AssignedText => string.Join(", ", Assignees.Select(row => row.PersonActive ? row.PersonName : $"{row.PersonName} (left)"));

@@ -65,7 +65,7 @@ public sealed class WorkloadTrackerSettings
 
     /// <summary>
     /// Per tracker project entry (<see cref="TrackerProject.Id"/>): the Workload Tracker project its items go
-    /// to, chosen in Edit project (decision D3). Kept when disconnecting, as this PC's choice; forgotten
+    /// to, chosen in Project settings (decision D3). Kept when disconnecting, as this PC's choice; forgotten
     /// when connecting to a different tracker, whose project ids mean other projects.
     /// </summary>
     public Dictionary<string, WorkloadBinding> Bindings { get; set; } = new(StringComparer.Ordinal);

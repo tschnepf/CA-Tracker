@@ -51,7 +51,7 @@ public partial class MainWindow
         var assignable = viewModel.AssignableRows(rows);
         if (assignable.Count == 0)
         {
-            ShowInfo("These items can't be assigned yet: bind their project to a Workload Tracker project first (Edit project).");
+            ShowInfo("These items can't be assigned yet: bind their project to a Workload Tracker project first (Project settings).");
             return;
         }
 
