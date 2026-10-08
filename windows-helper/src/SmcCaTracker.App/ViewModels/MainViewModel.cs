@@ -2672,16 +2672,15 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
     public IReadOnlyList<RowViewModel> CheckedRows() => allRows.Where(row => row.IsChecked).ToList();
 
     /// <summary>
-    /// What the Download button needs for a row: the Helix item, and where its files go by default
+    /// What the Download button needs for a row: the Helix or Procore item, and where its files go by default
     /// (its matched folder, else a new "&lt;number&gt; - &lt;name&gt;" folder in the project's RFI/Submittal folder).
-    /// Null when the item can't be downloaded (not Helix, or no item).
+    /// Null when the row has no item (a folder only) or its project isn't connected.
     /// </summary>
     public DownloadRequest? DownloadRequestFor(RowViewModel row)
     {
         var project = row.Project.Project;
         var item = row.Row.Item;
-        if (project?.Connection is null || item is null
-            || !string.Equals(project.Connection.Provider, Providers.Helix, StringComparison.OrdinalIgnoreCase))
+        if (project?.Connection is null || item is null)
         {
             return null;
         }

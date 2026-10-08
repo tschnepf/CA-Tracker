@@ -265,12 +265,14 @@ CA Tracker works out for each item under `expected`; correct the wrong ones and 
 
 ## Downloading an RFI or Submittal
 
-**Download** on an item's row (Helix items) opens the download window for that item; **Download…** at
-the bottom of the list opens it for every checked item at once. Each item is a section with where its
-files go, a status (`3 new files`, `New folder · 6 files`, `Up to date`, `Saved 3 files`…) and its
-Details PDF and current attachments, with each file's name and upload date. The items are read from
-Helix one after another in the background (one hidden Helix page serves them all); you can check and
-uncheck files while the rest are read, and an item with nothing new stays folded away. Its box checks
+**Download** on an item's row (Helix and Procore items) opens the download window for that item;
+**Download…** at the bottom of the list opens it for every checked item at once. Each item is a section
+with where its files go, a status (`3 new files`, `New folder · 6 files`, `Up to date`, `Saved 3 files`…)
+and its files, each with its name and date: for Helix the Details PDF and current attachments; for
+Procore an RFI's question and answer attachments, or a Submittal's own attachments and each response's.
+The items are read one after another in the background (one hidden Helix page and one hidden Procore
+page serve them all); you can check and uncheck files while the rest are read, and an item with nothing
+new stays folded away. Its box checks
 or unchecks all of its files; **New files only**, **Check all** and **Uncheck all** apply to every item.
 Each item's files go into a folder named `<number> - <name>` (e.g. `P000210 - Overhead Coiling Doors`),
 with a leading project name or code taken off the name:
@@ -289,7 +291,7 @@ comes). **Stop** finishes the file being saved and stops. A file that fails does
 stays checked, so **Download** tries it again, and the window ends with what was saved where.
 
 **Verify** on a row (or **Verify folders…** at the bottom for the checked items) opens the same window to
-check that each item's folder has every file Helix has for it — attachments and the Details PDF, a file
+check that each item's folder has every file Helix or Procore has for it — attachments and Helix's Details PDF, a file
 saved with a date in front or as a copy counting as there. Each item says `All 7 files in folder`,
 `3 of 7 missing` or `No folder yet`, the missing files start checked (whatever their kind), and the
 window sums up how many folders are complete; **Download** then gets just what is missing.
@@ -297,8 +299,11 @@ window sums up how many folders are complete; **Download** then gets just what i
 For a folder that already exists, only PDFs not in it yet start checked (items added since); files
 already in the folder start unchecked and are never replaced; a checked duplicate is saved as
 `name (2).pdf`. PDFs get their upload date in front of the name (`2026-08-03 Review markup.pdf`), and
-the Details PDF is created by Helix's own export. Each saved file is added to `journal.jsonl`. Procore
-downloads aren't supported yet.
+the Details PDF is created by Helix's own export. Procore has no upload date or Details PDF: a Procore
+file is dated by what it came with (the question, the answer, the response or the submittal), and two
+files of the same name under different ids are both listed (the second saves as `name (2).pdf`). Procore
+files are read through Procore's REST service with your sign-in in the built-in browser, read-only; on
+a 401 the page shows Procore's sign-in. Each saved file is added to `journal.jsonl`.
 
 ## Settings
 

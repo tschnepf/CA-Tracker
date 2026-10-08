@@ -196,7 +196,7 @@ public partial class MainWindow
                 else
                 {
                     await ShowDetailsAsync(row);
-                    viewModel.StatusMessage = $"{label}: opening its newest file works for Helix items only.";
+                    viewModel.StatusMessage = $"{label}: no Helix or Procore item, so there is no newest file to open.";
                 }
 
                 break;
@@ -208,7 +208,7 @@ public partial class MainWindow
                 else
                 {
                     await ShowDetailsAsync(row);
-                    viewModel.StatusMessage = $"{label}: downloads work for Helix items only.";
+                    viewModel.StatusMessage = $"{label}: no Helix or Procore item, so there is nothing to download.";
                 }
 
                 break;
@@ -220,7 +220,7 @@ public partial class MainWindow
                 else
                 {
                     await ShowDetailsAsync(row);
-                    viewModel.StatusMessage = $"{label}: verifying its folder works for Helix items only.";
+                    viewModel.StatusMessage = $"{label}: no Helix or Procore item to check its folder against.";
                 }
 
                 break;

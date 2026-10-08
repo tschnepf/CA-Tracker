@@ -622,21 +622,21 @@ public sealed class RowViewModel : ObservableObject
     public bool HasFolderNote => Row.Status is not (RowStatus.Open or RowStatus.NoFolder);
 
     /// <summary>Hover text for the row's Open Online: where the item opens (a folder with no item has nothing to open online).</summary>
-    public string OpenToolTip => CanDownload
-        ? "Open it in Helix, in the panel on the right"
-        : HasItem ? $"Open it in {Project.ProviderLabel} (in your web browser)"
-        : "No Helix or Procore item for this folder. ▾ → Open folder opens the folder.";
+    public string OpenToolTip => !HasItem
+        ? "No Helix or Procore item for this folder. ▾ → Open folder opens the folder."
+        : string.Equals(Project.Project.Connection?.Provider, Providers.Helix, StringComparison.OrdinalIgnoreCase)
+            ? "Open it in Helix, in the panel on the right"
+            : $"Open it in {Project.ProviderLabel} (in your web browser)";
 
     /// <summary>"Open in Helix" / "Open in Procore" in the row's menu.</summary>
     public string OpenOnlineText => Project.ProviderLabel.Length > 0 ? $"Open in {Project.ProviderLabel}" : "Open online";
 
-    /// <summary>Downloads work for Helix items only.</summary>
-    public bool CanDownload => Row.Item is not null
-        && string.Equals(Project.Project.Connection?.Provider, Providers.Helix, StringComparison.OrdinalIgnoreCase);
+    /// <summary>Its files can be downloaded (and its newest file opened, its folder verified): a Helix or Procore item.</summary>
+    public bool CanDownload => Row.Item is not null && Project.Project.Connection is not null;
 
     public string DownloadToolTip => CanDownload
         ? "Choose files to download into a \"number - name\" folder"
-        : Row.Item is null ? "No Helix or Procore item for this folder" : "Downloads work for Helix items only";
+        : "No Helix or Procore item for this folder";
 
     /// <summary>Hover text for the whole row: what double-clicking does.</summary>
     public string RowToolTip => HasFolder ? "Double-click to open this folder" : HasItem ? "Double-click to open this item" : "";

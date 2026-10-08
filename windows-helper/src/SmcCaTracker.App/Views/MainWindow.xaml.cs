@@ -1430,8 +1430,8 @@ public partial class MainWindow : Window
     private void DownloadChecked_Click(object sender, RoutedEventArgs e) => OpenCheckedItems(verify: false);
 
     /// <summary>
-    /// Checks the checked items' folders against Helix in the same window: each says whether its folder has
-    /// every file Helix has for it, with the missing ones checked so Download gets them.
+    /// Checks the checked items' folders against Helix or Procore in the same window: each says whether its folder
+    /// has every file the site has for it, with the missing ones checked so Download gets them.
     /// </summary>
     private void VerifyChecked_Click(object sender, RoutedEventArgs e) => OpenCheckedItems(verify: true);
 
@@ -1451,19 +1451,13 @@ public partial class MainWindow : Window
         }
 
         var requests = rows.Select(viewModel.DownloadRequestFor).OfType<DownloadRequest>()
-            .GroupBy(request => $"{request.ProjectId}|{request.ItemType}|{request.ItemId}")
+            .GroupBy(request => $"{request.Provider}|{request.ProjectId}|{request.ItemType}|{request.ItemId}")
             .Select(group => group.First())
             .ToList();
-        var notHelix = rows.Count - requests.Count;
         if (requests.Count == 0)
         {
-            ShowInfo("Downloading is available for Helix items. Procore isn't supported yet.");
+            ShowInfo("The checked items' projects aren't connected to Helix or Procore, so there is nothing to download.");
             return;
-        }
-
-        if (notHelix > 0)
-        {
-            ShowInfo($"{notHelix} checked item{(notHelix == 1 ? " is" : "s are")} from Procore and will be skipped (Procore downloads aren't supported yet).");
         }
 
         batchWindow = ShowDownloadWindow(requests, verify);
@@ -1490,14 +1484,14 @@ public partial class MainWindow : Window
         var request = viewModel.DownloadRequestFor(row);
         if (request is null)
         {
-            ShowInfo("Downloading is available for Helix items. Procore isn't supported yet.");
+            ShowInfo("This row has no Helix or Procore item to download.");
             return;
         }
 
         ShowDownloadWindow(new[] { request });
     }
 
-    /// <summary>A row's Verify: does its folder have every file Helix has for the item?</summary>
+    /// <summary>A row's Verify: does its folder have every file Helix or Procore has for the item?</summary>
     private void VerifyRow_Click(object sender, RoutedEventArgs e)
     {
         if (sender is not FrameworkElement { DataContext: RowViewModel row })
@@ -1508,7 +1502,7 @@ public partial class MainWindow : Window
         var request = viewModel.DownloadRequestFor(row);
         if (request is null)
         {
-            ShowInfo("Verifying folders is available for Helix items. Procore isn't supported yet.");
+            ShowInfo("This row has no Helix or Procore item to check its folder against.");
             return;
         }
 
@@ -1545,7 +1539,7 @@ public partial class MainWindow : Window
     }
 
     /// <summary>
-    /// Opens the newest file Helix has for a row's item: the copy in its folder when it's there, otherwise a copy
+    /// Opens the newest file Helix or Procore has for a row's item: the copy in its folder when it's there, otherwise a copy
     /// from Helix kept in the app's folder (the CA folder isn't changed). An item with no files opens in Helix.
     /// </summary>
     private void OpenNewestFile(RowViewModel row)
@@ -1559,7 +1553,7 @@ public partial class MainWindow : Window
         window.FileOpened += message => viewModel.StatusMessage = message;
         window.NoFiles += async () =>
         {
-            viewModel.StatusMessage = $"{row.TypeSingular} {row.Number} has no attachments in Helix, so it opens there instead.";
+            viewModel.StatusMessage = $"{row.TypeSingular} {row.Number} has no attachments in {request.ProviderLabel}, so it opens there instead.";
             await OpenItemAsync(row);
         };
         // It uses the built-in browser's sign-in, like the Download window.

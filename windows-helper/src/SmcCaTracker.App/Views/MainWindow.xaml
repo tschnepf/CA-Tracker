@@ -1126,7 +1126,7 @@
                                         ToolTip="Set the discipline of the checked items. Items with no folder yet download into that discipline's folder." />
                                 <Button Content="{Binding VerifyCheckedText}" Click="VerifyChecked_Click" Margin="0,2,6,2"
                                         Visibility="{Binding CanDownloadChecked, Converter={StaticResource Visible}}"
-                                        ToolTip="Check that each checked Helix item's folder has every file Helix has for it; missing files can then be downloaded" />
+                                        ToolTip="Check that each checked item's folder has every file Helix or Procore has for it; missing files can then be downloaded" />
                                 <Button Content="{Binding MoveBackText}" Click="MoveBack_Click" Margin="0,2,6,2"
                                         Visibility="{Binding CanMoveBack, Converter={StaticResource Visible}}"
                                         ToolTip="Moves checked folders that are in Returned back to the active folder. A preview shows every move first." />
@@ -1136,7 +1136,7 @@
                             </WrapPanel>
                             <Button Grid.Column="1" Style="{StaticResource AccentButton}" Content="{Binding DownloadCheckedText}" Click="DownloadChecked_Click"
                                     Visibility="{Binding CanDownloadChecked, Converter={StaticResource Visible}}"
-                                    ToolTip="Download the checked Helix items: one window lists them all with their files and where they go"
+                                    ToolTip="Download the checked Helix and Procore items: one window lists them all with their files and where they go"
                                     VerticalAlignment="Center" Margin="8,0,0,0" />
                         </Grid>
                     </Border>
