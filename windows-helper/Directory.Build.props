@@ -3,7 +3,7 @@
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <LangVersion>latest</LangVersion>
-    <Version>3.7.0</Version>
+    <Version>3.8.0</Version>
     <Company>SMC</Company>
     <Product>SMC CA Tracker</Product>
     <Copyright>SMC</Copyright>
