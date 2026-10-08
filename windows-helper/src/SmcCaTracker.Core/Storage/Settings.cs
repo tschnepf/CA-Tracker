@@ -109,7 +109,7 @@ public sealed class WorkloadBinding
 /// <summary>Keeping Helix and Procore items up to date in the background.</summary>
 public sealed class SyncSettings
 {
-    /// <summary>Working hours, in local time: from 7 am until 5 pm, every day.</summary>
+    /// <summary>Working hours, in local time: from 7 am until 5 pm (weekdays; weekends don't sync by themselves).</summary>
     public const int WorkdayStartHour = 7;
     public const int WorkdayEndHour = 17;
 
@@ -124,7 +124,7 @@ public sealed class SyncSettings
     /// <summary>Minutes between background reads during working hours.</summary>
     public int WorkHoursIntervalMinutes { get; set; } = 60;
 
-    /// <summary>Minutes between background reads outside working hours (while the app is open).</summary>
+    /// <summary>Minutes between background reads outside working hours on weekdays (while the app is open).</summary>
     public int OffHoursIntervalMinutes { get; set; } = 180;
 
     /// <summary>
@@ -134,6 +134,9 @@ public sealed class SyncSettings
     public int FullReadHours { get; set; } = 12;
 
     public static bool IsWorkingHours(DateTime localTime) => localTime.Hour is >= WorkdayStartHour and < WorkdayEndHour;
+
+    /// <summary>Nothing syncs by itself on Saturdays and Sundays (Sync all still does).</summary>
+    public static bool SyncsAt(DateTime localTime) => localTime.DayOfWeek is not (DayOfWeek.Saturday or DayOfWeek.Sunday);
 
     /// <summary>The time between background reads at <paramref name="localTime"/>.</summary>
     public TimeSpan IntervalAt(DateTime localTime) =>

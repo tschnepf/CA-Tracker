@@ -225,8 +225,9 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         folderTimer.Tick += async (_, _) => await RunTimerAsync("folder check", CheckFoldersAsync);
         folderTimer.Start();
 
-        // Helix and Procore: projects are read in the background (changes only), hourly from 7 am to 5 pm
-        // and every three hours at other times (Settings → Background sync), and once soon after start.
+        // Helix and Procore: projects are read in the background (changes only) on weekdays, hourly from
+        // 7 am to 5 pm and every three hours at other times (Settings → Background sync), and once soon
+        // after start. Not on Saturdays and Sundays.
         autoSyncTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(30) };
         autoSyncTimer.Tick += async (_, _) => await RunTimerAsync("automatic sync", AutoSyncAsync);
         autoSyncTimer.Start();
@@ -3492,15 +3493,15 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
     }
 
     /// <summary>
-    /// Background sync of the tracked projects on the schedule in Settings (one interval from 7 am to
-    /// 5 pm, a longer one at other times): Helix (only changed items) and Procore (when it can be read in
-    /// the background). Sites whose sign-in has expired are skipped, and Procore while it has asked to
-    /// slow down.
+    /// Background sync of the tracked projects on the schedule in Settings (weekdays only; one interval
+    /// from 7 am to 5 pm, a longer one at other times): Helix (only changed items) and Procore (when it can
+    /// be read in the background). Sites whose sign-in has expired are skipped, and Procore while it has
+    /// asked to slow down.
     /// </summary>
     private async Task AutoSyncAsync()
     {
         var sync = Settings.Sync;
-        if (autoSyncRunning || !sync.AutoSync || refreshingMany
+        if (autoSyncRunning || !sync.AutoSync || refreshingMany || !SyncSettings.SyncsAt(DateTime.Now)
             || DateTimeOffset.Now - lastAutoSync < sync.IntervalAt(DateTime.Now))
         {
             return;

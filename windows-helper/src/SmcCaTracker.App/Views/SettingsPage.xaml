@@ -154,13 +154,13 @@
                                 <TextBox x:Name="WorkHoursIntervalBox" Grid.Column="1" Width="60"
                                          AutomationProperties.Name="From 7 am to 5 pm, sync every how many minutes" />
                                 <TextBlock Grid.Column="2" Text="minutes (15–240)" VerticalAlignment="Center" Margin="8,0,0,0" />
-                                <TextBlock Grid.Row="1" Text="Other times: every" VerticalAlignment="Center" Margin="0,8,8,0" />
+                                <TextBlock Grid.Row="1" Text="Other weekday times: every" VerticalAlignment="Center" Margin="0,8,8,0" />
                                 <TextBox x:Name="OffHoursIntervalBox" Grid.Row="1" Grid.Column="1" Width="60" Margin="0,8,0,0"
-                                         AutomationProperties.Name="At other times, sync every how many minutes" />
+                                         AutomationProperties.Name="At other weekday times, sync every how many minutes" />
                                 <TextBlock Grid.Row="1" Grid.Column="2" Text="minutes (30–720)" VerticalAlignment="Center" Margin="8,8,0,0" />
                             </Grid>
                             <TextBlock Style="{StaticResource Muted}" TextWrapping="Wrap" Margin="24,6,0,0"
-                                       Text="Only changed items are read. Procore projects are read in full once a week, and sooner when Procore's item counts show something was removed." />
+                                       Text="Nothing syncs by itself on Saturdays and Sundays; Sync all still works. Only changed items are read. Procore projects are read in full once a week, and sooner when Procore's item counts show something was removed." />
                             <TextBlock x:Name="IntervalError" Style="{StaticResource FieldError}" Margin="24,4,0,0" />
 
                             <TextBlock Text="WHEN PROCORE NEEDS THE BROWSER WINDOW" Style="{StaticResource SectionTitle}" Margin="0,16,0,6" />

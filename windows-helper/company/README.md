@@ -10,7 +10,7 @@ building the installer; `build.ps1 -Installer` ships it next to the app. It can 
 | `folders` | Default RFI / Submittal / returned folder names in each CA folder |
 | `disciplines` | The disciplines offered and detected in folder names (`code`, `label`, `folderToken` as written in folder names, other `aliases`) |
 | `syncWorkHoursMinutes` | Minutes between background syncs of Helix and Procore projects from 7 am to 5 pm (15–240; default 60) |
-| `syncOffHoursMinutes` | Minutes between background syncs at other times, while the app is open (30–720; default 180) |
+| `syncOffHoursMinutes` | Minutes between background syncs at other weekday times, while the app is open (30–720; default 180). Nothing syncs by itself on Saturdays and Sundays |
 | `updateFeed` | Folder or https address holding `latest.json` and the installers (see below); plain `http://` is refused |
 | `locked` | Settings people can't change in the app: `folders`, `disciplines`, `sync` |
 

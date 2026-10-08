@@ -152,6 +152,19 @@ public class SyncScheduleTests
         Assert.Equal(TimeSpan.FromMinutes(minutes), sync.IntervalAt(new DateTime(2026, 10, 8, hour, minute, 0)));
     }
 
+    [Theory]
+    [InlineData(2026, 10, 10, false)] // Saturday
+    [InlineData(2026, 10, 11, false)] // Sunday
+    [InlineData(2026, 10, 12, true)]  // Monday
+    [InlineData(2026, 10, 9, true)]   // Friday
+    public void NothingSyncsByItselfOnWeekends(int year, int month, int day, bool syncs)
+    {
+        foreach (var hour in new[] { 0, 9, 18 })
+        {
+            Assert.Equal(syncs, SyncSettings.SyncsAt(new DateTime(year, month, day, hour, 0, 0)));
+        }
+    }
+
     [Fact]
     public void IntervalsOutOfRangeAreBroughtIntoIt()
     {

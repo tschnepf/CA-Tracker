@@ -28,8 +28,9 @@ No Chrome extension or browser add-in is involved.
   reads each tracked project through Helix's own data service — no windows. The first read of a
   project in a session reads everything; later reads ask Helix only for items changed since, so a
   sync of many projects takes seconds. Every 12 hours a project is read in full again so items
-  deleted in Helix drop out. Tracked projects sync every hour from 7 am to 5 pm and every three hours
-  at other times while the app is open (Settings → Background sync).
+  deleted in Helix drop out. On weekdays, tracked projects sync every hour from 7 am to 5 pm and every
+  three hours at other times while the app is open; nothing syncs by itself on Saturdays and Sundays
+  (Settings → Background sync).
 - **The list redraws once** per change, not once per row.
 - **A timing log** (Settings → Open the log folder) records how long each step took and marks any
   slow one, so a sluggish step can be found instead of guessed at.
@@ -342,9 +343,10 @@ to for new projects. A project that can't be read is marked and the rest carry o
 button reads **Stop syncing**, which finishes the current project and skips the rest. Progress shows
 on the right of the status bar along the bottom of the window and on each Connections card. A connection's last sync is the most recent read
 of any of its projects. While the app is open, tracked Helix projects and every Procore project
-(except those set to not sync) also sync by themselves every hour from 7 am to 5 pm and every three
-hours at other times, and your Procore companies are looked through again for new projects every
-6 hours (Settings → Background sync).
+(except those set to not sync) also sync by themselves on weekdays, every hour from 7 am to 5 pm and
+every three hours at other times, and your Procore companies are looked through again for new
+projects every 6 hours. Nothing syncs by itself on Saturdays and Sundays; **Sync all** still works
+(Settings → Background sync).
 
 ## Syncing one project
 
