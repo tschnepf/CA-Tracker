@@ -4,6 +4,7 @@ using System.IO;
 using System.Net.Http;
 using System.Windows;
 using Microsoft.Web.WebView2.Core;
+using Microsoft.Web.WebView2.Wpf;
 using Microsoft.Win32;
 using SmcCaTracker.App.Services;
 using SmcCaTracker.App.ViewModels;
@@ -14,12 +15,12 @@ using SmcCaTracker.Core.Storage;
 namespace SmcCaTracker.App.Views;
 
 /// <summary>
-/// Downloads Helix RFIs and Submittals, one or many, into "&lt;number&gt; - &lt;name&gt;" folders. Every item is a
-/// section with where it goes, its Details report and current attachments (with upload dates) and its
-/// status. The files are read from Helix one item after another in the background (one hidden page for
-/// all of them), new files start checked, and nothing is written until you select Download, which saves
-/// every checked file of every item in one go. Existing files are never replaced: a copy gets " (2)".
-/// Uses the same built-in browser sign-in as syncs.
+/// Downloads Helix and Procore RFIs and Submittals, one or many, into "&lt;number&gt; - &lt;name&gt;" folders. Every
+/// item is a section with where it goes, its files (Helix's Details report and current attachments, Procore's
+/// attachments, with their dates) and its status. The files are read one item after another in the background
+/// (one hidden Helix page and one hidden Procore page for all of them), new files start checked, and nothing is
+/// written until you select Download, which saves every checked file of every item in one go. Existing files
+/// are never replaced: a copy gets " (2)". Uses the same built-in browser sign-ins as syncs.
 /// </summary>
 public partial class DownloadWindow : Window
 {
@@ -29,7 +30,13 @@ public partial class DownloadWindow : Window
     private readonly bool verify;
     private readonly ObservableCollection<DownloadItemViewModel> items = new();
     private readonly CancellationTokenSource closing = new();
-    private readonly HelixDownloadSession session;
+
+    // A page for each site the items are on (null when none is).
+    private readonly HelixDownloadSession? helix;
+    private readonly ProcoreDownloadSession? procore;
+
+    // "Helix", "Procore" or "Helix and Procore": where the window's items are.
+    private readonly string sources;
     private bool started;
     private bool downloading;
     private bool stopRequested;
@@ -43,8 +50,8 @@ public partial class DownloadWindow : Window
     private int filesPlanned;
 
     /// <param name="verify">
-    /// Checking the items' folders against Helix: each says whether its folder has every file Helix has for
-    /// it, and the missing files start checked, so Download gets exactly those.
+    /// Checking the items' folders against Helix or Procore: each says whether its folder has every file the
+    /// site has for it, and the missing files start checked, so Download gets exactly those.
     /// </param>
     public DownloadWindow(IReadOnlyList<DownloadRequest> requests, AppPaths paths, bool verify = false)
     {
@@ -88,16 +95,39 @@ public partial class DownloadWindow : Window
             NewOnlyButton.ToolTip = "Check only the files missing from each item's folder, as when the window opened";
         }
 
-        SetStatus("Opening Helix…");
+        if (items.Any(item => !IsProcore(item)))
+        {
+            helix = new HelixDownloadSession(Browser, paths, closing.Token);
+            helix.SignInChanged += show => ShowSignIn(Browser, BrowserRow, "Helix", show);
+        }
+
+        if (items.Any(IsProcore))
+        {
+            procore = new ProcoreDownloadSession(ProcoreBrowser, paths, closing.Token);
+            procore.SignInChanged += show => ShowSignIn(ProcoreBrowser, ProcoreBrowserRow, "Procore", show);
+        }
+
+        sources = helix is not null && procore is not null ? "Helix and Procore" : procore is not null ? "Procore" : "Helix";
+        SetStatus($"Opening {sources}…");
         UpdateTotals();
-        session = new HelixDownloadSession(Browser, paths, closing.Token);
-        session.SignInChanged += ShowBrowser;
         Loaded += async (_, _) => await StartAsync();
         Closed += (_, _) =>
         {
             closing.Cancel();
             Browser.Dispose();
+            ProcoreBrowser.Dispose();
         };
+    }
+
+    private static bool IsProcore(DownloadItemViewModel item) => ProviderSites.IsProcore(item.Request.Provider);
+
+    /// <summary>The page that lists the item's files: Helix's or Procore's.</summary>
+    private IItemFilesSession SessionFor(DownloadItemViewModel item) => IsProcore(item) ? procore! : helix!;
+
+    private Task<ItemFiles> ReadFilesAsync(DownloadItemViewModel item)
+    {
+        var request = item.Request;
+        return SessionFor(item).ReadItemAsync(request.ItemId, request.ItemType, request.ProjectId, request.AccountId, request.Host);
     }
 
     /// <summary>Raised after files were saved, so the main window can re-check the CA folders.</summary>
@@ -105,27 +135,44 @@ public partial class DownloadWindow : Window
 
     private async Task StartAsync()
     {
-        try
+        var failedToStart = false;
+        foreach (var (session, isProcore) in new (IItemFilesSession? Session, bool IsProcore)[] { (helix, false), (procore, true) })
         {
-            await session.StartAsync();
-        }
-        catch (Exception error)
-        {
-            var why = error is WebView2RuntimeNotFoundException
-                ? "The Microsoft Edge WebView2 Runtime is not installed. Install it from Microsoft (search \"WebView2 Runtime\") and try again."
-                : $"The built-in browser could not start: {error.Message}";
-            SetStatus(why);
-            foreach (var item in items)
+            if (session is null)
             {
-                item.Fail(why);
-                item.ReadDone.TrySetResult();
+                continue;
             }
 
+            try
+            {
+                await session.StartAsync();
+                started = true;
+            }
+            catch (Exception error)
+            {
+                // Its site's items can't be read; the other site's still can.
+                var why = error is WebView2RuntimeNotFoundException
+                    ? "The Microsoft Edge WebView2 Runtime is not installed. Install it from Microsoft (search \"WebView2 Runtime\") and try again."
+                    : $"The built-in browser could not start: {error.Message}";
+                SetStatus(why);
+                failedToStart = true;
+                foreach (var item in items.Where(item => IsProcore(item) == isProcore))
+                {
+                    item.Fail(why);
+                    item.ReadDone.TrySetResult();
+                }
+            }
+        }
+
+        if (!started)
+        {
             return;
         }
 
-        started = true;
-        SetStatus(Instructions);
+        if (!failedToStart)
+        {
+            SetStatus(Instructions);
+        }
 
         // Items of the same project and type together, so the Helix page already open serves the next one.
         foreach (var item in items.OrderBy(item => item.Request.ProjectId, StringComparer.Ordinal)
@@ -162,19 +209,19 @@ public partial class DownloadWindow : Window
         if (items.Count == 1)
         {
             var only = items[0];
-            result = only.State == DownloadItemState.Failed ? "Its files couldn't be read from Helix (see above)."
-                : only.IsComplete ? "The folder has every file Helix has for this item."
+            result = only.State == DownloadItemState.Failed ? $"Its files couldn't be read from {sources} (see above)."
+                : only.IsComplete ? $"The folder has every file {sources} has for this item."
                 : only.Destination is not null && !Directory.Exists(only.Destination) ? "The item has no folder yet. Its files are checked: select Download to get them."
                 : $"{Files(only.MissingCount)} {(only.MissingCount == 1 ? "is" : "are")} missing from the folder. {(only.MissingCount == 1 ? "It is" : "They are")} checked: select Download to get {(only.MissingCount == 1 ? "it" : "them")}.";
         }
         else
         {
             result = complete == read.Count
-                ? read.Count == 1 ? "The folder has every file Helix has." : $"All {Folders(read.Count)} have every file Helix has."
+                ? read.Count == 1 ? $"The folder has every file {sources} has." : $"All {Folders(read.Count)} have every file {sources} has."
                 : $"{complete} of {Folders(read.Count)} {(complete == 1 ? "has" : "have")} every file. {Files(missingFiles)} {(missingFiles == 1 ? "is" : "are")} missing from the rest and checked: select Download to get them.";
             if (unread > 0)
             {
-                result += $" {unread} {(unread == 1 ? "item" : "items")} couldn't be read from Helix.";
+                result += $" {unread} {(unread == 1 ? "item" : "items")} couldn't be read from {sources}.";
             }
         }
 
@@ -196,7 +243,7 @@ public partial class DownloadWindow : Window
         item.BeginReading();
         try
         {
-            item.Load(await session.ReadItemAsync(item.Request.ItemId, item.Request.ItemType, item.Request.ProjectId));
+            item.Load(await ReadFilesAsync(item));
             if (items.Count == 1)
             {
                 // On its own the item stays open, whatever its files.
@@ -215,7 +262,7 @@ public partial class DownloadWindow : Window
         }
         catch (Exception error)
         {
-            item.Fail($"Couldn't read its files from Helix: {error.Message}");
+            item.Fail($"Couldn't read its files from {item.Request.ProviderLabel}: {error.Message}");
         }
         finally
         {
@@ -229,7 +276,7 @@ public partial class DownloadWindow : Window
     {
         var reading = items.Count(item => item.State is DownloadItemState.Waiting or DownloadItemState.Reading);
         var ready = items.Count - reading;
-        ReadingText.Text = reading == 0 ? "" : items.Count == 1 ? "Reading from Helix…" : $"{ready} of {items.Count} read · reading from Helix…";
+        ReadingText.Text = reading == 0 ? "" : items.Count == 1 ? $"Reading from {sources}…" : $"{ready} of {items.Count} read · reading from {sources}…";
 
         var checkedFiles = items.Sum(item => item.CheckedCount);
         var checkedItems = items.Count(item => item.CheckedCount > 0);
@@ -387,7 +434,7 @@ public partial class DownloadWindow : Window
                 if (item.State is DownloadItemState.Waiting or DownloadItemState.Reading)
                 {
                     // Not counted at the start: it joins the total with its new files once it is read.
-                    ShowProgress($"Waiting for Helix to list {item.Heading}");
+                    ShowProgress($"Waiting for {item.Request.ProviderLabel} to list {item.Heading}");
                     await item.ReadDone.Task;
                     if (item.CanChangeFiles)
                     {
@@ -467,7 +514,7 @@ public partial class DownloadWindow : Window
     {
         foreach (var item in items.Where(item => item.IsNewRound && item.State is DownloadItemState.Waiting or DownloadItemState.Reading).ToList())
         {
-            ShowProgress($"Waiting for Helix to list {item.Heading}");
+            ShowProgress($"Waiting for {item.Request.ProviderLabel} to list {item.Heading}");
             await item.ReadDone.Task;
         }
 
@@ -534,8 +581,9 @@ public partial class DownloadWindow : Window
         item.BeginDownload();
         try
         {
-            // Helix's download links expire within minutes (the file store then answers 400), and the list
-            // may have been read a while ago: fresh links right before the item's files are saved.
+            // Download links expire (Helix's within minutes: its file store then answers 400; Procore's
+            // later), and the list may have been read a while ago: fresh links right before the item's files
+            // are saved.
             if (selected.Any(file => !file.IsReport))
             {
                 ShowProgress($"Getting download links for {item.Heading}");
@@ -605,7 +653,7 @@ public partial class DownloadWindow : Window
     }
 
     private async Task RefreshLinksAsync(DownloadItemViewModel item) =>
-        item.RefreshLinks(await session.ReadItemAsync(item.Request.ItemId, item.Request.ItemType, item.Request.ProjectId));
+        item.RefreshLinks(await ReadFilesAsync(item));
 
     /// <summary>
     /// Saves one attachment. True when saved, false when it failed (noted on the file), or null when its
@@ -615,7 +663,7 @@ public partial class DownloadWindow : Window
     {
         if (file.Url is null)
         {
-            return Fail(item, file, folder, "Helix didn't provide a download link. Try again.");
+            return Fail(item, file, folder, $"{item.Request.ProviderLabel} didn't provide a download link. Try again.");
         }
 
         var temporary = Path.Combine(folder, $".{Guid.NewGuid():N}.partial");
@@ -632,8 +680,8 @@ public partial class DownloadWindow : Window
                 if (!response.IsSuccessStatusCode)
                 {
                     return Fail(item, file, folder, status is 400 or 401 or 403
-                        ? $"Helix refused the download link ({status}) even after getting a fresh one."
-                        : $"Helix returned {status}.");
+                        ? $"{item.Request.ProviderLabel} refused the download link ({status}) even after getting a fresh one."
+                        : $"{item.Request.ProviderLabel} returned {status}.");
                 }
 
                 await using var output = new FileStream(temporary, FileMode.CreateNew, FileAccess.Write, FileShare.None);
@@ -668,17 +716,18 @@ public partial class DownloadWindow : Window
         {
             byte[] bytes;
             // Helix draws the Details PDF on its report page, and a hidden page may not draw: the page is
-            // shown in its 1-pixel row meanwhile, as the download window always did before.
+            // shown in its 1-pixel row meanwhile, as the download window always did before. (Only Helix
+            // items have a Details report.)
             exportingReport = true;
             Browser.Visibility = Visibility.Visible;
             try
             {
-                bytes = await session.ExportReportAsync(report);
+                bytes = await helix!.ExportReportAsync(report);
             }
             finally
             {
                 exportingReport = false;
-                if (!signInShown)
+                if (!signIns.ContainsKey(Browser))
                 {
                     Browser.Visibility = Visibility.Hidden;
                 }
@@ -720,40 +769,45 @@ public partial class DownloadWindow : Window
         return false;
     }
 
-    // ---- The Helix page -----------------------------------------------------------------------
+    // ---- The Helix and Procore pages ----------------------------------------------------------
 
     private string Instructions =>
         verify
-            ? "Each folder is compared with the files Helix has for its item. Files missing from it are checked; select Download to get them. Nothing is saved until then."
+            ? $"Each folder is compared with the files {sources} has for its item. Files missing from it are checked; select Download to get them. Nothing is saved until then."
             : items.Count == 1
                 ? "Check the files to download and where they go, then select Download. Nothing is saved until then."
                 : "New files are checked; files already in an item's folder aren't. Check what you want, then select Download. Nothing is saved until then.";
 
-    private bool signInShown;
+    // The pages showing their site's sign-in, with the site's name.
+    private readonly Dictionary<WebView2, string> signIns = new();
     private bool exportingReport;
 
     /// <summary>
-    /// Shows the Helix page while it asks you to sign in; otherwise it stays hidden in its 1-pixel row
-    /// (visible there only while Helix draws a Details PDF).
+    /// Shows a site's page (Helix's or Procore's) in its row while the site asks you to sign in; otherwise it
+    /// stays hidden in its 1-pixel row (Helix's is visible there only while Helix draws a Details PDF).
     /// </summary>
-    private void ShowBrowser(bool show)
+    private void ShowSignIn(WebView2 page, System.Windows.Controls.RowDefinition row, string site, bool show)
     {
-        BrowserRow.Height = show ? new GridLength(3, GridUnitType.Star) : new GridLength(1);
-        Browser.Visibility = show || exportingReport ? Visibility.Visible : Visibility.Hidden;
-        if (show)
+        var changed = show ? signIns.TryAdd(page, site) : signIns.Remove(page);
+        row.Height = show ? new GridLength(3, GridUnitType.Star) : new GridLength(1);
+        page.Visibility = show || (page == Browser && exportingReport) ? Visibility.Visible : Visibility.Hidden;
+        if (!changed)
         {
-            SetStatus("Sign in to Helix below. Reading the items carries on by itself once you are in.");
-            if (!IsActive)
+            return;
+        }
+
+        if (signIns.Count > 0)
+        {
+            SetStatus($"Sign in to {string.Join(" and ", signIns.Values)} below. Reading the items carries on by itself once you are in.");
+            if (show && !IsActive)
             {
                 Activate();
             }
         }
-        else if (signInShown && !downloading)
+        else if (!downloading)
         {
             SetStatus(Instructions);
         }
-
-        signInShown = show;
     }
 
     private void SetStatus(string message) => StatusText.Text = message;

@@ -190,6 +190,28 @@ public static class ProviderScripts
             """ + request + ");";
     }
 
+    /// <summary>
+    /// Lists one RFI's or Submittal's files and their download links through the signed-in Procore page
+    /// (Procore's REST service, read-only). Posts "procore-item-files" with { attachments: [{ id, filename,
+    /// uploadedAt, url }] } (as Helix's "prepared" does), "procore-error" with the HTTP status, or "procore-missing".
+    /// </summary>
+    public static string ProcoreReadItemFiles(string requestId, string projectId, string? companyId, string itemType, string itemId)
+    {
+        var request = JsonSerializer.Serialize(new { requestId, projectId, companyId, itemType, itemId });
+        return """
+            (async (request) => {
+              const post = (message) => window.chrome.webview.postMessage(Object.assign({ requestId: request.requestId }, message));
+              if (typeof CaTrackerProcoreSync === "undefined" || typeof CaTrackerProcoreSync.readItemFiles !== "function") { post({ type: "procore-missing" }); return; }
+              try {
+                const result = await CaTrackerProcoreSync.readItemFiles(window, request, {});
+                post({ type: "procore-item-files", attachments: result.attachments });
+              } catch (error) {
+                post({ type: "procore-error", status: Number(error && error.status || 0), message: String(error && error.message || error) });
+              }
+            })(
+            """ + request + ");";
+    }
+
     public static string HelixScan => """
         (async () => {
           const post = (message) => window.chrome.webview.postMessage(message);

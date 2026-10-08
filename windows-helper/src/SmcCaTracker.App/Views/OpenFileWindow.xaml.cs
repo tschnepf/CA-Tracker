@@ -14,11 +14,11 @@ using SmcCaTracker.Core.Storage;
 namespace SmcCaTracker.App.Views;
 
 /// <summary>
-/// "Open" on a Helix row: finds the item's newest attachment and opens it. When the item's folder already has
-/// that file, the copy there opens; otherwise a copy is fetched from Helix into the app's own folder
-/// (<see cref="AppPaths.OpenedFilesDirectory"/>) and opens from there. Nothing is written to the CA folder:
-/// saving a file there is the Download window's job. Shows the Helix page only if Helix asks you to sign in,
-/// and closes by itself once the file is open. Read-only in Helix, like the Download window.
+/// "Open" on a Helix or Procore row: finds the item's newest attachment and opens it. When the item's folder
+/// already has that file, the copy there opens; otherwise a copy is fetched from Helix or Procore into the app's
+/// own folder (<see cref="AppPaths.OpenedFilesDirectory"/>) and opens from there. Nothing is written to the CA
+/// folder: saving a file there is the Download window's job. Shows the site's page only if it asks you to sign
+/// in, and closes by itself once the file is open. Read-only in Helix and Procore, like the Download window.
 /// </summary>
 public partial class OpenFileWindow : Window
 {
@@ -27,7 +27,7 @@ public partial class OpenFileWindow : Window
     private readonly DownloadRequest request;
     private readonly AppPaths paths;
     private readonly CancellationTokenSource closing = new();
-    private readonly HelixDownloadSession session;
+    private readonly IItemFilesSession session;
 
     public OpenFileWindow(DownloadRequest request, AppPaths paths)
     {
@@ -39,8 +39,10 @@ public partial class OpenFileWindow : Window
         Title = $"Open {heading} — CA Tracker";
         HeadingText.Text = heading;
         HeadingText.ToolTip = heading;
-        StatusText.Text = "Finding its newest file in Helix…";
-        session = new HelixDownloadSession(Browser, paths, closing.Token);
+        StatusText.Text = $"Finding its newest file in {request.ProviderLabel}…";
+        session = ProviderSites.IsProcore(request.Provider)
+            ? new ProcoreDownloadSession(Browser, paths, closing.Token)
+            : new HelixDownloadSession(Browser, paths, closing.Token);
         session.SignInChanged += ShowBrowser;
         Loaded += async (_, _) => await RunAsync();
         Closed += (_, _) =>
@@ -53,7 +55,7 @@ public partial class OpenFileWindow : Window
     /// <summary>Says what was opened, for the main window's status line.</summary>
     public event Action<string>? FileOpened;
 
-    /// <summary>The item has no attachments in Helix (the main window opens the item in Helix instead).</summary>
+    /// <summary>The item has no attachments in Helix or Procore (the main window opens the item there instead).</summary>
     public event Action? NoFiles;
 
     private async Task RunAsync()
@@ -61,7 +63,7 @@ public partial class OpenFileWindow : Window
         try
         {
             await session.StartAsync();
-            var files = await session.ReadItemAsync(request.ItemId, request.ItemType, request.ProjectId);
+            var files = await session.ReadItemAsync(request.ItemId, request.ItemType, request.ProjectId, request.AccountId, request.Host);
             var newest = NewestFile.Pick(files.Attachments, attachment => attachment.UploadedAt);
             if (newest is null)
             {
@@ -83,14 +85,14 @@ public partial class OpenFileWindow : Window
                 path = NewestFile.CachePath(paths.OpenedFilesDirectory, request.ProjectName, request.Number, request.Title, target);
                 if (!NewestFile.IsCurrentCopy(path, newest.UploadedAt))
                 {
-                    StatusText.Text = $"Getting {newest.Filename} from Helix…";
+                    StatusText.Text = $"Getting {newest.Filename} from {request.ProviderLabel}…";
                     await FetchAsync(newest.Url, path);
                 }
 
-                message = $"Opened {Path.GetFileName(path)}, a copy from Helix. It isn't in the item's folder: Download saves it there.";
+                message = $"Opened {Path.GetFileName(path)}, a copy from {request.ProviderLabel}. It isn't in the item's folder: Download saves it there.";
             }
 
-            AppLog.Info("open", $"Opening the newest file of {request.ItemType} {request.Number} ({(path.StartsWith(paths.OpenedFilesDirectory, StringComparison.OrdinalIgnoreCase) ? "copy from Helix" : "item folder")}).");
+            AppLog.Info("open", $"Opening the newest file of {request.ItemType} {request.Number} ({(path.StartsWith(paths.OpenedFilesDirectory, StringComparison.OrdinalIgnoreCase) ? $"copy from {request.ProviderLabel}" : "item folder")}).");
             Process.Start(new ProcessStartInfo(path) { UseShellExecute = true });
             FileOpened?.Invoke(message);
             Close();
@@ -121,7 +123,7 @@ public partial class OpenFileWindow : Window
             {
                 if (!response.IsSuccessStatusCode)
                 {
-                    throw new InvalidOperationException($"Helix returned {(int)response.StatusCode}.");
+                    throw new InvalidOperationException($"{request.ProviderLabel} returned {(int)response.StatusCode}.");
                 }
 
                 await using var output = new FileStream(temporary, FileMode.CreateNew, FileAccess.Write, FileShare.None);
@@ -145,7 +147,7 @@ public partial class OpenFileWindow : Window
         {
             Width = Math.Max(Width, 1000);
             Height = Math.Max(Height, 700);
-            StatusText.Text = "Sign in to Helix below. The file opens by itself once you are in.";
+            StatusText.Text = $"Sign in to {request.ProviderLabel} below. The file opens by itself once you are in.";
             if (!IsActive)
             {
                 Activate();
@@ -153,7 +155,7 @@ public partial class OpenFileWindow : Window
         }
         else
         {
-            StatusText.Text = "Finding its newest file in Helix…";
+            StatusText.Text = $"Finding its newest file in {request.ProviderLabel}…";
         }
     }
 

@@ -10,13 +10,17 @@ using SmcCaTracker.Core.Operations;
 namespace SmcCaTracker.App.ViewModels;
 
 /// <summary>What to download and where it would go by default.</summary>
+/// <param name="Provider">Where the item is: <see cref="Providers.Helix"/> or <see cref="Providers.Procore"/>.</param>
 /// <param name="ExistingFolder">The item's matched folder, if it already has one.</param>
 /// <param name="ParentFolder">Where a new "&lt;number&gt; - &lt;name&gt;" folder goes (the project's RFI or Submittal folder).</param>
 /// <param name="MoveBackTo">
 /// For an item back with you while its folder is in Returned (a new round): where that folder goes when it moves
 /// back out of Returned. Its new files go in a new R folder (see <see cref="NewRound"/>).
 /// </param>
+/// <param name="AccountId">Procore: the project's company, which Procore needs to answer for it.</param>
+/// <param name="Host">Procore: the server the project is on ("app.procore.com", "us02.procore.com").</param>
 public sealed record DownloadRequest(
+    string Provider,
     string ItemType,
     string ItemId,
     string ProjectId,
@@ -25,7 +29,13 @@ public sealed record DownloadRequest(
     string ProjectName,
     string? ExistingFolder,
     string? ParentFolder,
-    string? MoveBackTo = null);
+    string? MoveBackTo = null,
+    string? AccountId = null,
+    string? Host = null)
+{
+    /// <summary>"Helix" or "Procore", for what the windows say.</summary>
+    public string ProviderLabel => Providers.Label(Provider);
+}
 
 /// <summary>One file offered for download.</summary>
 public sealed class DownloadFileViewModel : ObservableObject
@@ -43,16 +53,20 @@ public sealed class DownloadFileViewModel : ObservableObject
         IsReport = isReport;
     }
 
-    /// <summary>"report" or the Helix attachment id.</summary>
+    /// <summary>"report" or the attachment's id in Helix or Procore.</summary>
     public string Key { get; }
     public string Name { get; }
     public DateTimeOffset? UploadedAt { get; }
     public bool IsReport { get; }
     public string TargetName { get; }
-    public string UploadedText => IsReport ? "Created by Helix now" : UploadedAt?.ToLocalTime().ToString("MMM d, yyyy h:mm tt") ?? "";
+    /// <summary>When it was uploaded; a day alone for Procore's dates that have no time (a response's returned date).</summary>
+    public string UploadedText => IsReport ? "Created by Helix now"
+        : UploadedAt?.ToLocalTime() is not { } local ? ""
+        : local.TimeOfDay == TimeSpan.Zero ? local.ToString("MMM d, yyyy")
+        : local.ToString("MMM d, yyyy h:mm tt");
     public string NameToolTip => $"Saved as {TargetName}";
 
-    /// <summary>Short-lived download link from Helix (attachments only).</summary>
+    /// <summary>Short-lived download link from Helix or Procore (attachments only).</summary>
     public string? Url { get; set; }
 
     /// <summary>Whether it starts checked ("New files only" goes back to this).</summary>
@@ -103,7 +117,7 @@ public enum DownloadChip
 public sealed class DownloadItemViewModel : ObservableObject
 {
     private DownloadItemState state = DownloadItemState.Waiting;
-    private string statusText = "Waiting to read from Helix";
+    private string statusText;
     private DownloadChip chip = DownloadChip.Neutral;
     private string message = "";
     private bool isExpanded;
@@ -129,6 +143,7 @@ public sealed class DownloadItemViewModel : ObservableObject
     {
         Request = request;
         Verifying = verifying;
+        statusText = $"Waiting to read from {request.ProviderLabel}";
         FolderName = DownloadNaming.FolderName(request.Number, request.Title, request.ProjectName);
         Revision = DownloadNaming.Revision(request.Title, request.Number);
         Heading = $"{(request.ItemType == ItemTypes.Submittal ? "Submittal" : "RFI")} {request.Number} · {request.Title}";
@@ -149,13 +164,13 @@ public sealed class DownloadItemViewModel : ObservableObject
 
     public DownloadRequest Request { get; }
 
-    /// <summary>Checking the item's folder against Helix: every missing file starts checked (not just new PDFs).</summary>
+    /// <summary>Checking the item's folder against Helix or Procore: every missing file starts checked (not just new PDFs).</summary>
     public bool Verifying { get; }
 
-    /// <summary>Files Helix has that aren't in the folder (as last compared).</summary>
+    /// <summary>Files Helix or Procore has that aren't in the folder (as last compared).</summary>
     public int MissingCount { get; private set; }
 
-    /// <summary>The folder exists and has every file Helix has for the item.</summary>
+    /// <summary>The folder exists and has every file Helix or Procore has for the item.</summary>
     public bool IsComplete { get; private set; }
 
     public string FolderName { get; }
@@ -181,7 +196,7 @@ public sealed class DownloadItemViewModel : ObservableObject
         }
     }
 
-    /// <summary>The status chip: "3 new files", "Up to date", "Reading from Helix…", "Saved 3 files"…</summary>
+    /// <summary>The status chip: "3 new files", "Up to date", "Reading from Procore…", "Saved 3 files"…</summary>
     public string StatusText
     {
         get => statusText;
@@ -429,12 +444,12 @@ public sealed class DownloadItemViewModel : ObservableObject
 
         Message = "";
         State = DownloadItemState.Reading;
-        SetChip("Reading from Helix…", DownloadChip.Neutral);
+        SetChip($"Reading from {Request.ProviderLabel}…", DownloadChip.Neutral);
         OnPropertyChanged(nameof(CanChangeFiles));
     }
 
-    /// <summary>Lists the files Helix offers and checks the new ones (see <see cref="DownloadChoices"/>).</summary>
-    public void Load(HelixItemFiles files)
+    /// <summary>Lists the files Helix or Procore offers and checks the new ones (see <see cref="DownloadChoices"/>).</summary>
+    public void Load(ItemFiles files)
     {
         foreach (var file in Files)
         {
@@ -473,7 +488,7 @@ public sealed class DownloadItemViewModel : ObservableObject
     }
 
     /// <summary>New download links (they expire after a few minutes) for the files already listed.</summary>
-    public void RefreshLinks(HelixItemFiles files)
+    public void RefreshLinks(ItemFiles files)
     {
         var fresh = files.Attachments.ToDictionary(attachment => attachment.Id);
         foreach (var file in Files.Where(file => !file.IsReport))
@@ -523,11 +538,12 @@ public sealed class DownloadItemViewModel : ObservableObject
         updatingChecks = false;
         if (State == DownloadItemState.Ready && Verifying)
         {
-            SetChip(DownloadChoices.MissingSummary(choices, folderExists), IsComplete ? DownloadChip.Success : DownloadChip.Warning);
+            SetChip(DownloadChoices.MissingSummary(choices, folderExists, Request.ProviderLabel), IsComplete ? DownloadChip.Success : DownloadChip.Warning);
         }
         else if (State == DownloadItemState.Ready)
         {
-            SetChip(DownloadChoices.Summary(choices, folderExists), choices.Any(choice => choice.Checked) || !folderExists ? DownloadChip.Accent : DownloadChip.Neutral);
+            SetChip(DownloadChoices.Summary(choices, folderExists, Request.ProviderLabel),
+                choices.Any(choice => choice.Checked) || !folderExists ? DownloadChip.Accent : DownloadChip.Neutral);
         }
 
         ChecksChanged();

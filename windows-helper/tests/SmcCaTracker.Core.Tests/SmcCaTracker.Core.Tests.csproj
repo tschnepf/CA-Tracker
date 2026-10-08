@@ -23,5 +23,6 @@
     <!-- App code without WPF, tested here. -->
     <Compile Include="..\..\src\SmcCaTracker.App\Services\ProviderSites.cs" Link="App\ProviderSites.cs" />
     <Compile Include="..\..\src\SmcCaTracker.App\Services\PageWaits.cs" Link="App\PageWaits.cs" />
+    <Compile Include="..\..\src\SmcCaTracker.App\Services\ItemFiles.cs" Link="App\ItemFiles.cs" />
   </ItemGroup>
 </Project>

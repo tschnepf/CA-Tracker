@@ -2707,8 +2707,10 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
             && row.Comparison.For(row.Row.ItemType).Scan is { Error: null } typeScan
                 ? OperationPlanner.ActiveDestination(folder, typeScan)
                 : null;
-        return new DownloadRequest(item.ItemType, item.ItemId, project.Connection.ProjectId, item.Number, item.Title,
-            projectName, row.Row.Folder?.FullPath, parent, moveBackTo);
+        return new DownloadRequest(project.Connection.Provider, item.ItemType, item.ItemId, project.Connection.ProjectId, item.Number, item.Title,
+            projectName, row.Row.Folder?.FullPath, parent, moveBackTo,
+            string.IsNullOrWhiteSpace(project.Connection.AccountId) ? null : project.Connection.AccountId,
+            string.IsNullOrWhiteSpace(project.Connection.Host) ? null : project.Connection.Host);
     }
 
     public IReadOnlyList<CatalogProject> KnownProviderProjects() => store.CatalogWithSnapshots();

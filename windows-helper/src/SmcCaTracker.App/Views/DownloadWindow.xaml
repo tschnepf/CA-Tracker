@@ -57,6 +57,7 @@
             <RowDefinition Height="Auto" />
             <RowDefinition x:Name="ListRow" Height="*" />
             <RowDefinition x:Name="BrowserRow" Height="1" />
+            <RowDefinition x:Name="ProcoreBrowserRow" Height="1" />
             <RowDefinition Height="Auto" />
         </Grid.RowDefinitions>
 
@@ -193,12 +194,14 @@
             </ItemsControl>
         </ScrollViewer>
 
-        <!-- Only shown when Helix asks you to sign in. Otherwise it keeps a 1-pixel row (so it starts and runs)
-             but is hidden: a browser is drawn over the window, so even that row showed a sliver of the page. -->
+        <!-- The Helix and Procore pages, each only shown when its site asks you to sign in. Otherwise each keeps a
+             1-pixel row (so it starts and runs) but is hidden: a browser is drawn over the window, so even that row
+             showed a sliver of the page. Each has its own row, so both can't cover each other. -->
         <wv2:WebView2 x:Name="Browser" Grid.Row="3" Visibility="Hidden" />
+        <wv2:WebView2 x:Name="ProcoreBrowser" Grid.Row="4" Visibility="Hidden" />
 
         <!-- Buttons are declared in the order Tab visits them; the main one is last, on the right. -->
-        <DockPanel Grid.Row="4" Margin="0,12,0,0">
+        <DockPanel Grid.Row="5" Margin="0,12,0,0">
             <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
                 <Button x:Name="StopButton" Content="Stop" Click="Stop_Click" Margin="0,0,8,0" Visibility="Collapsed"
                         ToolTip="Stop after the file being saved" />

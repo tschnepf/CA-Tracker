@@ -205,6 +205,85 @@ test("after the first read only changed items are asked for", async () => {
   assert.ok(calls.every((path) => path.includes("filters[updated_at]=2026-10-01T10:00:00.000Z...")));
 });
 
+test("an RFI's files are its question's and every answer's, dated by what they came with", async () => {
+  const procore = fakeProcore({
+    "/rest/v1.0/projects/9/rfis/77": {
+      id: 77,
+      questions: [{
+        question_date: "2026-10-01T21:48:59Z",
+        attachments: [{ id: 1, filename: "Question sketch.pdf", name: "ignored", url: "https://storage.procore.com/api/v5/files/1?sig=a" }],
+        answers: [
+          { answer_date: "2026-10-08T02:21:19Z", attachments: [{ id: 2, name: "Answer.pdf", url: "https://storage.procore.com/api/v5/files/2?sig=b" }] },
+          { answer_date: "2026-10-09T10:00:00Z", attachments: [] }
+        ]
+      }]
+    }
+  });
+
+  const result = await ProcoreSync.readItemFiles(win, { projectId: "9", companyId: "10", itemType: "rfi", itemId: "77" }, { fetch: procore.fetch });
+
+  assert.deepEqual(result.attachments, [
+    { id: "1", filename: "Question sketch.pdf", uploadedAt: "2026-10-01T21:48:59Z", url: "https://storage.procore.com/api/v5/files/1?sig=a" },
+    { id: "2", filename: "Answer.pdf", uploadedAt: "2026-10-08T02:21:19Z", url: "https://storage.procore.com/api/v5/files/2?sig=b" }
+  ]);
+  assert.deepEqual(procore.calls.map((call) => [call.path, call.companyId]), [["/rest/v1.0/projects/9/rfis/77", "10"]]);
+});
+
+test("a Submittal's files are its own and every response's, each listed once", async () => {
+  const file = (id, name) => ({ id, filename: name, url: `https://storage.procore.com/api/v5/files/${id}?sig=x` });
+  const procore = fakeProcore({
+    "/rest/v1.1/projects/9/submittals/55": {
+      id: 55,
+      created_at: "2026-10-06T13:58:59Z",
+      received_date: "2026-10-05",
+      distributed_at: "2026-10-08T14:38:50Z",
+      attachments: [file(1, "Product data.pdf")],
+      approvers: [
+        { response: { name: "Submitted" }, returned_date: "2026-10-06", attachments: [file(2, "Product data.pdf")] },
+        { response: { name: "Awaiting Response" }, returned_date: null, sent_date: "2026-10-06", attachments: [] },
+        { response: { name: "Approved as Noted" }, returned_date: null, sent_date: "2026-10-07", attachments: [file(3, "Reviewed.pdf")] }
+      ],
+      distributed_submittals: [
+        { sent_at: "2026-10-08T14:38:50Z", final_attachments: [file(3, "Reviewed.pdf"), file(4, "Stamped.pdf")] }
+      ]
+    }
+  });
+
+  const result = await ProcoreSync.readItemFiles(win, { projectId: "9", companyId: "10", itemType: "submittal", itemId: "55" }, { fetch: procore.fetch });
+
+  // The same file name under another id is another file (it is kept); the same id is listed once.
+  assert.deepEqual(result.attachments.map((entry) => [entry.id, entry.filename, entry.uploadedAt]), [
+    ["1", "Product data.pdf", "2026-10-06T13:58:59Z"],
+    ["2", "Product data.pdf", "2026-10-06"],
+    ["3", "Reviewed.pdf", "2026-10-07"],
+    ["4", "Stamped.pdf", "2026-10-08T14:38:50Z"]
+  ]);
+  assert.equal(procore.calls[0].companyId, "10");
+});
+
+test("files without a link or id are left out, and a nameless file is still listed", async () => {
+  const procore = fakeProcore({
+    "/rest/v1.0/projects/9/rfis/77": {
+      questions: [{ question_date: null, attachments: [{ id: 1, url: "" }, { url: "https://storage.procore.com/x" }, { id: 3, url: "https://storage.procore.com/3" }] }]
+    }
+  });
+
+  const result = await ProcoreSync.readItemFiles(win, { projectId: "9", itemType: "rfi", itemId: "77" }, { fetch: procore.fetch });
+
+  assert.deepEqual(result.attachments, [{ id: "3", filename: "Attachment", uploadedAt: null, url: "https://storage.procore.com/3" }]);
+});
+
+test("an item that can't be read fails with Procore's status", async () => {
+  await assert.rejects(
+    ProcoreSync.readItemFiles(win, { projectId: "9", itemType: "submittal", itemId: "1" }, { fetch: fakeProcore({}).fetch }),
+    (error) => error.status === 404
+  );
+  await assert.rejects(
+    ProcoreSync.readItemFiles(win, { projectId: "9", itemType: "rfi", itemId: "1" }, { fetch: fakeProcore({ "/rest/v1.0/projects/9/rfis/1": 401 }).fetch }),
+    (error) => error.status === 401
+  );
+});
+
 test("if Procore refuses the changes filter, everything is read instead", async () => {
   const calls = [];
   const fetch = async (path) => {

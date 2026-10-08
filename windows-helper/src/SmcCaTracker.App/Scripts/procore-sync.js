@@ -7,8 +7,9 @@
 
   // Read-only. Runs inside a signed-in Procore page and asks Procore's REST service (same site, same
   // sign-in as Procore's own web pages) for:
-  //   - the companies you belong to and every project you can see in each (discover), and
-  //   - every RFI and Submittal of one project (readProject).
+  //   - the companies you belong to and every project you can see in each (discover),
+  //   - every RFI and Submittal of one project (readProject), and
+  //   - the files of one RFI or Submittal, for downloading (readItemFiles).
   // No API app has to be installed in any company: it only sees what you can already see.
 
   const PAGE_SIZE = 100;
@@ -290,5 +291,52 @@
     return { rfis, submittals, unavailable, changesOnly };
   }
 
-  return Object.freeze({ discover, listCompanyProjects, projectsFromPage, readProject, isActive, projectName, withPage });
+  /**
+   * Lists the files of one RFI or Submittal, with their download links (Procore's file store; they work
+   * without the sign-in for a while). An RFI's files are on its question and on each answer; a Submittal's
+   * on the submittal itself, on each response, and on its distributions (which repeat the responses'
+   * files under the same ids, so each file is listed once). Procore gives no upload date, so each file
+   * carries the date of what it came with: the question, the answer, the response or the submittal.
+   * Resolves to { attachments: [{ id, filename, uploadedAt, url }] }. Rejects with `status` (401: signed
+   * out; 403: no access; 404: not found).
+   */
+  async function readItemFiles(win, request, options) {
+    const opts = options || {};
+    const fetchImpl = opts.fetch || win.fetch.bind(win);
+    const project = encodeURIComponent(String(request.projectId));
+    const item = encodeURIComponent(String(request.itemId));
+    const attachments = [];
+    const seen = new Set();
+    const add = (files, date) => {
+      for (const file of Array.isArray(files) ? files : []) {
+        const id = text(file && file.id);
+        const url = text(file && file.url);
+        if (!id || !url || seen.has(id)) continue;
+        seen.add(id);
+        attachments.push({ id, filename: text(file.filename || file.name) || "Attachment", uploadedAt: text(date) || null, url });
+      }
+    };
+
+    if (request.itemType === "submittal") {
+      const submittal = await getJson(fetchImpl, `/rest/v1.1/projects/${project}/submittals/${item}`, request.companyId);
+      add(submittal.attachments, submittal.created_at || submittal.received_date);
+      for (const response of Array.isArray(submittal.approvers) ? submittal.approvers : []) {
+        add(response && response.attachments, response && (response.returned_date || response.sent_date));
+      }
+      for (const distribution of Array.isArray(submittal.distributed_submittals) ? submittal.distributed_submittals : []) {
+        add(distribution && distribution.final_attachments, distribution && distribution.sent_at || submittal.distributed_at);
+      }
+    } else {
+      const rfi = await getJson(fetchImpl, `/rest/v1.0/projects/${project}/rfis/${item}`, request.companyId);
+      for (const question of Array.isArray(rfi.questions) ? rfi.questions : []) {
+        add(question && question.attachments, question && question.question_date);
+        for (const answer of Array.isArray(question && question.answers) ? question.answers : []) {
+          add(answer && answer.attachments, answer && answer.answer_date);
+        }
+      }
+    }
+    return { attachments };
+  }
+
+  return Object.freeze({ discover, listCompanyProjects, projectsFromPage, readProject, readItemFiles, isActive, projectName, withPage });
 });

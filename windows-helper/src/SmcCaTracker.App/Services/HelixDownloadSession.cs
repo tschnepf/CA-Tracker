@@ -9,23 +9,14 @@ using SmcCaTracker.Core.Storage;
 
 namespace SmcCaTracker.App.Services;
 
-/// <summary>A Helix item's Details report, as offered for download.</summary>
-public sealed record HelixReport(string Name, string Kind, string Filename, string Url);
-
-/// <summary>A Helix attachment: its id, file name, upload date and short-lived download link.</summary>
-public sealed record HelixAttachment(string Id, string Filename, DateTimeOffset? UploadedAt, string Url);
-
-/// <summary>What Helix offers for one item, and when that was read (the links expire after a few minutes).</summary>
-public sealed record HelixItemFiles(HelixReport? Report, string? ReportError, IReadOnlyList<HelixAttachment> Attachments, DateTimeOffset ReadAt);
-
 /// <summary>
-/// The Download window's Helix page, one browser for every item in the window. It lists an item's Details
+/// The Download window's Helix page, one browser for every Helix item in the window. It lists an item's Details
 /// report and attachments, and has Helix create the Details PDF. One request at a time; items of the same
 /// project and type reuse the list page already open, so only the first of them waits for Helix to load.
 /// When Helix asks you to sign in, <see cref="SignInChanged"/> tells the window to show the page; the request
 /// carries on by itself once you are in. Read-only in Helix. Use from the screen's thread.
 /// </summary>
-public sealed class HelixDownloadSession
+public sealed class HelixDownloadSession : IItemFilesSession
 {
     private readonly WebView2 browser;
     private readonly AppPaths paths;
@@ -98,8 +89,8 @@ public sealed class HelixDownloadSession
     private static string ListUrl(string projectId, string itemType) =>
         $"https://{ProviderLinks.HelixHost}/Projects/{Uri.EscapeDataString(projectId)}/{(itemType == ItemTypes.Submittal ? "Submittals" : "RFI")}";
 
-    /// <summary>Lists an item's Details report and attachments (with fresh download links).</summary>
-    public async Task<HelixItemFiles> ReadItemAsync(string itemId, string itemType, string projectId)
+    /// <summary>Lists an item's Details report and attachments (with fresh download links). Helix needs no company or server.</summary>
+    public async Task<ItemFiles> ReadItemAsync(string itemId, string itemType, string projectId, string? accountId = null, string? host = null)
     {
         await gate.WaitAsync(closing);
         try
@@ -128,7 +119,7 @@ public sealed class HelixDownloadSession
                 }
             }
 
-            return new HelixItemFiles(ReadReport(answer), Text(answer, "reportError"), ReadAttachments(answer).ToList(), DateTimeOffset.Now);
+            return new ItemFiles(ReadReport(answer), Text(answer, "reportError"), ItemFilesMessages.Attachments(answer), DateTimeOffset.Now);
         }
         finally
         {
@@ -361,29 +352,5 @@ public sealed class HelixDownloadSession
         return new HelixReport(Text(element, "name") ?? "Details", Text(element, "kind") ?? "client", Text(element, "filename") ?? "Details.pdf", url!);
     }
 
-    private static IEnumerable<HelixAttachment> ReadAttachments(JsonElement prepared)
-    {
-        if (!prepared.TryGetProperty("attachments", out var list) || list.ValueKind != JsonValueKind.Array)
-        {
-            yield break;
-        }
-
-        foreach (var element in list.EnumerateArray())
-        {
-            var id = Text(element, "id");
-            var url = Text(element, "url");
-            if (id is null || !Uri.TryCreate(url, UriKind.Absolute, out var uri) || uri.Scheme != Uri.UriSchemeHttps)
-            {
-                continue;
-            }
-
-            DateTimeOffset? uploaded = DateTimeOffset.TryParse(Text(element, "uploadedAt"), out var parsed) ? parsed : null;
-            yield return new HelixAttachment(id, Text(element, "filename") ?? "Attachment", uploaded, url!);
-        }
-    }
-
-    private static string? Text(JsonElement element, string name) =>
-        element.ValueKind == JsonValueKind.Object && element.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.String
-            ? value.GetString()
-            : null;
+    private static string? Text(JsonElement element, string name) => ItemFilesMessages.Text(element, name);
 }
