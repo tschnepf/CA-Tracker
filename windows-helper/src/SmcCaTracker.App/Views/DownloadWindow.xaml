@@ -4,7 +4,7 @@
         xmlns:wv2="clr-namespace:Microsoft.Web.WebView2.Wpf;assembly=Microsoft.Web.WebView2.Wpf"
         xmlns:vm="clr-namespace:SmcCaTracker.App.ViewModels"
         Title="Download — CA Tracker"
-        Width="1000" Height="700" MinWidth="680" MinHeight="460"
+        Width="1200" Height="700" MinWidth="680" MinHeight="460"
         WindowStartupLocation="CenterOwner"
         Style="{StaticResource AppWindow}">
     <Window.Resources>
@@ -166,11 +166,14 @@
                                     <ItemsControl ItemsSource="{Binding Files}" Focusable="False">
                                         <ItemsControl.ItemTemplate>
                                             <DataTemplate DataType="{x:Type vm:DownloadFileViewModel}">
+                                                <!-- Name, date, who uploaded it (name · company), status. The name and uploader
+                                                     share what's left; the uploader's column stops growing at 300. -->
                                                 <Grid Margin="0,2">
                                                     <Grid.ColumnDefinitions>
                                                         <ColumnDefinition Width="28" />
-                                                        <ColumnDefinition Width="*" />
+                                                        <ColumnDefinition Width="3*" />
                                                         <ColumnDefinition Width="170" />
+                                                        <ColumnDefinition Width="2*" MaxWidth="300" />
                                                         <ColumnDefinition Width="260" />
                                                     </Grid.ColumnDefinitions>
                                                     <CheckBox IsChecked="{Binding IsChecked, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
@@ -180,7 +183,10 @@
                                                                VerticalAlignment="Center" Margin="0,0,12,0" ToolTip="{Binding NameToolTip}" />
                                                     <TextBlock Grid.Column="2" Text="{Binding UploadedText}" Foreground="{DynamicResource TextSecondary}"
                                                                VerticalAlignment="Center" />
-                                                    <TextBlock Grid.Column="3" Text="{Binding StatusText}" Foreground="{DynamicResource TextSecondary}"
+                                                    <TextBlock Grid.Column="3" Text="{Binding UploaderText}" Foreground="{DynamicResource TextSecondary}"
+                                                               TextTrimming="CharacterEllipsis" VerticalAlignment="Center" Margin="0,0,12,0"
+                                                               ToolTip="{Binding UploaderToolTip}" />
+                                                    <TextBlock Grid.Column="4" Text="{Binding StatusText}" Foreground="{DynamicResource TextSecondary}"
                                                                TextTrimming="CharacterEllipsis" VerticalAlignment="Center" ToolTip="{Binding StatusText}" />
                                                 </Grid>
                                             </DataTemplate>

@@ -207,14 +207,21 @@ test("after the first read only changed items are asked for", async () => {
 });
 
 test("an RFI's files are its question's and every answer's, dated by what they came with", async () => {
+  // As Procore sends them: the question names its asker only by name (the RFI's creator, who has a
+  // company); an answer says "Name (Company)".
   const procore = fakeProcore({
     "/rest/v1.0/projects/9/rfis/77": {
       id: 77,
+      created_by: { id: 5, login: "jack@gc.example", name: "Jack Romain", vendor: { id: 50, name: "Ryan Companies US Inc" } },
       questions: [{
+        created_by: "Jack Romain",
         question_date: "2026-10-01T21:48:59Z",
         attachments: [{ id: 1, filename: "Question sketch.pdf", name: "ignored", url: "https://storage.procore.com/api/v5/files/1?sig=a" }],
         answers: [
-          { answer_date: "2026-10-08T02:21:19Z", attachments: [{ id: 2, name: "Answer.pdf", url: "https://storage.procore.com/api/v5/files/2?sig=b" }] },
+          {
+            created_by: "Mahfooz Akbari (LA Fuess Partners Inc)", created_by_id: 6, answer_date: "2026-10-08T02:21:19Z",
+            attachments: [{ id: 2, name: "Answer.pdf", url: "https://storage.procore.com/api/v5/files/2?sig=b" }]
+          },
           { answer_date: "2026-10-09T10:00:00Z", attachments: [] }
         ]
       }]
@@ -224,30 +231,50 @@ test("an RFI's files are its question's and every answer's, dated by what they c
   const result = await ProcoreSync.readItemFiles(win, { projectId: "9", companyId: "10", itemType: "rfi", itemId: "77" }, { fetch: procore.fetch });
 
   assert.deepEqual(result.attachments, [
-    { id: "1", filename: "Question sketch.pdf", uploadedAt: "2026-10-01T21:48:59Z", url: "https://storage.procore.com/api/v5/files/1?sig=a" },
-    { id: "2", filename: "Answer.pdf", uploadedAt: "2026-10-08T02:21:19Z", url: "https://storage.procore.com/api/v5/files/2?sig=b" }
+    {
+      id: "1", filename: "Question sketch.pdf", uploadedAt: "2026-10-01T21:48:59Z", url: "https://storage.procore.com/api/v5/files/1?sig=a",
+      uploadedBy: { name: "Jack Romain", company: "Ryan Companies US Inc", note: null }
+    },
+    {
+      id: "2", filename: "Answer.pdf", uploadedAt: "2026-10-08T02:21:19Z", url: "https://storage.procore.com/api/v5/files/2?sig=b",
+      uploadedBy: { name: "Mahfooz Akbari", company: "LA Fuess Partners Inc", note: null }
+    }
   ]);
+  // Every company was known: the directory isn't read.
   assert.deepEqual(procore.calls.map((call) => [call.path, call.companyId]), [["/rest/v1.0/projects/9/rfis/77", "10"]]);
 });
 
-test("a Submittal's files are its own and every response's, each listed once", async () => {
+function submittalWithPeople() {
   const file = (id, name) => ({ id, filename: name, url: `https://storage.procore.com/api/v5/files/${id}?sig=x` });
+  const person = (id, name) => ({ id, name, login: `${name.split(" ")[0].toLowerCase()}@example.com`, locale: null });
+  return {
+    id: 55,
+    created_at: "2026-10-06T13:58:59Z",
+    received_date: "2026-10-05",
+    distributed_at: "2026-10-08T14:38:50Z",
+    created_by: person(1, "Peter Leszko"),
+    received_from: person(4, "Troy Dow"),
+    attachments: [file(1, "Product data.pdf")],
+    approvers: [
+      { user: person(4, "Troy Dow"), response: { name: "Submitted" }, returned_date: "2026-10-06", attachments: [file(2, "Product data.pdf")] },
+      { user: person(2, "Gregg Poole"), response: { name: "Awaiting Response" }, returned_date: null, sent_date: "2026-10-06", attachments: [] },
+      { user: person(3, "Juan Cortez"), response: { name: "Approved as Noted" }, returned_date: null, sent_date: "2026-10-07", attachments: [file(3, "Reviewed.pdf")] }
+    ],
+    distributed_submittals: [
+      { distributed_by: person(5, "MV Dushyanthram"), sent_at: "2026-10-08T14:38:50Z", final_attachments: [file(3, "Reviewed.pdf"), file(4, "Stamped.pdf")] }
+    ]
+  };
+}
+
+test("a Submittal's files are its own and every response's, each listed once", async () => {
   const procore = fakeProcore({
-    "/rest/v1.1/projects/9/submittals/55": {
-      id: 55,
-      created_at: "2026-10-06T13:58:59Z",
-      received_date: "2026-10-05",
-      distributed_at: "2026-10-08T14:38:50Z",
-      attachments: [file(1, "Product data.pdf")],
-      approvers: [
-        { response: { name: "Submitted" }, returned_date: "2026-10-06", attachments: [file(2, "Product data.pdf")] },
-        { response: { name: "Awaiting Response" }, returned_date: null, sent_date: "2026-10-06", attachments: [] },
-        { response: { name: "Approved as Noted" }, returned_date: null, sent_date: "2026-10-07", attachments: [file(3, "Reviewed.pdf")] }
-      ],
-      distributed_submittals: [
-        { sent_at: "2026-10-08T14:38:50Z", final_attachments: [file(3, "Reviewed.pdf"), file(4, "Stamped.pdf")] }
-      ]
-    }
+    "/rest/v1.1/projects/9/submittals/55": submittalWithPeople(),
+    // The project's directory has everyone's company but the distributor's (not on the project).
+    "/rest/v1.0/projects/9/users": [
+      { id: 1, name: "Peter Leszko", vendor: { id: 11, name: "Ryan Companies US Inc" } },
+      { id: 3, name: "Juan Cortez", vendor: { id: 33, name: "Strategic Mission Critical" } },
+      { id: 4, name: "Troy Dow", vendor: { id: 44, name: "MasTec North America Inc" } }
+    ]
   });
 
   const result = await ProcoreSync.readItemFiles(win, { projectId: "9", companyId: "10", itemType: "submittal", itemId: "55" }, { fetch: procore.fetch });
@@ -259,7 +286,32 @@ test("a Submittal's files are its own and every response's, each listed once", a
     ["3", "Reviewed.pdf", "2026-10-07"],
     ["4", "Stamped.pdf", "2026-10-08T14:38:50Z"]
   ]);
-  assert.equal(procore.calls[0].companyId, "10");
+  assert.deepEqual(result.attachments.map((entry) => entry.uploadedBy), [
+    {
+      name: "Peter Leszko",
+      company: "Ryan Companies US Inc",
+      note: "Peter Leszko created the submittal. Procore doesn't record who attached its own files. It was received from Troy Dow (MasTec North America Inc)."
+    },
+    { name: "Troy Dow", company: "MasTec North America Inc", note: null },
+    { name: "Juan Cortez", company: "Strategic Mission Critical", note: null },
+    { name: "MV Dushyanthram", company: null, note: null }
+  ]);
+  // One directory read for everyone, with the item's company.
+  assert.deepEqual(procore.calls.map((call) => [decodeURIComponent(call.path), call.companyId]), [
+    ["/rest/v1.1/projects/9/submittals/55", "10"],
+    ["/rest/v1.0/projects/9/users?per_page=100&filters[id][]=1&filters[id][]=4&filters[id][]=3&filters[id][]=5", "10"]
+  ]);
+});
+
+test("if the project's directory can't be read, the files still list with names alone", async () => {
+  const procore = fakeProcore({ "/rest/v1.1/projects/9/submittals/55": submittalWithPeople(), "/rest/v1.0/projects/9/users": 403 });
+
+  const result = await ProcoreSync.readItemFiles(win, { projectId: "9", itemType: "submittal", itemId: "55" }, { fetch: procore.fetch });
+
+  assert.deepEqual(result.attachments.map((entry) => [entry.uploadedBy.name, entry.uploadedBy.company]), [
+    ["Peter Leszko", null], ["Troy Dow", null], ["Juan Cortez", null], ["MV Dushyanthram", null]
+  ]);
+  assert.match(result.attachments[0].uploadedBy.note, /received from Troy Dow\.$/);
 });
 
 test("files without a link or id are left out, and a nameless file is still listed", async () => {
@@ -271,7 +323,7 @@ test("files without a link or id are left out, and a nameless file is still list
 
   const result = await ProcoreSync.readItemFiles(win, { projectId: "9", itemType: "rfi", itemId: "77" }, { fetch: procore.fetch });
 
-  assert.deepEqual(result.attachments, [{ id: "3", filename: "Attachment", uploadedAt: null, url: "https://storage.procore.com/3" }]);
+  assert.deepEqual(result.attachments, [{ id: "3", filename: "Attachment", uploadedAt: null, url: "https://storage.procore.com/3", uploadedBy: null }]);
 });
 
 test("an item that can't be read fails with Procore's status", async () => {

@@ -44,13 +44,15 @@ public sealed class DownloadFileViewModel : ObservableObject
     private bool canChange = true;
     private string statusText = "";
 
-    public DownloadFileViewModel(string key, string name, DateTimeOffset? uploadedAt, string targetName, bool isReport)
+    public DownloadFileViewModel(string key, string name, DateTimeOffset? uploadedAt, string targetName, bool isReport,
+        ItemUploader? uploadedBy = null)
     {
         Key = key;
         Name = name;
         UploadedAt = uploadedAt;
         TargetName = targetName;
         IsReport = isReport;
+        UploadedBy = uploadedBy;
     }
 
     /// <summary>"report" or the attachment's id in Helix or Procore.</summary>
@@ -59,11 +61,19 @@ public sealed class DownloadFileViewModel : ObservableObject
     public DateTimeOffset? UploadedAt { get; }
     public bool IsReport { get; }
     public string TargetName { get; }
+    /// <summary>Who uploaded it and their company, when Helix or Procore says.</summary>
+    public ItemUploader? UploadedBy { get; }
     /// <summary>When it was uploaded; a day alone for Procore's dates that have no time (a response's returned date).</summary>
     public string UploadedText => IsReport ? "Created by Helix now"
         : UploadedAt?.ToLocalTime() is not { } local ? ""
         : local.TimeOfDay == TimeSpan.Zero ? local.ToString("MMM d, yyyy")
         : local.ToString("MMM d, yyyy h:mm tt");
+    /// <summary>"Jane Doe · Acme Electric"; empty when no one is named (the Details PDF).</summary>
+    public string UploaderText => UploadedBy?.Text ?? "";
+    /// <summary>The whole name and company, or how sure that is (a Procore submittal's own files show its creator).</summary>
+    public string? UploaderToolTip => UploadedBy is null ? null
+        : UploadedBy.Note is { } note ? $"{UploadedBy.Text}\n{note}"
+        : UploadedBy.Text;
     public string NameToolTip => $"Saved as {TargetName}";
 
     /// <summary>Short-lived download link from Helix or Procore (attachments only).</summary>
@@ -468,7 +478,8 @@ public sealed class DownloadItemViewModel : ObservableObject
         foreach (var attachment in files.Attachments)
         {
             Files.Add(new DownloadFileViewModel(attachment.Id, attachment.Filename, attachment.UploadedAt,
-                DownloadNaming.AttachmentFileName(attachment.Filename, attachment.UploadedAt?.ToLocalTime()), isReport: false)
+                DownloadNaming.AttachmentFileName(attachment.Filename, attachment.UploadedAt?.ToLocalTime()), isReport: false,
+                attachment.UploadedBy)
             {
                 Url = attachment.Url
             });

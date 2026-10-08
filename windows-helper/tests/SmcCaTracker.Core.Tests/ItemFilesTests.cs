@@ -58,6 +58,34 @@ public sealed class ItemFilesTests
     }
 
     [Fact]
+    public void EachFileSaysWhoUploadedItAndTheirCompany()
+    {
+        var answer = Json("""
+            {
+              "attachments": [
+                { "id": "1", "filename": "Review.pdf", "url": "https://storage.procore.com/1",
+                  "uploadedBy": { "name": " Juan Cortez ", "company": "Strategic Mission Critical", "note": null } },
+                { "id": "2", "filename": "Product data.pdf", "url": "https://storage.procore.com/2",
+                  "uploadedBy": { "name": "Peter Leszko", "company": " ", "note": "Peter Leszko created the submittal." } },
+                { "id": "3", "filename": "Nobody.pdf", "url": "https://storage.procore.com/3", "uploadedBy": { "name": "  ", "company": "Acme" } },
+                { "id": "4", "filename": "Older page.pdf", "url": "https://storage.procore.com/4" }
+              ]
+            }
+            """);
+
+        var files = ItemFilesMessages.Attachments(answer);
+
+        Assert.Equal(new ItemUploader("Juan Cortez", "Strategic Mission Critical", null), files[0].UploadedBy);
+        Assert.Equal("Juan Cortez · Strategic Mission Critical", files[0].UploadedBy!.Text);
+        // No company: the name alone; the note says how sure that is.
+        Assert.Equal("Peter Leszko", files[1].UploadedBy!.Text);
+        Assert.Equal("Peter Leszko created the submittal.", files[1].UploadedBy!.Note);
+        // No name (or a page from before uploaders were listed): no one.
+        Assert.Null(files[2].UploadedBy);
+        Assert.Null(files[3].UploadedBy);
+    }
+
+    [Fact]
     public void AnItemWithNoFilesSaysWhereItLooked()
     {
         Assert.Equal("No files in Procore", DownloadChoices.Summary(Array.Empty<DownloadFileChoice>(), folderExists: true, "Procore"));

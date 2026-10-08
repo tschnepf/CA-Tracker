@@ -7,10 +7,21 @@ namespace SmcCaTracker.App.Services;
 public sealed record HelixReport(string Name, string Kind, string Filename, string Url);
 
 /// <summary>
-/// An item's attachment: its id, file name, date and short-lived download link. Helix gives the upload date;
-/// Procore gives none, so a Procore file carries the date of what it came with (question, answer, response).
+/// An item's attachment: its id, file name, date, short-lived download link and who uploaded it. Helix gives the
+/// upload date; Procore gives none, so a Procore file carries the date of what it came with (question, answer,
+/// response).
 /// </summary>
-public sealed record ItemAttachment(string Id, string Filename, DateTimeOffset? UploadedAt, string Url);
+public sealed record ItemAttachment(string Id, string Filename, DateTimeOffset? UploadedAt, string Url, ItemUploader? UploadedBy = null);
+
+/// <summary>
+/// Who uploaded a file and their company, when Helix or Procore says. <see cref="Note"/> says how sure that is when
+/// it isn't certain (Procore doesn't record who attached a submittal's own files, so they show its creator).
+/// </summary>
+public sealed record ItemUploader(string Name, string? Company, string? Note)
+{
+    /// <summary>"Jane Doe · Acme Electric", or the name alone.</summary>
+    public string Text => string.IsNullOrWhiteSpace(Company) ? Name : $"{Name} · {Company}";
+}
 
 /// <summary>What Helix or Procore offers for one item, and when that was read (the links expire). Only Helix has a Details report.</summary>
 public sealed record ItemFiles(HelixReport? Report, string? ReportError, IReadOnlyList<ItemAttachment> Attachments, DateTimeOffset ReadAt);
@@ -31,7 +42,10 @@ public interface IItemFilesSession
     Task<ItemFiles> ReadItemAsync(string itemId, string itemType, string projectId, string? accountId, string? host);
 }
 
-/// <summary>Reads the attachments a page posted ({ attachments: [{ id, filename, uploadedAt, url }] }; Helix and Procore alike).</summary>
+/// <summary>
+/// Reads the attachments a page posted ({ attachments: [{ id, filename, uploadedAt, url, uploadedBy: { name, company, note } }] };
+/// Helix and Procore alike).
+/// </summary>
 public static class ItemFilesMessages
 {
     public static IReadOnlyList<ItemAttachment> Attachments(JsonElement answer)
@@ -55,11 +69,23 @@ public static class ItemFilesMessages
             DateTimeOffset? uploaded = DateTimeOffset.TryParse(Text(element, "uploadedAt"), CultureInfo.InvariantCulture, DateTimeStyles.AssumeLocal, out var parsed)
                 ? parsed
                 : null;
-            attachments.Add(new ItemAttachment(id, Text(element, "filename") ?? "Attachment", uploaded, url!));
+            attachments.Add(new ItemAttachment(id, Text(element, "filename") ?? "Attachment", uploaded, url!, Uploader(element)));
         }
 
         return attachments;
     }
+
+    private static ItemUploader? Uploader(JsonElement attachment)
+    {
+        if (!attachment.TryGetProperty("uploadedBy", out var person) || Clean(Text(person, "name")) is not { } name)
+        {
+            return null;
+        }
+
+        return new ItemUploader(name, Clean(Text(person, "company")), Clean(Text(person, "note")));
+    }
+
+    private static string? Clean(string? value) => string.IsNullOrWhiteSpace(value) ? null : value.Trim();
 
     public static string? Text(JsonElement element, string name) =>
         element.ValueKind == JsonValueKind.Object && element.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.String

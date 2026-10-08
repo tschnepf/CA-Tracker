@@ -270,8 +270,9 @@ CA Tracker works out for each item under `expected`; correct the wrong ones and 
 **Download** on an item's row (Helix and Procore items) opens the download window for that item;
 **Download…** at the bottom of the list opens it for every checked item at once. Each item is a section
 with where its files go, a status (`3 new files`, `New folder · 6 files`, `Up to date`, `Saved 3 files`…)
-and its files, each with its name and date: for Helix the Details PDF and current attachments; for
-Procore an RFI's question and answer attachments, or a Submittal's own attachments and each response's.
+and its files, each with its name, date and who uploaded it with their company (`Jane Doe · Acme
+Electric`): for Helix the Details PDF and current attachments; for Procore an RFI's question and answer
+attachments, or a Submittal's own attachments and each response's.
 The items are read one after another in the background (one hidden Helix page and one hidden Procore
 page serve them all); you can check and uncheck files while the rest are read, and an item with nothing
 new stays folded away. Its box checks
@@ -311,6 +312,13 @@ file is dated by what it came with (the question, the answer, the response or th
 files of the same name under different ids are both listed (the second saves as `name (2).pdf`). Procore
 files are read through Procore's REST service with your sign-in in the built-in browser, read-only; on
 a 401 the page shows Procore's sign-in. Each saved file is added to `journal.jsonl`.
+
+Who uploaded a file: Helix names each attachment's uploader and their company. Procore names who
+posted each file (a response's reviewer, an RFI's asker or answerer, whoever distributed the submittal)
+and the project's directory gives their company, one extra read per item. Procore doesn't record who
+attached a Submittal's own files, so they show the person who created the submittal; the tooltip says
+so and who it was received from. If Procore's directory can't be read, the names still show without
+companies.
 
 ## Settings
 

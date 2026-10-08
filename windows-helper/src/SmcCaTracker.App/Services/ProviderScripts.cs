@@ -200,7 +200,7 @@ public static class ProviderScripts
     /// <summary>
     /// Lists one RFI's or Submittal's files and their download links through the signed-in Procore page
     /// (Procore's REST service, read-only). Posts "procore-item-files" with { attachments: [{ id, filename,
-    /// uploadedAt, url }] } (as Helix's "prepared" does), "procore-error" with the HTTP status, or "procore-missing".
+    /// uploadedAt, url, uploadedBy }] } (as Helix's "prepared" does), "procore-error" with the HTTP status, or "procore-missing".
     /// </summary>
     public static string ProcoreReadItemFiles(string requestId, string projectId, string? companyId, string itemType, string itemId)
     {

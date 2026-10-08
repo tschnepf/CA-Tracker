@@ -357,8 +357,9 @@
    * on the submittal itself, on each response, and on its distributions (which repeat the responses'
    * files under the same ids, so each file is listed once). Procore gives no upload date, so each file
    * carries the date of what it came with: the question, the answer, the response or the submittal.
-   * Resolves to { attachments: [{ id, filename, uploadedAt, url }] }. Rejects with `status` (401: signed
-   * out; 403: no access; 404: not found).
+   * Each file also says who posted it and their company (`uploadedBy`, see uploaderOf).
+   * Resolves to { attachments: [{ id, filename, uploadedAt, url, uploadedBy }] }. Rejects with `status`
+   * (401: signed out; 403: no access; 404: not found).
    */
   async function readItemFiles(win, request, options) {
     const opts = options || {};
@@ -367,35 +368,107 @@
     const item = encodeURIComponent(String(request.itemId));
     const attachments = [];
     const seen = new Set();
-    const add = (files, date) => {
+    const add = (files, date, by) => {
       for (const file of Array.isArray(files) ? files : []) {
         const id = text(file && file.id);
         const url = text(file && file.url);
         if (!id || !url || seen.has(id)) continue;
         seen.add(id);
-        attachments.push({ id, filename: text(file.filename || file.name) || "Attachment", uploadedAt: text(date) || null, url });
+        attachments.push({ id, filename: text(file.filename || file.name) || "Attachment", uploadedAt: text(date) || null, url, by });
       }
     };
 
+    let submittal = null;
     if (request.itemType === "submittal") {
-      const submittal = await getJson(fetchImpl, `/rest/v1.1/projects/${project}/submittals/${item}`, request.companyId);
-      add(submittal.attachments, submittal.created_at || submittal.received_date);
+      submittal = await getJson(fetchImpl, `/rest/v1.1/projects/${project}/submittals/${item}`, request.companyId);
+      add(submittal.attachments, submittal.created_at || submittal.received_date, procorePerson(submittal.created_by, "creator"));
       for (const response of Array.isArray(submittal.approvers) ? submittal.approvers : []) {
-        add(response && response.attachments, response && (response.returned_date || response.sent_date));
+        add(response && response.attachments, response && (response.returned_date || response.sent_date), procorePerson(response && response.user));
       }
       for (const distribution of Array.isArray(submittal.distributed_submittals) ? submittal.distributed_submittals : []) {
-        add(distribution && distribution.final_attachments, distribution && distribution.sent_at || submittal.distributed_at);
+        add(distribution && distribution.final_attachments, distribution && distribution.sent_at || submittal.distributed_at,
+          procorePerson(distribution && distribution.distributed_by));
       }
     } else {
       const rfi = await getJson(fetchImpl, `/rest/v1.0/projects/${project}/rfis/${item}`, request.companyId);
       for (const question of Array.isArray(rfi.questions) ? rfi.questions : []) {
-        add(question && question.attachments, question && question.question_date);
+        add(question && question.attachments, question && question.question_date, askerOf(question, rfi));
         for (const answer of Array.isArray(question && question.answers) ? question.answers : []) {
-          add(answer && answer.attachments, answer && answer.answer_date);
+          add(answer && answer.attachments, answer && answer.answer_date, namedPerson(answer && answer.created_by, answer && answer.created_by_id));
         }
       }
     }
-    return { attachments };
+
+    const receivedFrom = submittal ? procorePerson(submittal.received_from) : null;
+    await addCompanies(fetchImpl, project, request.companyId, attachments.map((entry) => entry.by).concat(receivedFrom));
+    return {
+      attachments: attachments.map((entry) => ({
+        id: entry.id,
+        filename: entry.filename,
+        uploadedAt: entry.uploadedAt,
+        url: entry.url,
+        uploadedBy: uploaderOf(entry.by, receivedFrom)
+      }))
+    };
+  }
+
+  // Who posted a file. Procore names the person (the submittal's creator, a responder, whoever distributed
+  // it; an RFI's asker or answerer) as a user ({ id, name, login, vendor? }) or, for an RFI's answers, as
+  // "Name (Company)" with their id. `role` "creator": they created the submittal, and Procore doesn't
+  // record who attached the submittal's own files.
+  function procorePerson(user, role) {
+    if (!user || typeof user !== "object") return null;
+    const name = text(user.name) || text(user.login);
+    if (!name) return null;
+    return { userId: text(user.id) || null, name, company: text(user.vendor && user.vendor.name) || null, role: role || null };
+  }
+
+  function namedPerson(value, id) {
+    const named = /^(.+?)\s*\(([^()]+)\)$/.exec(text(value));
+    const name = named ? text(named[1]) : text(value);
+    if (!name) return null;
+    return { userId: text(id) || null, name, company: named ? text(named[2]) : null, role: null };
+  }
+
+  // An RFI's question names its asker only by name; the RFI's creator (who asks the first question) has
+  // an id and often a company.
+  function askerOf(question, rfi) {
+    const asker = namedPerson(question && question.created_by, null);
+    const creator = procorePerson(rfi && rfi.created_by);
+    return asker && creator && asker.name.toLowerCase() === creator.name.toLowerCase() ? creator : asker;
+  }
+
+  // Procore rarely says whose company a person is with; the project's directory does. One read for
+  // everyone still missing one, and optional: if the directory can't be read the names still show.
+  async function addCompanies(fetchImpl, project, companyId, people) {
+    const missing = people.filter((person) => person && person.userId && !person.company);
+    const ids = Array.from(new Set(missing.map((person) => person.userId))).slice(0, 100);
+    if (!ids.length) return;
+    try {
+      const filter = ids.map((id) => `filters[id][]=${encodeURIComponent(id)}`).join("&");
+      const users = await getJson(fetchImpl, `/rest/v1.0/projects/${project}/users?per_page=100&${filter}`, companyId);
+      const companies = new Map((Array.isArray(users) ? users : [])
+        .filter((user) => user && user.vendor && text(user.vendor.name))
+        .map((user) => [text(user.id), text(user.vendor.name)]));
+      for (const person of missing) {
+        person.company = companies.get(person.userId) || null;
+      }
+    } catch (_error) {
+      // Names without companies.
+    }
+  }
+
+  // { name, company, note } for the window: the note says how sure that is, when it isn't certain.
+  function uploaderOf(person, receivedFrom) {
+    if (!person) return null;
+    let note = null;
+    if (person.role === "creator") {
+      const from = receivedFrom && receivedFrom.name.toLowerCase() !== person.name.toLowerCase()
+        ? ` It was received from ${receivedFrom.name}${receivedFrom.company ? ` (${receivedFrom.company})` : ""}.`
+        : "";
+      note = `${person.name} created the submittal. Procore doesn't record who attached its own files.${from}`;
+    }
+    return { name: person.name, company: person.company || null, note };
   }
 
   return Object.freeze({ discover, listCompanyProjects, projectsFromPage, readProject, readItemFiles, isActive, projectName, withPage });

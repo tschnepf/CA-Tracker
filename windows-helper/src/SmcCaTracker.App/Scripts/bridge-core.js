@@ -109,6 +109,8 @@
     "idProject",
     "filename",
     "description",
+    "nameEditor",
+    "refDirectoryCreator",
     "isActive",
     "isCurrent",
     "_kmd"
@@ -1497,7 +1499,8 @@
           id: String(attachment._id),
           filename: String(attachment.description || attachment.filename || protectedFile.filename || "Attachment"),
           uploadedAt: toIso(attachment._kmd && attachment._kmd.ect),
-          url
+          url,
+          uploadedBy: uploaderOf(attachment)
         };
       }
     );
@@ -1511,6 +1514,17 @@
       reportError,
       attachments: attachmentResults
     };
+  }
+
+  // { name, company } of who uploaded the file, or null. The attachment's uploader (their entry in the
+  // project's directory, copied onto it) carries their company's name as nameCompany; its refCompany
+  // has only the id. Helix's last editor's name stands in when no uploader is named.
+  function uploaderOf(attachment) {
+    const creator = attachment.refDirectoryCreator;
+    const name = getIdentityName(creator) || attachment.nameEditor;
+    if (!name || !String(name).trim()) return null;
+    const company = (creator && creator.nameCompany) || getIdentityCompanyName(creator);
+    return { name: String(name).trim(), company: company && String(company).trim() ? String(company).trim() : null };
   }
 
   async function openItem(windowObject, itemId, itemType, projectId) {
