@@ -6,7 +6,7 @@
     "x-source": {
       "repository": "workload-tracker",
       "file": "backend/openapi.json",
-      "commit": "036c6e8fcb67b327d6bfcaba0b9f2ea340a2ac21"
+      "commit": "e23db66ade1d9500898c94e4e81c94b17b6c0a6b"
     }
   },
   "paths": {
@@ -455,6 +455,74 @@
               }
             },
             "description": "Invalid body."
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CaError"
+                }
+              }
+            },
+            "description": "CA Tracker sync is turned off."
+          }
+        }
+      }
+    },
+    "/api/ca/projects/{project_id}/items/": {
+      "get": {
+        "operationId": "ca_projects_items_retrieve",
+        "description": "Every live CA item routed to the project through its bindings, as seen by the signed-in person.",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "schema": {
+              "type": "integer"
+            },
+            "required": true
+          },
+          {
+            "in": "query",
+            "name": "state",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "all",
+                "open"
+              ]
+            },
+            "description": "open (default) or all, closed included."
+          }
+        ],
+        "tags": [
+          "ca"
+        ],
+        "security": [
+          {
+            "cookieAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CaProjectItems"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CaError"
+                }
+              }
+            },
+            "description": "No such project, or not one the user can view."
           },
           "503": {
             "content": {
@@ -1031,6 +1099,16 @@
           "name"
         ]
       },
+      "CaCourtEnum": {
+        "enum": [
+          "you",
+          "us",
+          "other",
+          "none"
+        ],
+        "type": "string",
+        "description": "* `you` - With you\n* `us` - With your company\n* `other` - Waiting on another company\n* `none` - Nobody holds it"
+      },
       "CaCoverageRequest": {
         "type": "object",
         "description": "What one scan saw of one item type.",
@@ -1075,6 +1153,18 @@
           "scannedAt"
         ]
       },
+      "CaDueGroupEnum": {
+        "enum": [
+          "overdue",
+          "today",
+          "next7",
+          "later",
+          "none",
+          "closed"
+        ],
+        "type": "string",
+        "description": "* `overdue` - Overdue\n* `today` - Due today\n* `next7` - Due in the next 7 days\n* `later` - Due later\n* `none` - No due date\n* `closed` - Closed"
+      },
       "CaError": {
         "type": "object",
         "properties": {
@@ -1105,6 +1195,15 @@
         ],
         "type": "string",
         "description": "* `invalid` - The request body is invalid\n* `unsupported_schema_version` - Update CA Tracker\n* `observation_mismatch` - A part disagrees with earlier parts of the observation\n* `ingest_disabled` - CA ingestion is turned off; retry later\n* `not_implemented` - Not implemented yet"
+      },
+      "CaFreshnessEnum": {
+        "enum": [
+          "fresh",
+          "stale",
+          "never"
+        ],
+        "type": "string",
+        "description": "* `fresh` - Fresh\n* `stale` - Stale\n* `never` - Never scanned completely"
       },
       "CaHolderRequest": {
         "type": "object",
@@ -1159,6 +1258,59 @@
         ],
         "type": "string",
         "description": "* `current` - Current\n* `upcoming` - Upcoming"
+      },
+      "CaItemCompletion": {
+        "type": "object",
+        "description": "Someone marked an open item complete in Workload Tracker; it is not yet closed in Helix or Procore.",
+        "properties": {
+          "trackerProjectId": {
+            "type": "integer"
+          },
+          "providerProject": {
+            "$ref": "#/components/schemas/CaProviderProjectRef"
+          },
+          "itemType": {
+            "$ref": "#/components/schemas/CaItemTypeEnum"
+          },
+          "providerItemId": {
+            "type": "string",
+            "description": "The revision that was marked; a later revision is not covered."
+          },
+          "number": {
+            "type": "string"
+          },
+          "revision": {
+            "type": "string",
+            "nullable": true
+          },
+          "personId": {
+            "type": "integer"
+          },
+          "personName": {
+            "type": "string"
+          },
+          "markedByName": {
+            "type": "string",
+            "nullable": true,
+            "description": "Who clicked it, when not the person themself."
+          },
+          "markedAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "required": [
+          "itemType",
+          "markedAt",
+          "markedByName",
+          "number",
+          "personId",
+          "personName",
+          "providerItemId",
+          "providerProject",
+          "revision",
+          "trackerProjectId"
+        ]
       },
       "CaItemRequest": {
         "type": "object",
@@ -1230,6 +1382,42 @@
             },
             "description": "Current and upcoming holders.",
             "maxItems": 50
+          },
+          "discipline": {
+            "type": "string",
+            "nullable": true,
+            "description": "CA Tracker's discipline label; null when it has none. Leave the four CA Tracker fields out to keep what is stored.",
+            "maxLength": 100
+          },
+          "disciplineSource": {
+            "nullable": true,
+            "description": "detected, or set by hand (set with a null discipline means set to none).\n\n* `detected` - Detected by CA Tracker\n* `set` - Set by hand",
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/DisciplineSourceEnum"
+              },
+              {
+                "$ref": "#/components/schemas/NullEnum"
+              }
+            ]
+          },
+          "folderStatus": {
+            "nullable": true,
+            "description": "Where the item's CA folder stands, from CA Tracker's folder comparison.\n\n* `open` - Open\n* `ready_to_return` - Ready to return\n* `reopened` - Back in court; the folder is in Returned\n* `duplicate` - More than one folder\n* `ambiguous` - Folder matches several items\n* `not_in_provider` - Not in Helix or Procore\n* `no_folder` - No folder\n* `filed` - Returned\n* `not_in_view` - Not in the last Procore view\n* `no_data` - Not synced yet",
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/FolderStatusEnum"
+              },
+              {
+                "$ref": "#/components/schemas/NullEnum"
+              }
+            ]
+          },
+          "folderPath": {
+            "type": "string",
+            "nullable": true,
+            "description": "The item's folder relative to the project's CA folder.",
+            "maxLength": 500
           }
         },
         "required": [
@@ -1241,6 +1429,310 @@
           "scopeTag",
           "status",
           "title"
+        ]
+      },
+      "CaItemRow": {
+        "type": "object",
+        "description": "One CA item as Workload Tracker lists it, seen by the signed-in person.",
+        "properties": {
+          "id": {
+            "type": "integer"
+          },
+          "trackerProjectId": {
+            "type": "integer"
+          },
+          "projectName": {
+            "type": "string"
+          },
+          "projectNumber": {
+            "type": "string",
+            "nullable": true
+          },
+          "provider": {
+            "$ref": "#/components/schemas/CaProviderEnum"
+          },
+          "providerProject": {
+            "$ref": "#/components/schemas/CaItemRowProviderProject"
+          },
+          "providerItemId": {
+            "type": "string"
+          },
+          "itemType": {
+            "$ref": "#/components/schemas/CaItemTypeEnum"
+          },
+          "number": {
+            "type": "string"
+          },
+          "revision": {
+            "type": "string",
+            "nullable": true
+          },
+          "title": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "closed": {
+            "type": "boolean"
+          },
+          "dueDate": {
+            "type": "string",
+            "format": "date",
+            "nullable": true,
+            "description": "The business day it is due."
+          },
+          "dueRaw": {
+            "type": "string",
+            "nullable": true,
+            "description": "The provider value as sent (a day or a date-time)."
+          },
+          "dueGroup": {
+            "$ref": "#/components/schemas/CaDueGroupEnum"
+          },
+          "daysTillDue": {
+            "type": "integer",
+            "nullable": true,
+            "description": "Business days until due; negative when overdue."
+          },
+          "daysInCourt": {
+            "type": "integer",
+            "nullable": true
+          },
+          "court": {
+            "$ref": "#/components/schemas/CaCourtEnum"
+          },
+          "courtText": {
+            "type": "string"
+          },
+          "ballInCourt": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Current holders."
+          },
+          "nextHolders": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Upcoming holders (Helix)."
+          },
+          "reasons": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CaItemRowReason"
+            },
+            "description": "Why it is on My Work; empty on a project list."
+          },
+          "assignees": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "assignments": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CaItemRowAssignment"
+            }
+          },
+          "completions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CaItemRowCompletion"
+            },
+            "description": "Who marked this revision complete here."
+          },
+          "completedAt": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true,
+            "description": "When the signed-in person marked it complete."
+          },
+          "canComplete": {
+            "type": "boolean",
+            "description": "The signed-in person is assigned to it or holds it."
+          },
+          "linkUrl": {
+            "type": "string",
+            "nullable": true,
+            "description": "The item in Procore or Helix; Helix items link to the project list."
+          },
+          "linkLabel": {
+            "type": "string",
+            "nullable": true
+          },
+          "discipline": {
+            "type": "string",
+            "nullable": true
+          },
+          "disciplineSource": {
+            "nullable": true,
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/DisciplineSourceEnum"
+              },
+              {
+                "$ref": "#/components/schemas/NullEnum"
+              }
+            ]
+          },
+          "folderStatus": {
+            "nullable": true,
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/FolderStatusEnum"
+              },
+              {
+                "$ref": "#/components/schemas/NullEnum"
+              }
+            ]
+          },
+          "folderPath": {
+            "type": "string",
+            "nullable": true
+          },
+          "freshness": {
+            "$ref": "#/components/schemas/CaFreshnessEnum"
+          },
+          "lastCompleteScanAt": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "lastScannedBy": {
+            "type": "string",
+            "nullable": true
+          }
+        },
+        "required": [
+          "assignees",
+          "assignments",
+          "ballInCourt",
+          "canComplete",
+          "closed",
+          "completedAt",
+          "completions",
+          "court",
+          "courtText",
+          "daysInCourt",
+          "daysTillDue",
+          "discipline",
+          "disciplineSource",
+          "dueDate",
+          "dueGroup",
+          "dueRaw",
+          "folderPath",
+          "folderStatus",
+          "freshness",
+          "id",
+          "itemType",
+          "lastCompleteScanAt",
+          "lastScannedBy",
+          "linkLabel",
+          "linkUrl",
+          "nextHolders",
+          "number",
+          "projectName",
+          "projectNumber",
+          "provider",
+          "providerItemId",
+          "providerProject",
+          "reasons",
+          "revision",
+          "status",
+          "title",
+          "trackerProjectId"
+        ]
+      },
+      "CaItemRowAssignment": {
+        "type": "object",
+        "properties": {
+          "personId": {
+            "type": "integer"
+          },
+          "personName": {
+            "type": "string"
+          },
+          "assignedByName": {
+            "type": "string",
+            "nullable": true
+          },
+          "assignedAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "required": [
+          "assignedAt",
+          "assignedByName",
+          "personId",
+          "personName"
+        ]
+      },
+      "CaItemRowCompletion": {
+        "type": "object",
+        "properties": {
+          "personId": {
+            "type": "integer"
+          },
+          "personName": {
+            "type": "string"
+          },
+          "markedAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "required": [
+          "markedAt",
+          "personId",
+          "personName"
+        ]
+      },
+      "CaItemRowProviderProject": {
+        "type": "object",
+        "properties": {
+          "provider": {
+            "$ref": "#/components/schemas/CaProviderEnum"
+          },
+          "host": {
+            "type": "string",
+            "maxLength": 255
+          },
+          "projectId": {
+            "type": "string",
+            "maxLength": 64
+          },
+          "name": {
+            "type": "string",
+            "nullable": true
+          }
+        },
+        "required": [
+          "host",
+          "name",
+          "projectId",
+          "provider"
+        ]
+      },
+      "CaItemRowReason": {
+        "type": "object",
+        "description": "Why an item is on the person's My Work.",
+        "properties": {
+          "reason": {
+            "$ref": "#/components/schemas/CaMyItemReasonEnum"
+          },
+          "text": {
+            "type": "string",
+            "description": "For example \"Assigned to you by Pat Lead\" or \"In your court in Helix\"."
+          }
+        },
+        "required": [
+          "reason",
+          "text"
         ]
       },
       "CaItemScopeTagEnum": {
@@ -1259,6 +1751,14 @@
         ],
         "type": "string",
         "description": "* `rfi` - RFI\n* `submittal` - Submittal"
+      },
+      "CaMyItemReasonEnum": {
+        "enum": [
+          "assigned",
+          "court"
+        ],
+        "type": "string",
+        "description": "* `assigned` - Assigned to you\n* `court` - In your court"
       },
       "CaObservationCounts": {
         "type": "object",
@@ -1725,11 +2225,89 @@
             "items": {
               "$ref": "#/components/schemas/CaAssignment"
             }
+          },
+          "completions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CaItemCompletion"
+            },
+            "description": "Open items of the project that people marked complete in Workload Tracker."
           }
         },
         "required": [
           "assignments",
+          "completions",
           "projectId"
+        ]
+      },
+      "CaProjectItems": {
+        "type": "object",
+        "properties": {
+          "projectId": {
+            "type": "integer"
+          },
+          "bound": {
+            "type": "boolean",
+            "description": "A Helix or Procore project is bound to it in CA Tracker."
+          },
+          "providerProjects": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CaProjectItemsProviderProject"
+            }
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CaItemRow"
+            }
+          },
+          "total": {
+            "type": "integer",
+            "description": "Every matching item; items holds the first 2000."
+          },
+          "staleAfterHours": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "bound",
+          "items",
+          "projectId",
+          "providerProjects",
+          "staleAfterHours",
+          "total"
+        ]
+      },
+      "CaProjectItemsProviderProject": {
+        "type": "object",
+        "properties": {
+          "provider": {
+            "$ref": "#/components/schemas/CaProviderEnum"
+          },
+          "name": {
+            "type": "string"
+          },
+          "scope": {
+            "$ref": "#/components/schemas/CaBindingScopeEnum"
+          },
+          "rfiCompleteScanAt": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "submittalCompleteScanAt": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          }
+        },
+        "required": [
+          "name",
+          "provider",
+          "rfiCompleteScanAt",
+          "scope",
+          "submittalCompleteScanAt"
         ]
       },
       "CaProviderEnum": {
@@ -1872,6 +2450,30 @@
           "departmentId",
           "op"
         ]
+      },
+      "DisciplineSourceEnum": {
+        "enum": [
+          "detected",
+          "set"
+        ],
+        "type": "string",
+        "description": "* `detected` - Detected by CA Tracker\n* `set` - Set by hand"
+      },
+      "FolderStatusEnum": {
+        "enum": [
+          "open",
+          "ready_to_return",
+          "reopened",
+          "duplicate",
+          "ambiguous",
+          "not_in_provider",
+          "no_folder",
+          "filed",
+          "not_in_view",
+          "no_data"
+        ],
+        "type": "string",
+        "description": "* `open` - Open\n* `ready_to_return` - Ready to return\n* `reopened` - Back in court; the folder is in Returned\n* `duplicate` - More than one folder\n* `ambiguous` - Folder matches several items\n* `not_in_provider` - Not in Helix or Procore\n* `no_folder` - No folder\n* `filed` - Returned\n* `not_in_view` - Not in the last Procore view\n* `no_data` - Not synced yet"
       },
       "NullEnum": {
         "enum": [

@@ -7,7 +7,7 @@ namespace SmcCaTracker.Data;
 /// </summary>
 internal static class Schema
 {
-    public const int CurrentVersion = 4;
+    public const int CurrentVersion = 5;
 
     private static readonly string[][] Versions =
     {
@@ -276,6 +276,40 @@ internal static class Schema
                 completed_at TEXT NULL,
                 pending INTEGER NOT NULL,
                 PRIMARY KEY (tracker_project_id, provider, provider_project_id, item_type, number, person_id)
+            );
+            """
+        },
+
+        // Version 5: Workload Tracker. Items people marked complete there (read back with the assignments;
+        // a mark belongs to one revision of an item), and per item the facts last sent about it (discipline
+        // and folder status), so an item whose facts change on their own is sent again.
+        new[]
+        {
+            """
+            CREATE TABLE IF NOT EXISTS wt_completions (
+                tracker_project_id INTEGER NOT NULL,
+                provider TEXT NOT NULL,
+                host TEXT NOT NULL,
+                provider_project_id TEXT NOT NULL,
+                item_type TEXT NOT NULL,
+                provider_item_id TEXT NOT NULL,
+                number TEXT NOT NULL,
+                revision TEXT NULL,
+                person_id INTEGER NOT NULL,
+                person_name TEXT NOT NULL,
+                marked_by_name TEXT NULL,
+                marked_at TEXT NOT NULL,
+                PRIMARY KEY (tracker_project_id, provider, provider_project_id, item_type, provider_item_id, person_id)
+            );
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS wt_item_facts (
+                provider TEXT NOT NULL,
+                project_id TEXT NOT NULL,
+                item_type TEXT NOT NULL,
+                item_id TEXT NOT NULL,
+                fingerprint TEXT NOT NULL,
+                PRIMARY KEY (provider, project_id, item_type, item_id)
             );
             """
         }

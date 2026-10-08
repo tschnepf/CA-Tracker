@@ -42,16 +42,18 @@ public static class ObservationBuilder
         ObservationSender sender,
         Guid observationId,
         int partSize = MaxItemsPerPart,
-        ProviderAccount? account = null)
+        ProviderAccount? account = null,
+        IReadOnlyDictionary<string, ItemFacts>? facts = null)
     {
         var types = ItemTypesOf(snapshot);
         var items = snapshot.Items.Where(item => types.Contains(TypeOf(item)));
-        return Build(snapshot, project, bindings, sender, observationId, items, [], Coverage(snapshot, fullSet: true), account, partSize);
+        return Build(snapshot, project, bindings, sender, observationId, items, [], Coverage(snapshot, fullSet: true), account, partSize, facts);
     }
 
     /// <summary>
     /// What an outbox entry names: the items that changed and those that went away, or every item when
-    /// it is a full set. Item content is read from the app's data as it is now.
+    /// it is a full set. Item content is read from the app's data as it is now, with the app's own facts
+    /// about each item (<paramref name="facts"/>, by <see cref="OutboxEntry.ItemKey"/>) where it has them.
     /// </summary>
     public static IReadOnlyList<CaObservationPartRequest> FromOutbox(
         OutboxEntry entry,
@@ -61,7 +63,8 @@ public static class ObservationBuilder
         ObservationSender sender,
         Guid observationId,
         ProviderAccount? account = null,
-        int partSize = MaxItemsPerPart)
+        int partSize = MaxItemsPerPart,
+        IReadOnlyDictionary<string, ItemFacts>? facts = null)
     {
         var types = ItemTypesOf(snapshot);
         var items = snapshot.Items.Where(item => types.Contains(TypeOf(item))
@@ -75,7 +78,7 @@ public static class ObservationBuilder
             .Select(key => new CaRemovedItemRequest { ItemType = key.ItemType, ProviderItemId = Text(key.ItemId, 64) })
             .ToList();
         var coverage = Coverage(snapshot, entry.FullSet, itemType => entry.Verified.Contains(itemType));
-        return Build(snapshot, project, bindings, sender, observationId, items, removed, coverage, account, partSize);
+        return Build(snapshot, project, bindings, sender, observationId, items, removed, coverage, account, partSize, facts);
     }
 
     /// <summary>Counts only, for a project that is neither bound nor tracked, so admins can see it exists.</summary>
@@ -100,7 +103,8 @@ public static class ObservationBuilder
         List<CaRemovedItemRequest> removed,
         List<CaCoverageRequest> coverage,
         ProviderAccount? account,
-        int partSize)
+        int partSize,
+        IReadOnlyDictionary<string, ItemFacts>? facts)
     {
         ArgumentOutOfRangeException.ThrowIfLessThan(partSize, 1);
         ArgumentOutOfRangeException.ThrowIfGreaterThan(partSize, MaxItemsPerPart);
@@ -108,7 +112,7 @@ public static class ObservationBuilder
         var items = source
             .OrderBy(TypeOf, StringComparer.Ordinal)
             .ThenBy(item => item.ItemId, StringComparer.Ordinal)
-            .Select(Item)
+            .Select(item => Item(item, facts?.GetValueOrDefault(OutboxEntry.ItemKey(item.ItemType, item.ItemId))))
             .ToList();
         var removedChunks = removed.Chunk(MaxRemovedPerPart).ToList();
         var envelope = Envelope(snapshot, project, sender, observationId, CaObservationKindEnum.Items, account);
@@ -203,7 +207,12 @@ public static class ObservationBuilder
             })
             .ToList();
 
-    public static CaItemRequest Item(SnapshotItem item) => new()
+    /// <summary>
+    /// One item. With <paramref name="facts"/> it carries the app's discipline and folder status (nulls
+    /// clear the tracker's values); without, those four fields are left out and the tracker keeps what it
+    /// has (see <see cref="ContractJson"/>).
+    /// </summary>
+    public static CaItemRequest Item(SnapshotItem item, ItemFacts? facts = null) => new()
     {
         ItemType = TypeOf(item),
         ProviderItemId = Text(item.ItemId, 64),
@@ -216,7 +225,11 @@ public static class ObservationBuilder
         CreatedDate = Timestamp(item.CreatedAt),
         ScopeTag = ScopeTag(item),
         SourceUrl = SourceUrl(item.SourceUrl),
-        Holders = item.Holders.Select(Holder).OfType<CaHolderRequest>().Take(50).ToList()
+        Holders = item.Holders.Select(Holder).OfType<CaHolderRequest>().Take(50).ToList(),
+        Discipline = facts?.Discipline,
+        DisciplineSource = facts?.DisciplineSource,
+        FolderStatus = facts?.FolderStatus,
+        FolderPath = facts?.FolderPath
     };
 
     /// <summary>Base Build / Tenant Fit Out, detected the way the app filters a split job's items.</summary>
@@ -348,6 +361,20 @@ public static class ObservationBuilder
             type,
             number);
     }
+
+    /// <summary>
+    /// An item revision as Workload Tracker keys it (<see cref="WorkloadCompletion.ItemKey"/>), from the
+    /// values its observations carry, so marks read back match the items they were made on.
+    /// </summary>
+    public static string RevisionKey(ProviderConnection connection, SnapshotItem item) =>
+        WorkloadCompletion.ItemKeyOf(
+            string.Equals(connection.Provider, Providers.Procore, StringComparison.OrdinalIgnoreCase) ? CaProviderEnum.Procore : CaProviderEnum.Helix,
+            Text(connection.ProjectId, 64),
+            TypeOf(item),
+            Text(item.ItemId, 64));
+
+    /// <summary>The revision as sent: null when there is none.</summary>
+    public static string? RevisionOf(SnapshotItem item) => Optional(item.Revision, 32);
 
     private static string TypeOf(SnapshotItem item) => item.ItemType.Trim().ToLowerInvariant();
 

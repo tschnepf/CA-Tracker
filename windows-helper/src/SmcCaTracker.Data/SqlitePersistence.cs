@@ -18,7 +18,8 @@ namespace SmcCaTracker.Data;
 /// The app's local database (%LOCALAPPDATA%\SMC-CA-Tracker\tracker.db, SQLite). The tables are plain
 /// and portable — text ids, ISO-8601 text dates, integer flags, no SQLite-only types — so the same
 /// shape can live in a central database (e.g. PostgreSQL) later. While the app is paired with Workload
-/// Tracker, <c>wt_outbox</c> keeps what each project's scans changed until it is sent. Not thread-safe:
+/// Tracker, <c>wt_outbox</c> keeps what each project's scans changed until it is sent, <c>wt_assignments</c> and
+/// <c>wt_completions</c> what was read back, and <c>wt_item_facts</c> the facts last sent per item. Not thread-safe:
 /// <see cref="TrackerStore"/> calls it from one thread at a time.
 /// </summary>
 public sealed class SqlitePersistence : ITrackerPersistence
@@ -252,7 +253,9 @@ public sealed class SqlitePersistence : ITrackerPersistence
         View = FromJson<ViewState>(GetPreference("view")) ?? new ViewState(),
         RecentSyncRuns = LoadSyncRuns(200),
         Outbox = LoadOutbox(),
-        Assignments = LoadAssignments()
+        Assignments = LoadAssignments(),
+        Completions = LoadCompletions(),
+        SentFacts = LoadSentFacts()
     };
 
     private TrackerSettings LoadSettings()
@@ -1102,6 +1105,115 @@ public sealed class SqlitePersistence : ITrackerPersistence
     {
         using var scope = new WriteScope(this);
         Execute("DELETE FROM wt_assignments;", scope.Transaction);
+        scope.Commit();
+    }
+
+    // ---- Workload Tracker "marked complete" marks ---------------------------------------------
+
+    private List<WorkloadCompletion> LoadCompletions()
+    {
+        var rows = new List<WorkloadCompletion>();
+        using var command = Command(
+            "SELECT tracker_project_id, provider, host, provider_project_id, item_type, provider_item_id, number, revision, person_id, " +
+            "person_name, marked_by_name, marked_at FROM wt_completions;",
+            null);
+        using var reader = command.ExecuteReader();
+        while (reader.Read())
+        {
+            rows.Add(new WorkloadCompletion
+            {
+                TrackerProjectId = (int)reader.GetInt64(0),
+                Provider = reader.GetString(1),
+                Host = reader.GetString(2),
+                ProviderProjectId = reader.GetString(3),
+                ItemType = reader.GetString(4),
+                ProviderItemId = reader.GetString(5),
+                Number = reader.GetString(6),
+                Revision = Text(reader, 7),
+                PersonId = (int)reader.GetInt64(8),
+                PersonName = reader.GetString(9),
+                MarkedByName = Text(reader, 10),
+                MarkedAt = ParseDate(reader.GetString(11)) ?? DateTimeOffset.MinValue
+            });
+        }
+
+        return rows;
+    }
+
+    public void ReplaceCompletions(int trackerProjectId, IReadOnlyList<WorkloadCompletion> completions)
+    {
+        using var scope = new WriteScope(this);
+        Execute("DELETE FROM wt_completions WHERE tracker_project_id = $project;", scope.Transaction, ("$project", trackerProjectId));
+        foreach (var row in completions)
+        {
+            Execute(
+                "INSERT OR REPLACE INTO wt_completions (tracker_project_id, provider, host, provider_project_id, item_type, provider_item_id, " +
+                "number, revision, person_id, person_name, marked_by_name, marked_at) VALUES ($project, $provider, $host, $providerProject, " +
+                "$type, $item, $number, $revision, $person, $name, $by, $marked);",
+                scope.Transaction,
+                ("$project", trackerProjectId), ("$provider", row.Provider.ToLowerInvariant()), ("$host", row.Host),
+                ("$providerProject", row.ProviderProjectId), ("$type", row.ItemType.ToLowerInvariant()), ("$item", row.ProviderItemId),
+                ("$number", row.Number), ("$revision", row.Revision), ("$person", row.PersonId), ("$name", row.PersonName),
+                ("$by", row.MarkedByName), ("$marked", Iso(row.MarkedAt)));
+        }
+
+        scope.Commit();
+    }
+
+    public void ClearCompletions()
+    {
+        using var scope = new WriteScope(this);
+        Execute("DELETE FROM wt_completions;", scope.Transaction);
+        scope.Commit();
+    }
+
+    // ---- Workload Tracker: facts sent about items ---------------------------------------------
+
+    private List<SentItemFacts> LoadSentFacts()
+    {
+        var rows = new List<SentItemFacts>();
+        using var command = Command("SELECT provider, project_id, item_type, item_id, fingerprint FROM wt_item_facts;", null);
+        using var reader = command.ExecuteReader();
+        while (reader.Read())
+        {
+            rows.Add(new SentItemFacts(reader.GetString(0), reader.GetString(1), OutboxEntry.ItemKey(reader.GetString(2), reader.GetString(3)),
+                reader.GetString(4)));
+        }
+
+        return rows;
+    }
+
+    public void SaveSentFacts(string provider, string projectId, IReadOnlyList<(string ItemKey, string Fingerprint)> sent, IReadOnlyList<string> forgotten)
+    {
+        using var scope = new WriteScope(this);
+        using var upsert = Command(
+            "INSERT INTO wt_item_facts (provider, project_id, item_type, item_id, fingerprint) VALUES ($provider, $project, $type, $id, $print) " +
+            "ON CONFLICT (provider, project_id, item_type, item_id) DO UPDATE SET fingerprint = excluded.fingerprint;",
+            scope.Transaction, ("$provider", provider.ToLowerInvariant()), ("$project", projectId), ("$type", null), ("$id", null), ("$print", null));
+        foreach (var (key, fingerprint) in sent)
+        {
+            var (itemType, itemId) = OutboxEntry.SplitKey(key);
+            Set(upsert, ("$type", itemType), ("$id", itemId), ("$print", fingerprint));
+            upsert.ExecuteNonQuery();
+        }
+
+        using var delete = Command(
+            "DELETE FROM wt_item_facts WHERE provider = $provider AND project_id = $project AND item_type = $type AND item_id = $id;",
+            scope.Transaction, ("$provider", provider.ToLowerInvariant()), ("$project", projectId), ("$type", null), ("$id", null));
+        foreach (var key in forgotten)
+        {
+            var (itemType, itemId) = OutboxEntry.SplitKey(key);
+            Set(delete, ("$type", itemType), ("$id", itemId));
+            delete.ExecuteNonQuery();
+        }
+
+        scope.Commit();
+    }
+
+    public void ClearSentFacts()
+    {
+        using var scope = new WriteScope(this);
+        Execute("DELETE FROM wt_item_facts;", scope.Transaction);
         scope.Commit();
     }
 

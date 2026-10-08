@@ -189,6 +189,8 @@ public class DatabaseTests
             var item = Assert.Single(Assert.Single(database.Load().Snapshots).Items);
             Assert.Equal("3", item.Revision);
             Assert.Equal("contact-7", item.Holders[0].ProviderUserId);
+            // Every later version ran again on top, the Workload Tracker tables already there included.
+            Assert.Equal("5", database.GetMeta("schema_version"));
         }
 
         // Version 3 retired the company server's change log and settings.
@@ -296,6 +298,87 @@ public class DatabaseTests
 
             database.ClearAssignments();
             Assert.Empty(database.Load().Assignments);
+        }
+    }
+
+    [Fact]
+    public void CompletionMarksAndSentFactsComeBackAfterReopening()
+    {
+        using var temp = new TempFolder();
+        var file = Path.Combine(temp.Root, "tracker.db");
+        var mark = new WorkloadCompletion
+        {
+            TrackerProjectId = 12,
+            Provider = "procore",
+            Host = "us02.procore.com",
+            ProviderProjectId = "42",
+            ItemType = "submittal",
+            ProviderItemId = "5501",
+            Number = "03 30 00-1",
+            Revision = "2",
+            PersonId = 39,
+            PersonName = "Julia Jackson",
+            MarkedByName = "Casey Lead",
+            MarkedAt = new DateTimeOffset(2026, 10, 7, 16, 0, 0, 250, TimeSpan.Zero)
+        };
+        var helixMark = new WorkloadCompletion
+        {
+            TrackerProjectId = 13, Provider = "helix", Host = "project.helixteam.com", ProviderProjectId = "H-1", ItemType = "rfi",
+            ProviderItemId = "abc", Number = "RFI-0001", PersonId = 7, PersonName = "Lee Lead", MarkedAt = DateTimeOffset.UnixEpoch
+        };
+        using (var database = new SqlitePersistence(file))
+        {
+            database.ReplaceCompletions(12, [mark, new WorkloadCompletion { TrackerProjectId = 12, Provider = "procore", ProviderProjectId = "42", ItemType = "submittal", ProviderItemId = "5502", PersonId = 1 }]);
+            database.ReplaceCompletions(13, [helixMark]);
+            database.ReplaceCompletions(12, [mark]);
+            database.SaveSentFacts("helix", "H-1", [("rfi|1", "Electrical|detected|open|RFIs\\RFI-0001"), ("rfi|2", "a")], []);
+            database.SaveSentFacts("HELIX", "H-1", [("rfi|2", "b")], ["rfi|1"]);
+        }
+
+        using (var database = new SqlitePersistence(file))
+        {
+            var state = database.Load();
+            var marks = state.Completions.OrderBy(entry => entry.TrackerProjectId).ToList();
+            Assert.Equal([12, 13], marks.Select(entry => entry.TrackerProjectId));
+            var back = marks[0];
+            Assert.Equal(mark.Key, back.Key);
+            Assert.Equal((mark.Host, mark.Number, mark.Revision, mark.PersonName, mark.MarkedByName, mark.MarkedAt),
+                (back.Host, back.Number, back.Revision, back.PersonName, back.MarkedByName, back.MarkedAt));
+            Assert.Null(marks[1].Revision);
+            Assert.Equal([new SentItemFacts("helix", "H-1", "rfi|2", "b")], state.SentFacts);
+
+            database.ClearCompletions();
+            database.ClearSentFacts();
+            Assert.Empty(database.Load().Completions);
+            Assert.Empty(database.Load().SentFacts);
+        }
+    }
+
+    [Fact]
+    public void ADatabaseFromVersion4GetsTheMarksAndFactsTables()
+    {
+        using var temp = new TempFolder();
+        var file = Path.Combine(temp.Root, "tracker.db");
+        using (new SqlitePersistence(file))
+        {
+        }
+
+        using (var connection = new SqliteConnection($"Data Source={file};Pooling=False"))
+        {
+            connection.Open();
+            using var command = connection.CreateCommand();
+            command.CommandText = "DROP TABLE wt_completions; DROP TABLE wt_item_facts; UPDATE schema_info SET meta_value = '4' WHERE meta_key = 'schema_version';";
+            command.ExecuteNonQuery();
+        }
+
+        using (var database = new SqlitePersistence(file))
+        {
+            Assert.Equal("5", database.GetMeta("schema_version"));
+            database.ReplaceCompletions(12, [new WorkloadCompletion { TrackerProjectId = 12, Provider = "helix", ProviderProjectId = "H-1", ItemType = "rfi", ProviderItemId = "a", PersonId = 1 }]);
+            database.SaveSentFacts("helix", "H-1", [("rfi|a", "x")], []);
+            var state = database.Load();
+            Assert.Single(state.Completions);
+            Assert.Single(state.SentFacts);
         }
     }
 

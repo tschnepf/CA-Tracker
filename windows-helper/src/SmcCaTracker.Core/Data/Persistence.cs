@@ -57,6 +57,21 @@ public interface ITrackerPersistence : IDisposable
 
     /// <summary>Forgets every item assignment (unpaired, or paired with another account).</summary>
     void ClearAssignments();
+
+    /// <summary>Replaces the "marked complete" marks kept for one Workload Tracker project.</summary>
+    void ReplaceCompletions(int trackerProjectId, IReadOnlyList<WorkloadCompletion> completions);
+
+    /// <summary>Forgets every "marked complete" mark (unpaired, or paired with another account).</summary>
+    void ClearCompletions();
+
+    /// <summary>
+    /// Keeps the facts (<see cref="ItemFacts.Fingerprint"/>) Workload Tracker accepted for items of one Helix or
+    /// Procore project, by item key ("itemType|itemId"), and forgets those of items that went away.
+    /// </summary>
+    void SaveSentFacts(string provider, string projectId, IReadOnlyList<(string ItemKey, string Fingerprint)> sent, IReadOnlyList<string> forgotten);
+
+    /// <summary>Forgets every sent fact (unpaired, or paired with another account: everything goes again).</summary>
+    void ClearSentFacts();
 }
 
 /// <summary>What <see cref="ITrackerPersistence.Load"/> returns.</summary>
@@ -71,9 +86,14 @@ public sealed class PersistedState
     public List<SyncRun> RecentSyncRuns { get; set; } = new();
     public List<OutboxEntry> Outbox { get; set; } = new();
     public List<WorkloadAssignment> Assignments { get; set; } = new();
+    public List<WorkloadCompletion> Completions { get; set; } = new();
+    public List<SentItemFacts> SentFacts { get; set; } = new();
 }
 
 public sealed record FolderScanRecord(string ProjectId, TypeFolderScan Scan);
+
+/// <summary>The facts Workload Tracker last accepted for one item (see <see cref="ItemFacts.Fingerprint"/>).</summary>
+public sealed record SentItemFacts(string Provider, string ProjectId, string ItemKey, string Fingerprint);
 
 /// <summary>One read of a Helix or Procore project.</summary>
 public sealed class SyncRun
@@ -102,7 +122,10 @@ public enum StoreChangeKind
     Catalog,
     Accounts,
 
-    /// <summary>Workload Tracker item assignments (changed here, or read back from the tracker).</summary>
+    /// <summary>
+    /// Workload Tracker item assignments (changed here, or read back from the tracker) and the items people
+    /// marked complete there (read back with them).
+    /// </summary>
     Assignments
 }
 
@@ -137,6 +160,8 @@ public sealed class InMemoryPersistence : ITrackerPersistence
     private ViewState view = new();
     private readonly Dictionary<string, OutboxEntry> outbox = new(StringComparer.Ordinal);
     private readonly Dictionary<int, List<WorkloadAssignment>> assignments = new();
+    private readonly Dictionary<int, List<WorkloadCompletion>> completions = new();
+    private readonly Dictionary<(string Provider, string ProjectId, string ItemKey), string> sentFacts = new();
 
     public int SaveCount { get; private set; }
 
@@ -152,7 +177,9 @@ public sealed class InMemoryPersistence : ITrackerPersistence
         View = view,
         RecentSyncRuns = runs.ToList(),
         Outbox = outbox.Values.Select(entry => entry.Copy()).ToList(),
-        Assignments = assignments.Values.SelectMany(rows => rows).Select(row => row.Copy()).ToList()
+        Assignments = assignments.Values.SelectMany(rows => rows).Select(row => row.Copy()).ToList(),
+        Completions = completions.Values.SelectMany(rows => rows).Select(row => row.Copy()).ToList(),
+        SentFacts = sentFacts.Select(pair => new SentItemFacts(pair.Key.Provider, pair.Key.ProjectId, pair.Key.ItemKey, pair.Value)).ToList()
     };
 
     public string? GetMeta(string key) => meta.TryGetValue(key, out var value) ? value : null;
@@ -230,6 +257,39 @@ public sealed class InMemoryPersistence : ITrackerPersistence
     public void ClearAssignments()
     {
         assignments.Clear();
+        SaveCount++;
+    }
+
+    public void ReplaceCompletions(int trackerProjectId, IReadOnlyList<WorkloadCompletion> rows)
+    {
+        completions[trackerProjectId] = rows.Select(row => row.Copy()).ToList();
+        SaveCount++;
+    }
+
+    public void ClearCompletions()
+    {
+        completions.Clear();
+        SaveCount++;
+    }
+
+    public void SaveSentFacts(string provider, string projectId, IReadOnlyList<(string ItemKey, string Fingerprint)> sent, IReadOnlyList<string> forgotten)
+    {
+        foreach (var (key, fingerprint) in sent)
+        {
+            sentFacts[(provider.ToLowerInvariant(), projectId, key)] = fingerprint;
+        }
+
+        foreach (var key in forgotten)
+        {
+            sentFacts.Remove((provider.ToLowerInvariant(), projectId, key));
+        }
+
+        SaveCount++;
+    }
+
+    public void ClearSentFacts()
+    {
+        sentFacts.Clear();
         SaveCount++;
     }
 

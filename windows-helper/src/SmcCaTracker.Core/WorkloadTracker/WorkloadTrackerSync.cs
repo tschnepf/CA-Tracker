@@ -1,6 +1,8 @@
 using SmcCaTracker.Core.Comparison;
 using SmcCaTracker.Core.Data;
 using SmcCaTracker.Core.Diagnostics;
+using SmcCaTracker.Core.Matching;
+using SmcCaTracker.Core.Models;
 using SmcCaTracker.Core.Procore;
 using SmcCaTracker.Core.Storage;
 using SmcCaTracker.Core.WorkloadTracker.Contract;
@@ -10,8 +12,9 @@ namespace SmcCaTracker.Core.WorkloadTracker;
 /// <summary>
 /// Pairs the app with Workload Tracker and sends the outbox (decisions D2, D7 and D8). Projects set
 /// up in the app send their items, with the tracker project each is bound to (D3); every other project
-/// seen sends a catalog entry (counts only). Item assignments (D4) are sent and read back here too.
-/// Unpaired, nothing here runs and the app works on its own.
+/// seen sends a catalog entry (counts only), and items carry the app's own facts about them (discipline
+/// and folder status). Item assignments (D4) are sent and read back here too, with the items people
+/// marked complete in the tracker. Unpaired, nothing here runs and the app works on its own.
 /// </summary>
 public sealed class WorkloadTrackerSync
 {
@@ -26,6 +29,12 @@ public sealed class WorkloadTrackerSync
 
     /// <summary>A project's team is fetched again after this long.</summary>
     public static readonly TimeSpan TeamCacheAge = TimeSpan.FromMinutes(10);
+
+    /// <summary>
+    /// A tracked project's item facts are worked out again at least this often; straight away (at the next
+    /// send) when its settings or CA folders change.
+    /// </summary>
+    public static readonly TimeSpan FactsInterval = TimeSpan.FromMinutes(5);
 
     /// <summary>The tracker's largest batch of assignment changes (MAX_ASSIGNMENTS in its contract.py).</summary>
     public const int MaxAssignmentsPerBatch = 500;
@@ -51,12 +60,22 @@ public sealed class WorkloadTrackerSync
     private readonly Dictionary<int, (DateTimeOffset At, string? ETag)> assignmentReads = new();
     private readonly Dictionary<int, (DateTimeOffset At, IReadOnlyList<TeamMember> Members)> teams = new();
 
+    // Item facts: used by the sending round only, except what store changes mark due (any thread).
+    private readonly FolderIndex folderIndex;
+    private readonly Dictionary<string, DateTimeOffset> factsCheckedAt = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, (ProviderSnapshot Snapshot, IReadOnlyDictionary<string, ItemFacts> Facts)> roundFacts = new(StringComparer.OrdinalIgnoreCase);
+    private readonly object factsGate = new();
+    private readonly HashSet<string> factsDue = new(StringComparer.OrdinalIgnoreCase);
+    private bool allFactsDue;
+
     public WorkloadTrackerSync(TrackerStore store, WorkloadTrackerApi api, ISecretProtector protector, Func<DateTimeOffset>? clock = null)
     {
         this.store = store;
         this.api = api;
         this.protector = protector;
         this.clock = clock ?? (() => DateTimeOffset.Now);
+        folderIndex = new FolderIndex(store);
+        store.Changed += OnStoreChanged;
     }
 
     /// <summary>Raised (on the sending thread) after a send round, a connect or a disconnect.</summary>
@@ -141,6 +160,7 @@ public sealed class WorkloadTrackerSync
         {
             store.ClearOutbox();
             store.ClearAssignments();
+            store.ClearSentFacts();
             ForgetReads();
         }
 
@@ -176,6 +196,7 @@ public sealed class WorkloadTrackerSync
         store.SaveSettings(settings);
         store.ClearOutbox();
         store.ClearAssignments();
+        store.ClearSentFacts();
         ForgetReads();
         NeedsSignIn = false;
         NeedsUpdate = false;
@@ -217,6 +238,9 @@ public sealed class WorkloadTrackerSync
                 resendAt = null;
                 store.QueueFullSets();
             }
+
+            // Off the caller's thread (the app's timer calls from the screen's): it compares projects.
+            await Task.Run(QueueChangedFacts, cancel).ConfigureAwait(false);
 
             var going = true;
             foreach (var entry in store.Outbox().OrderBy(entry => entry.UpdatedAt))
@@ -303,7 +327,8 @@ public sealed class WorkloadTrackerSync
 
         var partSize = partSizes.TryGetValue(key, out var size) ? size : ObservationBuilder.MaxItemsPerPart;
         var bindings = BindingsFor(store.Settings, entry.Provider, entry.ProjectId);
-        var parts = ObservationBuilder.FromOutbox(entry, snapshot, project, bindings, sender, pending.ObservationId, account, partSize);
+        var facts = entry.FullSet || entry.Changed.Count > 0 ? FactsFor(key, snapshot) : null;
+        var parts = ObservationBuilder.FromOutbox(entry, snapshot, project, bindings, sender, pending.ObservationId, account, partSize, facts);
         ApiResult? last = null;
         foreach (var part in parts)
         {
@@ -311,6 +336,16 @@ public sealed class WorkloadTrackerSync
             if (!last.Ok)
             {
                 return Handle(last, entry, key);
+            }
+
+            if (part.Items.Count > 0)
+            {
+                // What the tracker now has for these items; a later change of their facts sends them again.
+                store.RecordSentFacts(entry.Provider, entry.ProjectId, part.Items
+                    .Select(item => (Key: OutboxEntry.ItemKey(item.ItemType, item.ProviderItemId), Fingerprint: ItemFacts.FingerprintOf(item)))
+                    .Where(sent => sent.Fingerprint is not null)
+                    .Select(sent => (sent.Key, sent.Fingerprint!))
+                    .ToList());
             }
         }
 
@@ -323,6 +358,104 @@ public sealed class WorkloadTrackerSync
         }
 
         return true;
+    }
+
+    // ---- Item facts: discipline and folder status ---------------------------------------------
+
+    /// <summary>
+    /// Facts change on their own (a discipline set by hand, a folder filed or moved), not only with a scan.
+    /// Each tracked project's facts are worked out again when its settings or CA folders changed, and at
+    /// least every <see cref="FactsInterval"/>; items whose facts differ from what the tracker last accepted
+    /// are queued to be sent again. Only folder lists already saved are used: the drive isn't read here.
+    /// </summary>
+    private void QueueChangedFacts()
+    {
+        roundFacts.Clear();
+        HashSet<string> due;
+        bool all;
+        lock (factsGate)
+        {
+            due = new HashSet<string>(factsDue, StringComparer.OrdinalIgnoreCase);
+            all = allFactsDue;
+            factsDue.Clear();
+            allFactsDue = false;
+        }
+
+        var settings = store.Settings;
+        var now = clock();
+        var tracked = settings.Projects
+            .Select(project => project.Connection)
+            .OfType<ProviderConnection>()
+            .Select(connection => (Provider: connection.Provider.ToLowerInvariant(), connection.ProjectId))
+            .Distinct()
+            .ToList();
+        foreach (var (provider, projectId) in tracked)
+        {
+            var key = $"{provider}|{projectId}";
+            if (!all && !due.Contains(key) && factsCheckedAt.TryGetValue(key, out var checkedAt) && now - checkedAt < FactsInterval)
+            {
+                continue;
+            }
+
+            if (store.Snapshot(provider, projectId) is not { } snapshot)
+            {
+                continue;
+            }
+
+            factsCheckedAt[key] = now;
+            if (ComputeFacts(settings, snapshot) is not { } facts)
+            {
+                continue;
+            }
+
+            roundFacts[key] = (snapshot, facts);
+            var sent = store.SentFacts(provider, projectId);
+            var changed = facts
+                .Where(pair => !sent.TryGetValue(pair.Key, out var fingerprint) || fingerprint != pair.Value.Fingerprint)
+                .Select(pair => pair.Key)
+                .ToList();
+            store.QueueItems(provider, projectId, changed);
+        }
+    }
+
+    /// <summary>The facts to send with a project's items: this round's, unless the items changed since.</summary>
+    private IReadOnlyDictionary<string, ItemFacts>? FactsFor(string key, ProviderSnapshot snapshot) =>
+        roundFacts.TryGetValue(key, out var computed) && ReferenceEquals(computed.Snapshot, snapshot)
+            ? computed.Facts
+            : ComputeFacts(store.Settings, snapshot);
+
+    private IReadOnlyDictionary<string, ItemFacts>? ComputeFacts(TrackerSettings settings, ProviderSnapshot snapshot)
+    {
+        try
+        {
+            return ItemFacts.ForProject(snapshot, settings, folderIndex.CachedOrEmpty);
+        }
+        catch (Exception error)
+        {
+            // The facts are extra: the items still go without them (the tracker keeps what it has).
+            AppLog.Error("workload", $"Working out item facts for {snapshot.Provider} project {snapshot.ProjectId} failed", error);
+            return null;
+        }
+    }
+
+    /// <summary>Settings (disciplines set by hand, folder names, parts) and CA folder lists decide the facts.</summary>
+    private void OnStoreChanged(object? sender, StoreChange change)
+    {
+        if (change.Kind == StoreChangeKind.Settings)
+        {
+            lock (factsGate)
+            {
+                allFactsDue = true;
+            }
+        }
+        else if (change is { Kind: StoreChangeKind.FolderScan, ProjectId: { } projectId }
+                 && store.Settings.FindProject(projectId)?.Connection is { } connection)
+        {
+            lock (factsGate)
+            {
+                factsDue.Add($"{connection.Provider.ToLowerInvariant()}|{connection.ProjectId}");
+            }
+        }
     }
 
     // ---- Bindings (decision D3) -----------------------------------------------------------------
@@ -820,6 +953,7 @@ public sealed class WorkloadTrackerSync
             {
                 // Not a project this account can see (any more): nothing to show for it.
                 store.ReplaceAssignments(trackerProjectId, []);
+                store.ReplaceCompletions(trackerProjectId, []);
                 Remember(trackerProjectId, null);
                 continue;
             }
@@ -833,6 +967,7 @@ public sealed class WorkloadTrackerSync
             if (result.TryRead<CaProjectAssignments>() is { } body)
             {
                 store.ReplaceAssignments(trackerProjectId, body.Assignments.Select(FromContract).ToList());
+                store.ReplaceCompletions(trackerProjectId, body.Completions.Select(FromContract).ToList());
                 Remember(trackerProjectId, result.ETag);
             }
         }
@@ -892,6 +1027,22 @@ public sealed class WorkloadTrackerSync
         AssignedAt = row.AssignedAt,
         AssignedByName = row.AssignedByName,
         CompletedAt = row.CompletedAt
+    };
+
+    private static WorkloadCompletion FromContract(CaItemCompletion row) => new()
+    {
+        TrackerProjectId = row.TrackerProjectId,
+        Provider = row.ProviderProject.Provider,
+        Host = row.ProviderProject.Host,
+        ProviderProjectId = row.ProviderProject.ProjectId,
+        ItemType = row.ItemType,
+        ProviderItemId = row.ProviderItemId,
+        Number = row.Number,
+        Revision = row.Revision,
+        PersonId = row.PersonId,
+        PersonName = row.PersonName,
+        MarkedByName = row.MarkedByName,
+        MarkedAt = row.MarkedAt
     };
 
     private static string Named(WorkloadAssignment row) => row.PersonName.Length > 0 ? row.PersonName : $"person {row.PersonId}";

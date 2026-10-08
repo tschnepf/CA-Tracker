@@ -1399,6 +1399,9 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
 
             await UpdateProjectAsync(edited);
         }
+
+        // Workload Tracker's lists show the discipline too: send it now rather than at the next round.
+        SendToWorkloadTrackerSoon();
     }
 
     public bool IsBusy
@@ -3325,7 +3328,7 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
                 view.Compared = hasFolder;
             }
 
-            assignmentIndex = store.AssignmentIndex();
+            ReadAssignmentIndexes();
             ApplyAssignments(rows);
             allRows = rows;
             comparison = SelectedProject is not null && comparisons.TryGetValue(SelectedProject.Id, out var primary) ? primary : null;

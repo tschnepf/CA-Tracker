@@ -179,6 +179,16 @@
                 </DataTrigger>
             </Style.Triggers>
         </Style>
+        <!-- "Done in Workload Tracker" in the Assigned column: marked complete there, not returned in Helix or
+             Procore yet. Looks like the folder status pills. -->
+        <Style x:Key="DonePill" TargetType="Border">
+            <Setter Property="CornerRadius" Value="10" />
+            <Setter Property="Padding" Value="8,2" />
+            <Setter Property="HorizontalAlignment" Value="Left" />
+            <Setter Property="VerticalAlignment" Value="Center" />
+            <Setter Property="Background" Value="{DynamicResource WarningSoftBrush}" />
+            <Setter Property="TextElement.Foreground" Value="{DynamicResource WarningBrush}" />
+        </Style>
     </Window.Resources>
 
     <!-- The window's own title bar names the app, so there's no heading row: Sync all and Settings live in
@@ -1029,17 +1039,23 @@
                                     </Style>
                                 </DataGridTextColumn.ElementStyle>
                             </DataGridTextColumn>
-                            <!-- Shown while a shown project is bound to a Workload Tracker project. -->
-                            <DataGridTextColumn x:Name="AssignedColumn" Header="Assigned" Binding="{Binding AssignedText}" Width="150" IsReadOnly="True"
-                                                SortMemberPath="AssignedSortKey">
-                                <DataGridTextColumn.ElementStyle>
-                                    <Style TargetType="TextBlock">
-                                        <Setter Property="ToolTip" Value="{Binding AssignedToolTip}" />
-                                        <Setter Property="TextTrimming" Value="CharacterEllipsis" />
-                                        <Setter Property="VerticalAlignment" Value="Center" />
-                                    </Style>
-                                </DataGridTextColumn.ElementStyle>
-                            </DataGridTextColumn>
+                            <!-- Shown while a shown project is bound to a Workload Tracker project. An item someone marked
+                                 complete there that isn't returned in Helix or Procore yet gets a pill after the names. -->
+                            <DataGridTemplateColumn x:Name="AssignedColumn" Header="Assigned" Width="150" SortMemberPath="AssignedSortKey">
+                                <DataGridTemplateColumn.CellTemplate>
+                                    <DataTemplate>
+                                        <DockPanel VerticalAlignment="Center">
+                                            <Border DockPanel.Dock="Right" Style="{StaticResource DonePill}" Margin="6,0,0,0"
+                                                    ToolTip="{Binding DoneFlagToolTip}"
+                                                    Visibility="{Binding ShowsDoneFlag, Converter={StaticResource Visible}}">
+                                                <TextBlock Text="Done in Workload Tracker" FontSize="12" />
+                                            </Border>
+                                            <TextBlock Text="{Binding AssignedText}" ToolTip="{Binding AssignedToolTip}" TextTrimming="CharacterEllipsis"
+                                                       VerticalAlignment="Center" />
+                                        </DockPanel>
+                                    </DataTemplate>
+                                </DataGridTemplateColumn.CellTemplate>
+                            </DataGridTemplateColumn>
                             <DataGridTextColumn x:Name="DaysInCourtColumn" Header="Days in court" Binding="{Binding DaysInCourtText}" Width="95" IsReadOnly="True"
                                                 SortMemberPath="DaysInCourt" />
                             <DataGridTextColumn x:Name="FolderColumn" Header="Folder" Binding="{Binding FolderName}" Width="200" IsReadOnly="True" SortMemberPath="FolderName">

@@ -39,6 +39,12 @@ internal sealed class FakeTracker : HttpMessageHandler
     /// <summary>People the tracker refuses to assign (they have left).</summary>
     public HashSet<int> PeopleWhoLeft { get; } = new();
 
+    /// <summary>Items people marked complete (CaItemCompletion rows), listed with their project's assignments.</summary>
+    public List<JsonObject> Completions { get; } = new();
+
+    /// <summary>Tracker projects this account can't see: reading their assignments answers 404.</summary>
+    public HashSet<int> HiddenProjects { get; } = new();
+
     /// <summary>The tracker's people links, by provider user id: person, name and how it was linked.</summary>
     public Dictionary<string, (int PersonId, string Name, string Source)> PersonLinks { get; } = new(StringComparer.Ordinal);
 
@@ -216,12 +222,21 @@ internal sealed class FakeTracker : HttpMessageHandler
 
     private HttpResponseMessage ReadAssignments(int project, string? ifNoneMatch)
     {
+        if (HiddenProjects.Contains(project))
+        {
+            return Json(404, """{"detail": "Not found."}""");
+        }
+
         var rows = new JsonArray(Assigned.Values
             .Where(row => row["trackerProjectId"]!.GetValue<int>() == project)
             .OrderBy(row => row["number"]!.GetValue<string>(), StringComparer.Ordinal)
             .Select(row => (JsonNode)row.DeepClone())
             .ToArray());
-        var body = new JsonObject { ["projectId"] = project, ["assignments"] = rows }.ToJsonString();
+        var marks = new JsonArray(Completions
+            .Where(row => row["trackerProjectId"]!.GetValue<int>() == project)
+            .Select(row => (JsonNode)row.DeepClone())
+            .ToArray());
+        var body = new JsonObject { ["projectId"] = project, ["assignments"] = rows, ["completions"] = marks }.ToJsonString();
         var etag = $"\"{Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(Encoding.UTF8.GetBytes(body)))[..16]}\"";
         var response = ifNoneMatch == etag ? new HttpResponseMessage(HttpStatusCode.NotModified) { Content = new StringContent("") } : Json(200, body);
         response.Headers.ETag = new System.Net.Http.Headers.EntityTagHeaderValue(etag);

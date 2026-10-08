@@ -682,11 +682,45 @@ public sealed class RowViewModel : ObservableObject
     /// <summary>The order of <see cref="Heading"/>: "Assigned to me" first, then by when it's due.</summary>
     public int HeadingOrder => ListAssignedFirst && IsAssignedToMe ? -1 : (int)Urgency;
 
-    public void SetAssignments(WorkloadItemRef? reference, IReadOnlyList<WorkloadAssignment> assignees, int? me, bool paired)
+    /// <summary>The details pane's Assigned line: shown once the item can be assigned (or someone is).</summary>
+    public bool ShowsAssignedDetails => CanAssign || Assignees.Count > 0;
+
+    public string AssignedDetailsText => Assignees.Count == 0 ? "Nobody yet" : AssignedText;
+
+    // ---- Marked complete in Workload Tracker -------------------------------------------------
+
+    /// <summary>The pill after the names on items marked complete in Workload Tracker and not returned yet.</summary>
+    public const string DoneFlagText = "Done in Workload Tracker";
+
+    /// <summary>Who marked this revision of the item complete in Workload Tracker, names in order.</summary>
+    public IReadOnlyList<WorkloadCompletion> Completions { get; private set; } = [];
+
+    public bool HasCompletions => Completions.Count > 0;
+
+    /// <summary>Marked complete in Workload Tracker, but still open in Helix or Procore and not returned: flagged.</summary>
+    public bool ShowsDoneFlag => WorkloadCompletion.AwaitsReturn(Row, Completions);
+
+    /// <summary>Hover text for the pill: who marked it and when, and that it still needs returning.</summary>
+    public string? DoneFlagToolTip => ShowsDoneFlag
+        ? $"Marked complete in Workload Tracker by {MarkedByText} on {LastMarkedText}. Not returned in {ProviderName} yet."
+        : null;
+
+    /// <summary>The details pane's Workload Tracker line: "Marked complete by Pat Lead on Oct 7".</summary>
+    public string CompletedText => HasCompletions ? $"Marked complete by {MarkedByText} on {LastMarkedText}" : "";
+
+    private string MarkedByText => string.Join(", ", Completions.Select(mark => mark.PersonName));
+
+    private string LastMarkedText => HasCompletions ? $"{Completions.Max(mark => mark.MarkedAt).ToLocalTime():MMM d}" : "";
+
+    private string ProviderName => Project.ProviderLabel.Length > 0 ? Project.ProviderLabel : "Helix or Procore";
+
+    public void SetAssignments(WorkloadItemRef? reference, IReadOnlyList<WorkloadAssignment> assignees, int? me, bool paired,
+        IReadOnlyList<WorkloadCompletion> completions)
     {
         var mine = me is { } person && assignees.Any(row => row.PersonId == person && row.CompletedAt is null);
         if (reference == AssignRef && mine == IsAssignedToMe && paired == ShowsAssignMenu
-            && assignees.SequenceEqual(Assignees, AssignmentComparer.Instance))
+            && assignees.SequenceEqual(Assignees, AssignmentComparer.Instance)
+            && completions.SequenceEqual(Completions, CompletionComparer.Instance))
         {
             return;
         }
@@ -695,11 +729,14 @@ public sealed class RowViewModel : ObservableObject
         AssignRef = reference;
         Assignees = assignees;
         IsAssignedToMe = mine;
+        Completions = completions;
         foreach (var name in new[]
                  {
                      nameof(AssignRef), nameof(Assignees), nameof(IsAssignedToMe), nameof(CanAssign), nameof(AssignedText),
                      nameof(ShowsAssignMenu), nameof(AssignMenuToolTip),
-                     nameof(AssignedSortKey), nameof(AssignedToolTip), nameof(Heading), nameof(HeadingOrder)
+                     nameof(AssignedSortKey), nameof(AssignedToolTip), nameof(Heading), nameof(HeadingOrder),
+                     nameof(ShowsAssignedDetails), nameof(AssignedDetailsText),
+                     nameof(Completions), nameof(HasCompletions), nameof(ShowsDoneFlag), nameof(DoneFlagToolTip), nameof(CompletedText)
                  })
         {
             OnPropertyChanged(name);
@@ -717,6 +754,18 @@ public sealed class RowViewModel : ObservableObject
             && x.AssignedAt == y.AssignedAt && x.AssignedByName == y.AssignedByName;
 
         public int GetHashCode(WorkloadAssignment obj) => obj.Key.GetHashCode(StringComparison.Ordinal);
+    }
+
+    /// <summary>Two lists of "marked complete" marks show the same thing.</summary>
+    private sealed class CompletionComparer : IEqualityComparer<WorkloadCompletion>
+    {
+        public static readonly CompletionComparer Instance = new();
+
+        public bool Equals(WorkloadCompletion? x, WorkloadCompletion? y) =>
+            x is not null && y is not null && x.Key == y.Key && x.PersonName == y.PersonName
+            && x.MarkedAt == y.MarkedAt && x.MarkedByName == y.MarkedByName && x.Revision == y.Revision;
+
+        public int GetHashCode(WorkloadCompletion obj) => obj.Key.GetHashCode(StringComparison.Ordinal);
     }
 }
 

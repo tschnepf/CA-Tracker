@@ -9,6 +9,10 @@ public sealed partial class MainViewModel
     private IReadOnlyDictionary<string, IReadOnlyList<WorkloadAssignment>> assignmentIndex =
         new Dictionary<string, IReadOnlyList<WorkloadAssignment>>(StringComparer.Ordinal);
 
+    // Items people marked complete in Workload Tracker, by item revision (WorkloadCompletion.ItemKey).
+    private IReadOnlyDictionary<string, IReadOnlyList<WorkloadCompletion>> completionIndex =
+        new Dictionary<string, IReadOnlyList<WorkloadCompletion>>(StringComparer.Ordinal);
+
     /// <summary>The Workload Tracker connection, for the windows that bind projects and assign people (null in a build without it).</summary>
     public WorkloadTrackerSync? WorkloadTracker => workloadTracker;
 
@@ -97,9 +101,16 @@ public sealed partial class MainViewModel
         }
     }
 
+    /// <summary>What the rows show of Workload Tracker's assignments and "marked complete" marks, read again.</summary>
+    private void ReadAssignmentIndexes()
+    {
+        assignmentIndex = store.AssignmentIndex();
+        completionIndex = store.CompletionIndex();
+    }
+
     /// <summary>
     /// Fills in each row's assignment: the item as Workload Tracker names it (when its project is
-    /// bound) and who is assigned to it.
+    /// bound), who is assigned to it, and who marked this revision of it complete there.
     /// </summary>
     private void ApplyAssignments(IEnumerable<RowViewModel> rows)
     {
@@ -116,14 +127,20 @@ public sealed partial class MainViewModel
             }
 
             var assignees = reference is not null && assignmentIndex.TryGetValue(reference.Key, out var list) ? list : [];
-            row.SetAssignments(reference, assignees, me, paired);
+            var marks = paired && row.Row.Item is { } marked && row.Project.Project.Connection is { } linked
+                ? WorkloadCompletion.On(completionIndex, linked, marked)
+                : [];
+            row.SetAssignments(reference, assignees, me, paired, marks);
         }
     }
 
-    /// <summary>Assignments changed (here, or read back from the tracker): the column, My work and the counts follow.</summary>
+    /// <summary>
+    /// Assignments or "marked complete" marks changed (here, or read back from the tracker): the column, the
+    /// details, My work and the counts follow.
+    /// </summary>
     private void OnAssignmentsChanged(bool rowsWillBeRebuilt)
     {
-        assignmentIndex = store.AssignmentIndex();
+        ReadAssignmentIndexes();
         foreach (var source in badgeSources.Values)
         {
             ApplyAssignments(source.Rows);

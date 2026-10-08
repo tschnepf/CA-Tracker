@@ -20,6 +20,10 @@ its serializers in `backend/ca_tracker/serializers.py` define the endpoints, and
 - Project search and team rows are large and loosely typed, so the app reads only the fields it uses
   (`WorkloadTrackerApi.ReadProjectChoices` and `ReadTeamPage`); a test checks those fields are still in
   the pinned schema. The pinned general operations are listed in `ContractGenerator.PinnedOperations`.
+- An item's four CA Tracker fields (`discipline`, `disciplineSource`, `folderStatus`, `folderPath`) are
+  optional, and the tracker keeps what it has when they are left out but clears a value sent as null.
+  `ContractJson` writes them as a set: all four for an item the app compared (it always has a folder
+  status), none for one it didn't.
 
 ## When the tracker's endpoints change
 

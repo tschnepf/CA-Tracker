@@ -30,6 +30,10 @@ public sealed class TrackerStore : IDisposable
     private readonly List<SyncRun> recentRuns = new();
     private readonly Dictionary<string, OutboxEntry> outbox = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, WorkloadAssignment> assignments = new(StringComparer.Ordinal);
+    private readonly Dictionary<int, List<WorkloadCompletion>> completions = new();
+
+    // Per Helix or Procore project (SnapshotKey): the facts Workload Tracker last accepted, by item key.
+    private readonly Dictionary<string, Dictionary<string, string>> sentFacts = new(StringComparer.OrdinalIgnoreCase);
     private TrackerSettings settings;
     private List<CatalogProject> catalog;
     private List<ProviderAccount> accounts;
@@ -68,6 +72,23 @@ public sealed class TrackerStore : IDisposable
         foreach (var row in state.Assignments ?? new List<WorkloadAssignment>())
         {
             assignments[row.Key] = row;
+        }
+
+        foreach (var group in (state.Completions ?? new List<WorkloadCompletion>()).GroupBy(row => row.TrackerProjectId))
+        {
+            completions[group.Key] = group.ToList();
+        }
+
+        foreach (var fact in state.SentFacts ?? new List<SentItemFacts>())
+        {
+            var key = SnapshotKey(fact.Provider, fact.ProjectId);
+            if (!sentFacts.TryGetValue(key, out var items))
+            {
+                items = new Dictionary<string, string>(StringComparer.Ordinal);
+                sentFacts[key] = items;
+            }
+
+            items[fact.ItemKey] = fact.Fingerprint;
         }
 
         AppLog.Info("store",$"Loaded {settings.Projects.Count} projects, {snapshots.Count} item lists " +
@@ -593,15 +614,17 @@ public sealed class TrackerStore : IDisposable
         }
     }
 
-    /// <summary>Forgets every assignment (unpaired, or paired with another account).</summary>
+    /// <summary>Forgets every assignment and "marked complete" mark (unpaired, or paired with another account).</summary>
     public void ClearAssignments()
     {
         bool had;
         lock (gate)
         {
-            had = assignments.Count > 0;
+            had = assignments.Count > 0 || completions.Count > 0;
             assignments.Clear();
+            completions.Clear();
             Enqueue(target => target.ClearAssignments());
+            Enqueue(target => target.ClearCompletions());
         }
 
         if (had)
@@ -609,6 +632,79 @@ public sealed class TrackerStore : IDisposable
             Raise(new StoreChange { Kind = StoreChangeKind.Assignments });
         }
     }
+
+    // ---- Workload Tracker "marked complete" marks ----------------------------------------------
+
+    /// <summary>Every mark kept (all tracker projects, or one), as copies.</summary>
+    public IReadOnlyList<WorkloadCompletion> Completions(int? trackerProjectId = null)
+    {
+        lock (gate)
+        {
+            return completions
+                .Where(pair => trackerProjectId is null || pair.Key == trackerProjectId)
+                .SelectMany(pair => pair.Value)
+                .Select(row => row.Copy())
+                .ToList();
+        }
+    }
+
+    /// <summary>
+    /// Who marked what complete, for showing: marks grouped by item revision
+    /// (<see cref="WorkloadCompletion.ItemKey"/>), names in order. Built once per refresh of the list.
+    /// </summary>
+    public IReadOnlyDictionary<string, IReadOnlyList<WorkloadCompletion>> CompletionIndex()
+    {
+        lock (gate)
+        {
+            return completions.Values
+                .SelectMany(rows => rows)
+                .GroupBy(row => row.ItemKey, StringComparer.Ordinal)
+                .ToDictionary(
+                    group => group.Key,
+                    group => (IReadOnlyList<WorkloadCompletion>)group
+                        .OrderBy(row => row.PersonName, StringComparer.CurrentCultureIgnoreCase)
+                        .Select(row => row.Copy())
+                        .ToList(),
+                    StringComparer.Ordinal);
+        }
+    }
+
+    /// <summary>A tracker project's marks as the tracker lists them now (none: it has none, or can't be seen).</summary>
+    public void ReplaceCompletions(int trackerProjectId, IReadOnlyList<WorkloadCompletion> fromTracker)
+    {
+        bool changed;
+        lock (gate)
+        {
+            var before = completions.TryGetValue(trackerProjectId, out var kept) ? kept : new List<WorkloadCompletion>();
+            var next = fromTracker.Select(row => row.Copy()).ToList();
+            var byKey = next.GroupBy(row => row.Key, StringComparer.Ordinal).ToDictionary(group => group.Key, group => group.First(), StringComparer.Ordinal);
+            changed = before.Count != next.Count
+                || before.Any(row => !byKey.TryGetValue(row.Key, out var other) || !SameCompletion(row, other));
+            if (changed)
+            {
+                if (next.Count == 0)
+                {
+                    completions.Remove(trackerProjectId);
+                }
+                else
+                {
+                    completions[trackerProjectId] = next;
+                }
+
+                var saved = next.Select(row => row.Copy()).ToList();
+                Enqueue(target => target.ReplaceCompletions(trackerProjectId, saved));
+            }
+        }
+
+        if (changed)
+        {
+            Raise(new StoreChange { Kind = StoreChangeKind.Assignments });
+        }
+    }
+
+    private static bool SameCompletion(WorkloadCompletion a, WorkloadCompletion b) =>
+        a.PersonName == b.PersonName && a.MarkedByName == b.MarkedByName && a.MarkedAt == b.MarkedAt
+        && a.Revision == b.Revision && a.Number == b.Number && a.Host == b.Host;
 
     private static bool SameAssignment(WorkloadAssignment a, WorkloadAssignment b) =>
         a.Active == b.Active && a.Pending == b.Pending && a.AssignedAt == b.AssignedAt && a.CompletedAt == b.CompletedAt
@@ -685,6 +781,119 @@ public sealed class TrackerStore : IDisposable
         entry.UpdatedAt = DateTimeOffset.Now;
         var copy = entry.Copy();
         Enqueue(target => target.SaveOutboxEntry(copy));
+    }
+
+    /// <summary>
+    /// Queues items of a project to be sent again although their Helix or Procore content didn't change:
+    /// the app's own facts about them did (a discipline set by hand, a folder moved). Only while paired. The
+    /// entry's version moves on even when the items were waiting already (or it sends everything): an
+    /// observation that failed part-way goes again under its id, and the tracker keeps the parts it has, so
+    /// new facts need a new observation.
+    /// </summary>
+    public void QueueItems(string provider, string projectId, IReadOnlyCollection<string> itemKeys)
+    {
+        if (itemKeys.Count == 0)
+        {
+            return;
+        }
+
+        lock (gate)
+        {
+            var sync = settings.WorkloadTracker;
+            if (!sync.IsPaired || !snapshots.TryGetValue(SnapshotKey(provider, projectId), out var snapshot))
+            {
+                return;
+            }
+
+            var entry = EntryFor(snapshot, sync.Account, firstSeen: false);
+            if (!entry.FullSet)
+            {
+                entry.Changed.UnionWith(itemKeys);
+                entry.Removed.ExceptWith(itemKeys);
+                if (entry.Changed.Count > OutboxEntry.CollapseThreshold)
+                {
+                    entry.FullSet = true;
+                    entry.Changed.Clear();
+                }
+            }
+
+            entry.Version++;
+            entry.UpdatedAt = DateTimeOffset.Now;
+            var copy = entry.Copy();
+            Enqueue(target => target.SaveOutboxEntry(copy));
+        }
+    }
+
+    // ---- Workload Tracker: facts sent about items -------------------------------------------
+
+    /// <summary>The facts Workload Tracker last accepted for a project's items (<see cref="ItemFacts.Fingerprint"/>, by item key).</summary>
+    public IReadOnlyDictionary<string, string> SentFacts(string provider, string projectId)
+    {
+        lock (gate)
+        {
+            return sentFacts.TryGetValue(SnapshotKey(provider, projectId), out var items)
+                ? new Dictionary<string, string>(items, StringComparer.Ordinal)
+                : new Dictionary<string, string>(StringComparer.Ordinal);
+        }
+    }
+
+    /// <summary>
+    /// Records the facts Workload Tracker accepted for some of a project's items (a part it took), and
+    /// forgets those of items the project no longer has. Only while paired.
+    /// </summary>
+    public void RecordSentFacts(string provider, string projectId, IReadOnlyList<(string ItemKey, string Fingerprint)> sent)
+    {
+        lock (gate)
+        {
+            if (!settings.WorkloadTracker.IsPaired)
+            {
+                return;
+            }
+
+            var key = SnapshotKey(provider, projectId);
+            if (!sentFacts.TryGetValue(key, out var items))
+            {
+                items = new Dictionary<string, string>(StringComparer.Ordinal);
+                sentFacts[key] = items;
+            }
+
+            var changed = new List<(string ItemKey, string Fingerprint)>();
+            foreach (var (itemKey, fingerprint) in sent)
+            {
+                if (!items.TryGetValue(itemKey, out var kept) || kept != fingerprint)
+                {
+                    items[itemKey] = fingerprint;
+                    changed.Add((itemKey, fingerprint));
+                }
+            }
+
+            var present = snapshots.TryGetValue(key, out var snapshot)
+                ? snapshot.Items.Select(item => OutboxEntry.ItemKey(item.ItemType, item.ItemId)).ToHashSet(StringComparer.Ordinal)
+                : new HashSet<string>(StringComparer.Ordinal);
+            var forgotten = items.Keys.Where(itemKey => !present.Contains(itemKey)).ToList();
+            foreach (var itemKey in forgotten)
+            {
+                items.Remove(itemKey);
+            }
+
+            changed.RemoveAll(entry => !items.ContainsKey(entry.ItemKey));
+
+            if (changed.Count > 0 || forgotten.Count > 0)
+            {
+                var lower = provider.ToLowerInvariant();
+                Enqueue(target => target.SaveSentFacts(lower, projectId, changed, forgotten));
+            }
+        }
+    }
+
+    /// <summary>Forgets every sent fact (unpaired, or paired with another account): the next sends carry them all again.</summary>
+    public void ClearSentFacts()
+    {
+        lock (gate)
+        {
+            sentFacts.Clear();
+            Enqueue(target => target.ClearSentFacts());
+        }
     }
 
     /// <summary>The project's entry for this account; a new one sends everything when the project is new or the account changed.</summary>

@@ -368,6 +368,65 @@ public sealed class WorkloadTrackerAssignmentTests : IDisposable
         Assert.Equal([(39, true, true), (40, false, false), (41, true, false)], rows.Select(row => (row.PersonId, row.Active, row.Pending)));
     }
 
+    // ---- Marked complete in Workload Tracker ------------------------------------------------------------
+
+    private static JsonObject Mark(int personId, string itemId = "1", int trackerProjectId = 12) => new()
+    {
+        ["trackerProjectId"] = trackerProjectId,
+        ["providerProject"] = new JsonObject { ["provider"] = "helix", ["host"] = "project.helixteam.com", ["projectId"] = "H-1" },
+        ["itemType"] = "rfi", ["providerItemId"] = itemId, ["number"] = $"RFI-{int.Parse(itemId):D4}", ["revision"] = null,
+        ["personId"] = personId, ["personName"] = $"Person {personId}", ["markedByName"] = "Casey Lead", ["markedAt"] = "2026-10-07T16:00:00Z"
+    };
+
+    private IEnumerable<(HttpMethod Method, string Path, Dictionary<string, string> Headers, JsonNode? Body)> Reads =>
+        tracker.Requests.Where(request => request.Path == "/api/ca/assignments/" && request.Method == HttpMethod.Get);
+
+    [Fact]
+    public async Task MarksAreReadBackWithTheAssignmentsAndGoWhenTheTrackerStopsListingThem()
+    {
+        await BoundAsync();
+        tracker.Completions.Add(Mark(39));
+
+        await sync.SendAsync(readAssignments: true);
+
+        var mark = Assert.Single(store.Completions(12));
+        Assert.Equal(("helix", "H-1", "rfi", "1", "RFI-0001", (string?)null), (mark.Provider, mark.ProviderProjectId, mark.ItemType, mark.ProviderItemId, mark.Number, mark.Revision));
+        Assert.Equal((39, "Person 39", "Casey Lead"), (mark.PersonId, mark.PersonName, mark.MarkedByName));
+        Assert.Equal(new DateTimeOffset(2026, 10, 7, 16, 0, 0, TimeSpan.Zero), mark.MarkedAt);
+        Assert.Single(store.CompletionIndex()["helix|H-1|rfi|1"]);
+
+        // Unchanged: the tracker answers 304 and the mark is kept.
+        await sync.SendAsync(readAssignments: true);
+        Assert.True(Reads.Last().Headers.ContainsKey("If-None-Match"));
+        Assert.Single(store.Completions(12));
+
+        // Returned in Helix (or the mark taken back): the tracker stops listing it.
+        tracker.Completions.Clear();
+        await sync.SendAsync(readAssignments: true);
+        Assert.Empty(store.Completions(12));
+    }
+
+    [Fact]
+    public async Task MarksGoWhenTheProjectCantBeSeenOrOnDisconnecting()
+    {
+        await BoundAsync();
+        tracker.Completions.Add(Mark(39));
+        tracker.Completions.Add(Mark(40, itemId: "2"));
+        await sync.SendAsync(readAssignments: true);
+        Assert.Equal(2, store.Completions().Count);
+
+        tracker.HiddenProjects.Add(12);
+        await sync.SendAsync(readAssignments: true);
+        Assert.Empty(store.Completions());
+
+        tracker.HiddenProjects.Clear();
+        await sync.SendAsync(readAssignments: true);
+        Assert.Equal(2, store.Completions().Count);
+
+        await sync.DisconnectAsync();
+        Assert.Empty(store.Completions());
+    }
+
     private WorkloadAssignment Row(int personId, bool active, int minute) => new()
     {
         TrackerProjectId = 12,
