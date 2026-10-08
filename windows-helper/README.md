@@ -223,6 +223,35 @@ re-reads the project once more, so changes you made to other items in the panel 
 panel closes at once and that re-read finishes behind it.
 Procore items update at the next background sync.
 
+## Links from Workload Tracker
+
+The buttons in Workload Tracker's CA item lists (Download, Open folder, Open newest file, Verify folder,
+Set discipline, Show in CA Tracker) are links that open the item in CA Tracker on your PC:
+
+```
+smc-ca-tracker://item?provider=<helix|procore>&host=<site host>&project=<Helix/Procore project id>
+    &type=<rfi|submittal>&id=<item id>&number=<item number, URL-encoded>
+    &action=<details|open|folder|newest|download|verify|discipline>
+```
+
+- **Registration:** the installer registers `smc-ca-tracker://` for your Windows user
+  (`HKCU\Software\Classes\smc-ca-tracker`, removed on uninstall). CA Tracker registers it again at start
+  when it is missing or names a copy that is gone; a copy run with `--data-folder` never does.
+- **One CA Tracker:** when CA Tracker is already open, the new start hands it the link over a named pipe
+  only your Windows user can open, then closes; the open window comes forward (starting it again from the
+  Start menu just brings it forward). A `--data-folder` copy has its own pipe and never receives links.
+- **What happens:** CA Tracker leaves Settings or Project settings (saving or asking as usual), shows the
+  project linked to that Helix or Procore project (of a Base Build / Tenant Fit Out pair, the one whose part
+  includes the item) with every item and no search, selects the item and runs the button: the item
+  details, Open in Helix/Procore, its folder, its newest file, the download or verify window, or Set
+  discipline. Nothing changes a folder or a setting without the usual window. Download, verify and newest
+  file are for Helix items; for Procore the item details show instead. When the project or item isn't on
+  this PC, the footer says so ("CA Tracker doesn't have RFI 000303 on this PC yet. Sync the project, then
+  try again.").
+- **Safety:** a link is only read. Anything that isn't exactly this form — another scheme or host, a
+  provider, type or action not in the lists, ids other than 1–64 letters, digits and `. _ : -`, a host that
+  isn't a plain name, an item number over 64 characters or with control characters — is ignored.
+
 ## Test cases from real projects
 
 When CA Tracker gets whose court an item is in wrong, **Settings → General → Troubleshooting →

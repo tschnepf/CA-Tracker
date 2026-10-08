@@ -1801,11 +1801,14 @@ public partial class MainWindow : Window
     /// <summary>A row's "Show details": select it and show its details (closing the Helix page if it is open).</summary>
     private async void ShowRowDetails_Click(object sender, RoutedEventArgs e)
     {
-        if (sender is not FrameworkElement { DataContext: RowViewModel row })
+        if (sender is FrameworkElement { DataContext: RowViewModel row })
         {
-            return;
+            await ShowDetailsAsync(row);
         }
+    }
 
+    private async Task ShowDetailsAsync(RowViewModel row)
+    {
         ItemsGrid.SelectedItem = row;
         viewModel.ShowItemDetails = true;
         if (panelMode == PanelMode.Helix)
