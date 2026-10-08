@@ -53,6 +53,17 @@ public sealed class PeopleLinksTests : IDisposable
     }
 
     [Fact]
+    public void ATeamMemberSuggestsTheOneHelixPersonWithTheirName()
+    {
+        ProviderPerson[] people = [Person("Engineer, Pat", "c-1"), Person("Robin Reviewer", "c-2"), Person("Sam Second", "c-3"), Person("Sam Second", "c-4")];
+
+        Assert.Equal("c-1", PeopleLinks.SuggestPerson(Team[0], people)?.ProviderUserId);
+        Assert.Equal("c-2", PeopleLinks.SuggestPerson(Team[1], people)?.ProviderUserId); // "Robin A. Reviewer"
+        Assert.Null(PeopleLinks.SuggestPerson(Team[2], people)); // two Helix people called Sam Second
+        Assert.Null(PeopleLinks.SuggestPerson(Team[4], people));
+    }
+
+    [Fact]
     public void ThePeopleOfAProjectAreEveryHolderOnceWithTheirOpenItems()
     {
         var snapshot = new ProviderSnapshot

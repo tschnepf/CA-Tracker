@@ -126,6 +126,28 @@ public static class PeopleLinks
         return ends.Count == 1 ? ends[0] : null;
     }
 
+    /// <summary>
+    /// The other way round: the one Helix or Procore person whose name matches a Workload Tracker person,
+    /// by the same rules as <see cref="Suggest"/>. None when no one or more than one matches.
+    /// </summary>
+    public static ProviderPerson? SuggestPerson(TeamMember member, IReadOnlyList<ProviderPerson> people)
+    {
+        var words = Words(member.Name);
+        if (words.Count == 0)
+        {
+            return null;
+        }
+
+        var exact = people.Where(person => SameWords(Words(person.Name), words)).ToList();
+        if (exact.Count != 0)
+        {
+            return exact.Count == 1 ? exact[0] : null;
+        }
+
+        var ends = people.Where(person => SameEnds(Words(person.Name), words)).ToList();
+        return ends.Count == 1 ? ends[0] : null;
+    }
+
     /// <summary>A name as lowercase words without accents or punctuation; "Last, First" becomes "first last".</summary>
     public static List<string> Words(string? name)
     {

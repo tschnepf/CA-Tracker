@@ -62,8 +62,11 @@ On first start, the JSON files of earlier versions (`settings.json`, `snapshots\
 - **Workload Tracker (optional):** each person enters the tracker's address in Settings → Connections →
   Workload Tracker and presses **Connect…**; they sign in to the tracker in the window that opens and
   press **Connect CA Tracker** on its Profile page. CA Tracker then sends what it reads every minute
-  while it is open. In **Edit project**, **Workload Tracker project → Choose…** binds a project to an
-  existing, running tracker project (its items are then filed there); after that, **Assign to…** (an
+  while it is open. **Edit project** (a page in the main window: **Save** keeps it open, **Save and close**
+  and **Close** go back) has a **Workload Tracker** section: **Choose…** binds the project to an existing,
+  running tracker project (its items are then filed there), and **Team in Workload Tracker** links each
+  person on that project's team to who they are in Helix or Procore (matching names are suggested and
+  linked only when confirmed). After that, **Assign to…** (an
   item's right-click or ▾ menu, or the action bar for checked items) assigns people on that project's
   team, and **My work** lists items assigned to you first. **Settings → People** links the people seen
   in Helix and Procore to Workload Tracker people (names that match the project's team are suggested and

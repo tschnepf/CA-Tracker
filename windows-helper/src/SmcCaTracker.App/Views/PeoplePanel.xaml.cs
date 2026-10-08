@@ -62,7 +62,7 @@ public partial class PeoplePanel : UserControl
             .ToList();
         if (projects.Count == 0)
         {
-            Clear("Bind a project to its Workload Tracker project first: select it, then Edit project → Workload Tracker project → Choose….");
+            Clear("Bind a project to its Workload Tracker project first: select it, then Edit project → Workload Tracker → Choose….");
             return;
         }
 

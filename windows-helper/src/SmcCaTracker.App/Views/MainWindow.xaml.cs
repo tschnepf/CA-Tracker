@@ -107,6 +107,14 @@ public partial class MainWindow : Window
             }
         };
         SettingsView.BackRequested += (_, _) => ShowProjects();
+        ProjectView.SaveRequested += SaveProjectAsync;
+        ProjectView.CloseRequested += (_, _) => ShowProjects();
+        ProjectView.RemoveRequested += (_, projectId) =>
+        {
+            viewModel.RemoveProject(projectId);
+            ShowProjects();
+        };
+        Closing += MainWindow_Closing;
         SettingsView.SaveRequested += async edited =>
         {
             // Apply only what General settings edits, onto the current settings, so projects
@@ -1032,13 +1040,7 @@ public partial class MainWindow : Window
         {
             draft.Name = $"{draft.Name} {Phases.Short(phase)}";
         }
-        var window = new ProjectWindow(draft, isNew: true, viewModel) { Owner = this };
-        if (window.ShowDialog() == true && window.Result is not null)
-        {
-            viewModel.AddProject(window.Result);
-            viewModel.ApplyWorkloadBinding(window.Result.Id, window.BindingChanged, window.Binding, coverageChanged: false);
-            await viewModel.CompareAsync();
-        }
+        ShowProjectPage(draft, isNew: true);
     }
 
     /// <summary>
@@ -1081,21 +1083,49 @@ public partial class MainWindow : Window
             return;
         }
 
-        var before = viewModel.SelectedProject.Project;
-        var window = new ProjectWindow(viewModel.CloneProject(before), isNew: false, viewModel) { Owner = this };
-        if (window.ShowDialog() != true)
+        ShowProjectPage(viewModel.SelectedProject.Project, isNew: false);
+    }
+
+    /// <summary>Shows New project / Edit project in place of the project list.</summary>
+    private void ShowProjectPage(TrackerProject project, bool isNew)
+    {
+        ProjectView.Open(project, isNew, viewModel);
+        ProjectsPage.Visibility = Visibility.Collapsed;
+        SettingsView.Visibility = Visibility.Collapsed;
+        ProjectView.Visibility = Visibility.Visible;
+    }
+
+    /// <summary>The project page's Save: adds or updates the project, then binds it in Workload Tracker when that changed.</summary>
+    private async Task SaveProjectAsync(ProjectSaved saved)
+    {
+        if (saved.IsNew)
+        {
+            viewModel.AddProject(saved.Project);
+            viewModel.ApplyWorkloadBinding(saved.Project.Id, saved.BindingChanged, saved.Binding, coverageChanged: false);
+            await viewModel.CompareAsync();
+        }
+        else
+        {
+            await viewModel.UpdateProjectAsync(saved.Project);
+            viewModel.ApplyWorkloadBinding(saved.Project.Id, saved.BindingChanged, saved.Binding, saved.CoverageChanged);
+        }
+    }
+
+    private bool closingConfirmed;
+
+    /// <summary>Unsaved changes on the project page are saved or discarded before the window closes.</summary>
+    private async void MainWindow_Closing(object? sender, System.ComponentModel.CancelEventArgs e)
+    {
+        if (closingConfirmed || ProjectView.Visibility != Visibility.Visible || !ProjectView.IsDirty)
         {
             return;
         }
 
-        if (window.RemoveRequested)
+        e.Cancel = true;
+        if (await ProjectView.ConfirmLeaveAsync())
         {
-            viewModel.RemoveProject(viewModel.SelectedProject.Id);
-        }
-        else if (window.Result is not null)
-        {
-            await viewModel.UpdateProjectAsync(window.Result);
-            viewModel.ApplyWorkloadBinding(window.Result.Id, window.BindingChanged, window.Binding, MainViewModel.CoverageChanged(before, window.Result));
+            closingConfirmed = true;
+            Close();
         }
     }
 
@@ -1790,9 +1820,19 @@ public partial class MainWindow : Window
         ShowInfo($"The update couldn't start: {problem}");
     }
 
-    /// <summary>Shows the Settings page in place of the project list.</summary>
-    private void ShowSettings(SettingsSection section)
+    /// <summary>Shows the Settings page in place of the project list (or of the project page, once it may be left).</summary>
+    private async void ShowSettings(SettingsSection section)
     {
+        if (ProjectView.Visibility == Visibility.Visible)
+        {
+            if (!await ProjectView.ConfirmLeaveAsync())
+            {
+                return;
+            }
+
+            ProjectView.Visibility = Visibility.Collapsed;
+        }
+
         viewModel.RefreshAccounts();
         if (SettingsView.Visibility != Visibility.Visible)
         {
@@ -1810,6 +1850,7 @@ public partial class MainWindow : Window
     private void ShowProjects()
     {
         SettingsView.Visibility = Visibility.Collapsed;
+        ProjectView.Visibility = Visibility.Collapsed;
         ProjectsPage.Visibility = Visibility.Visible;
     }
 

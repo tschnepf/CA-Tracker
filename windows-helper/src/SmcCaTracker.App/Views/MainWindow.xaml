@@ -220,6 +220,9 @@
 
         <views:SettingsPage x:Name="SettingsView" Grid.Row="1" Visibility="Collapsed" />
 
+        <!-- New project / Edit project, in place of the project list like Settings. -->
+        <views:ProjectPage x:Name="ProjectView" Grid.Row="1" Visibility="Collapsed" />
+
         <Grid x:Name="ProjectsPage" Grid.Row="1" Margin="16">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition x:Name="ProjectsColumn" Width="290" MinWidth="220" MaxWidth="700" />
