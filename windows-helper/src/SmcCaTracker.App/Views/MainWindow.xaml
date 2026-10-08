@@ -613,7 +613,7 @@
                                 <Button Content="Cancel" Click="CancelRefresh_Click" Margin="8,0,0,0"
                                         ToolTip="Stops this sync (a background sync finishes by itself)"
                                         Visibility="{Binding CanCancelRefresh, Converter={StaticResource Visible}}" />
-                                <Button x:Name="ProjectSettingsButton" Content="{Binding EditButtonText}" Click="ProjectSettingsButton_Click" Margin="8,0,0,0"
+                                <Button x:Name="ProjectSettingsButton" Content="Project settings" Click="ProjectSettingsButton_Click" Margin="8,0,0,0"
                                         Visibility="{Binding CanEditProject, Converter={StaticResource Visible}}"
                                         ToolTip="This project's folder, Helix or Procore project, part of the job and Workload Tracker project (also on right-click in the project list)" />
                                 <Button x:Name="ProjectMenuButton" Content="⋯" Click="ProjectMenu_Click" Margin="4,0,0,0" Padding="10,6"

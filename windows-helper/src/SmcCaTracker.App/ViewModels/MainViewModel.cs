@@ -2375,7 +2375,7 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
     /// <summary>The CA folder and link (Details) describe one project, so they hide when several are shown.</summary>
     public bool CanShowProjectDetails => HasProject && !IsMultiProject;
 
-    /// <summary>Project settings / Choose CA folder acts on one project: hidden while several are shown (My work, Ctrl-click).</summary>
+    /// <summary>Project settings acts on one project: hidden while several are shown (My work, Ctrl-click).</summary>
     public bool CanEditProject => HasProject && !IsMultiProject;
 
     // ---- The header's counts by when items are due (each a quick Due filter) ----------------
@@ -2464,7 +2464,6 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
     /// <summary>The selected project is a Helix/Procore project with no CA folder chosen yet.</summary>
     public bool IsPlaceholder => SelectedProject?.IsPlaceholder == true;
     public bool CanEditConnection => HasProject && !IsPlaceholder;
-    public string EditButtonText => IsPlaceholder ? "Choose CA folder…" : "Project settings";
 
     public bool CanCreateTypeFolders => comparison is not null
         && HasCaFolder
@@ -2475,7 +2474,6 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
     public string BothTabText => TabText(ItemTypeChoices.Both);
 
     public string EmptyText => !HasProject ? ""
-        : IsPlaceholder && Rows.Count == 0 ? "Select Choose CA folder… to track this project's RFIs and Submittals against its CA folder."
         : !HasCaFolder && Rows.Count == 0 ? "Choose this project's CA folder in Project settings."
         : !IsConnected && Rows.Count == 0 ? "Link this project to its Helix or Procore project (Link… above), then Sync, to compare its items."
         : Rows.Count == 0 && HasItemSearch ? SearchEmptyText()
@@ -2723,7 +2721,9 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
 
         var ids = Settings.Projects.Select(project => project.Id).ToHashSet();
         AddProviderProjects(existing, ids);
-        foreach (var stale in Projects.Where(project => !ids.Contains(project.Id)).ToList())
+        var gone = Projects.Where(project => !ids.Contains(project.Id)).ToList();
+        HandOverSelection(gone);
+        foreach (var stale in gone)
         {
             Projects.Remove(stale);
             selectedProjects.Remove(stale);
@@ -2812,6 +2812,28 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
     }
 
     /// <summary>
+    /// A selected Helix/Procore project that was just set up leaves the list: the project now linked to it
+    /// takes its place in the selection before it goes, so the header (and an open Project settings) stay
+    /// on it rather than losing the selection.
+    /// </summary>
+    private void HandOverSelection(IReadOnlyCollection<ProjectViewModel> leaving)
+    {
+        ProjectViewModel? SetUpAs(ProjectViewModel project) => project.IsPlaceholder && leaving.Contains(project)
+            ? Projects.FirstOrDefault(candidate => !candidate.IsPlaceholder
+                && string.Equals(candidate.ProviderArchiveKey, project.ProviderArchiveKey, StringComparison.OrdinalIgnoreCase))
+            : null;
+
+        if (!selectedProjects.Any(project => SetUpAs(project) is not null))
+        {
+            return;
+        }
+
+        var primary = selectedProject is null ? null : SetUpAs(selectedProject) ?? selectedProject;
+        SetSelectedProjects(selectedProjects.Select(project => SetUpAs(project) ?? project).Where(project => !leaving.Contains(project)).ToList(),
+            primary);
+    }
+
+    /// <summary>
     /// A tracked project is archived and favorited by its own id, a project without a CA folder by its
     /// Helix/Procore project (see <see cref="ProjectViewModel.ArchiveKey"/>). A mark under the
     /// Helix/Procore key — from before 3.1, or set before the CA folder was chosen — moves to each tracked
@@ -2863,7 +2885,7 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
     {
         if (ProjectViewModel.IsPlaceholderId(edited.Id))
         {
-            // Not a tracker project yet: it is saved only once its CA folder is chosen.
+            // Not a tracker project: Project settings saves a new one in its place.
             return;
         }
 
@@ -4226,7 +4248,7 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
                      nameof(HasSetupChip), nameof(SetupIssuesText), nameof(CanShowProjectDetails), nameof(CanEditProject), nameof(HasDueChips),
                      nameof(LastSyncFailed), nameof(CanIncludeUnlabeled), nameof(IncludeUnlabeledText), nameof(MarkReturnedToolTip),
                      nameof(HasActiveFilters), nameof(CanClearFilters), nameof(HasHiddenSearchMatches),
-                     nameof(IsPlaceholder), nameof(CanEditConnection), nameof(EditButtonText),
+                     nameof(IsPlaceholder), nameof(CanEditConnection),
                      nameof(RfiTabText), nameof(SubmittalTabText), nameof(BothTabText), nameof(IsMultiProject), nameof(EmptyText), nameof(HasEmptyText), nameof(Comparison),
                      nameof(ShowsAssignments)
                  })

@@ -35,6 +35,9 @@ public partial class ProjectPage : UserControl
     private MainViewModel viewModel = null!;
     private TrackerProject project = new();
     private TrackerProject saved = new();
+
+    // The Helix or Procore project with no CA folder yet that the page is setting up: nothing is saved
+    // until something changes, and the first save makes it a tracker project.
     private ProjectViewModel? placeholder;
     private WorkloadBinding? savedBinding;
     private TrackerProjectChoice? chosenBinding;
@@ -86,13 +89,13 @@ public partial class ProjectPage : UserControl
     /// <summary>Remove from tracker was confirmed for this project.</summary>
     public event EventHandler<string>? RemoveRequested;
 
-    /// <summary>Set up a Helix or Procore project that has no CA folder yet.</summary>
-    public event EventHandler<ProjectViewModel>? SetUpRequested;
+    public bool IsDirty => !loading && Signature() != baseline;
 
-    public bool IsDirty => placeholder is null && !loading && Signature() != baseline;
-
-    /// <summary>The project (or not-set-up Helix/Procore project) whose settings are showing.</summary>
-    public string ShownId => placeholder?.Id ?? project.Id;
+    /// <summary>
+    /// True when the page shows this project's settings: a project in the list, or the Helix/Procore
+    /// project being set up (listed until its first save, then as the project saved in its place).
+    /// </summary>
+    public bool Shows(string? id) => id is not null && (id == project.Id || id == placeholder?.Id);
 
     /// <summary>Shows a project's settings (on a copy; saved changes go back through <see cref="SaveRequested"/>).</summary>
     public void Open(TrackerProject projectToEdit, MainViewModel model)
@@ -110,8 +113,6 @@ public partial class ProjectPage : UserControl
         teamRows = new List<TeamLinkRow>();
         TeamList.ItemsSource = null;
         TeamPanel.Visibility = Visibility.Collapsed;
-        NotSetUpPanel.Visibility = Visibility.Collapsed;
-        SettingsScroll.Visibility = Visibility.Visible;
         RemoveButton.Visibility = Visibility.Visible;
 
         NameBox.Text = project.Name;
@@ -142,20 +143,20 @@ public partial class ProjectPage : UserControl
         baseline = Signature();
     }
 
-    /// <summary>A Helix or Procore project with no CA folder yet: nothing to set until it is set up.</summary>
+    /// <summary>
+    /// A Helix or Procore project with no CA folder yet: its settings start from that project (already
+    /// linked, its part of the job from its name), and the first change saves it as a tracker project.
+    /// A CA folder isn't needed for that; it can be chosen here now or later.
+    /// </summary>
     public void OpenPlaceholder(ProjectViewModel notSetUp, MainViewModel model)
     {
-        autoSave.Stop();
         viewModel = model;
+        var draft = new TrackerProject { Name = notSetUp.Name, Connection = Clone(notSetUp.Project).Connection };
+        draft.Scope.Phase = Phases.Detect(notSetUp.Name) ?? ProjectPhase.Whole;
+        Open(draft, model);
         placeholder = notSetUp;
-        teamVersion++;
-        TitleText.Text = $"Project settings — {notSetUp.Name}";
-        NotSetUpText.Text = $"{notSetUp.Name} isn't set up in CA Tracker yet: it has no CA folder. Set it up to choose its folder, "
-            + "its part of the job and its Workload Tracker project.";
-        NotSetUpPanel.Visibility = Visibility.Visible;
-        SettingsScroll.Visibility = Visibility.Collapsed;
         RemoveButton.Visibility = Visibility.Collapsed;
-        SetStatus("", null);
+        SetStatus("Not set up in CA Tracker yet: it's set up as soon as you change something here, CA folder or not.", null);
     }
 
     /// <summary>Every field the page edits, to tell whether anything changed since it was opened or saved.</summary>
@@ -168,7 +169,7 @@ public partial class ProjectPage : UserControl
     /// <summary>Something changed: it is saved a moment later, once typing pauses.</summary>
     private void OnEdited()
     {
-        if (loading || placeholder is not null)
+        if (loading)
         {
             return;
         }
@@ -262,6 +263,13 @@ public partial class ProjectPage : UserControl
         saved = Clone(result);
         savedBinding = viewModel.WorkloadBindingFor(project.Id);
         baseline = signature;
+        if (placeholder is not null)
+        {
+            // Set up: from now on it is the tracker project saved in the placeholder's place.
+            placeholder = null;
+            RemoveButton.Visibility = Visibility.Visible;
+        }
+
         TitleText.Text = $"Project settings — {result.Name}";
         ShowBinding();
         SetStatus($"All changes saved · {DateTime.Now:t}", "SuccessBrush");
@@ -308,7 +316,15 @@ public partial class ProjectPage : UserControl
             return false;
         }
 
-        Open(saved, viewModel);
+        if (placeholder is { } notSetUp)
+        {
+            OpenPlaceholder(notSetUp, viewModel);
+        }
+        else
+        {
+            Open(saved, viewModel);
+        }
+
         return true;
     }
 
@@ -323,14 +339,6 @@ public partial class ProjectPage : UserControl
         if (await LeaveAsync())
         {
             CloseRequested?.Invoke(this, EventArgs.Empty);
-        }
-    }
-
-    private void SetUp_Click(object sender, RoutedEventArgs e)
-    {
-        if (placeholder is not null)
-        {
-            SetUpRequested?.Invoke(this, placeholder);
         }
     }
 
@@ -372,12 +380,15 @@ public partial class ProjectPage : UserControl
             problems.Add("Give the project a name.");
         }
 
-        if (string.IsNullOrWhiteSpace(FolderBox.Text))
+        // A CA folder is optional: without one the project's items show without folders.
+        var sameFolder = string.IsNullOrWhiteSpace(FolderBox.Text) ? null
+            : viewModel.Settings.Projects.FirstOrDefault(other => other.Id != project.Id && !IsOtherPart(other)
+                && string.Equals(Path.TrimEndingDirectorySeparator(other.CaFolder), Path.TrimEndingDirectorySeparator(FolderBox.Text), StringComparison.OrdinalIgnoreCase));
+        if (sameFolder is { Connection: null } && project.Connection is not null)
         {
-            problems.Add("Choose the project's CA folder.");
+            problems.Add($"This CA folder belongs to \"{sameFolder.Name}\", which isn't linked to Helix or Procore. If it's the same job, link \"{sameFolder.Name}\" to {project.Connection.Label} in its Project settings instead.");
         }
-        else if (viewModel.Settings.Projects.Any(other => other.Id != project.Id && !IsOtherPart(other)
-                     && string.Equals(Path.TrimEndingDirectorySeparator(other.CaFolder), Path.TrimEndingDirectorySeparator(FolderBox.Text), StringComparison.OrdinalIgnoreCase)))
+        else if (sameFolder is not null)
         {
             problems.Add("Another project already uses this CA folder. If they are the Base Build and Tenant Fit Out parts of one job, set each project's part below.");
         }

@@ -119,7 +119,6 @@ public partial class MainWindow : Window
             ShowItemList();
             viewModel.RemoveProject(projectId);
         };
-        ProjectView.SetUpRequested += async (_, notSetUp) => await CreateProjectAsync(notSetUp);
         Closing += MainWindow_Closing;
         SettingsView.SaveRequested += async edited =>
         {
@@ -312,7 +311,6 @@ public partial class MainWindow : Window
 
         static Visibility Show(bool value) => value ? Visibility.Visible : Visibility.Collapsed;
         var count = selected.Count;
-        ProjectSettingsMenu.Header = count == 1 && selected[0].IsPlaceholder ? "Set up project (choose CA folder)…" : "Project settings";
         ProjectSettingsMenu.Visibility = Show(count == 1);
         ProjectSettingsSeparator.Visibility = Show(count == 1);
         ArchiveProjectMenu.Header = count > 1 ? $"Archive these {count} projects (hide and stop syncing)" : "Archive (hide and stop syncing)";
@@ -969,19 +967,15 @@ public partial class MainWindow : Window
         view.LiveSortingProperties.Add(nameof(ProjectViewModel.Name));
     }
 
-    private async void NewProject_Click(object sender, RoutedEventArgs e) => await CreateProjectAsync(null);
+    private async void NewProject_Click(object sender, RoutedEventArgs e) => await CreateProjectAsync();
 
     /// <summary>
-    /// Creates a tracker project from a chosen CA folder. With <paramref name="fromProvider"/> (a Helix or
-    /// Procore project listed under "No CA folder yet") the new project is already connected to it.
+    /// Creates a tracker project from a chosen CA folder. (A Helix or Procore project listed under "No CA
+    /// folder yet" is set up in its Project settings instead.)
     /// </summary>
-    private async Task CreateProjectAsync(ProjectViewModel? fromProvider)
+    private async Task CreateProjectAsync()
     {
-        var dialog = new OpenFolderDialog
-        {
-            Title = fromProvider is null ? "Choose the new project's CA folder" : $"Choose the CA folder for {fromProvider.Name}",
-            Multiselect = false
-        };
+        var dialog = new OpenFolderDialog { Title = "Choose the new project's CA folder", Multiselect = false };
         // Start beside the projects already tracked (e.g. the client folder that holds the selected one).
         if (NearProjects() is { } start)
         {
@@ -994,36 +988,10 @@ public partial class MainWindow : Window
         }
 
         // Creating a project only records it in the tracker's settings; nothing in the folder changes.
-        var draft = new TrackerProject
-        {
-            Name = fromProvider?.Name ?? TrackerProject.SuggestName(dialog.FolderName),
-            CaFolder = dialog.FolderName,
-            Connection = fromProvider is null ? null : viewModel.CloneProject(fromProvider.Project).Connection
-        };
-        var phase = (fromProvider is null ? null : Phases.Detect(fromProvider.Name)) ?? Phases.SuggestFromPath(dialog.FolderName);
+        var draft = new TrackerProject { Name = TrackerProject.SuggestName(dialog.FolderName), CaFolder = dialog.FolderName };
+        var phase = Phases.SuggestFromPath(dialog.FolderName);
         var existing = viewModel.Settings.Projects.FirstOrDefault(project =>
             string.Equals(Path.TrimEndingDirectorySeparator(project.CaFolder), Path.TrimEndingDirectorySeparator(dialog.FolderName), StringComparison.OrdinalIgnoreCase));
-        if (existing is not null && fromProvider is not null && existing.Connection is null)
-        {
-            // The folder is already tracked but not connected: connect it rather than splitting it.
-            var connect = MessageBox.Show(
-                this,
-                $"That CA folder already belongs to \"{existing.Name}\", which isn't linked to Helix or Procore.\n\nLink \"{existing.Name}\" to {fromProvider.ConnectionText}?",
-                "CA folder already used",
-                MessageBoxButton.YesNo,
-                MessageBoxImage.Question,
-                MessageBoxResult.Yes);
-            if (connect == MessageBoxResult.Yes)
-            {
-                var updated = viewModel.CloneProject(existing);
-                updated.Connection = viewModel.CloneProject(fromProvider.Project).Connection;
-                await viewModel.UpdateProjectAsync(updated);
-                viewModel.SelectedProject = viewModel.Projects.FirstOrDefault(project => project.Id == updated.Id);
-            }
-
-            return;
-        }
-
         if (existing is not null)
         {
             var answer = MessageBox.Show(
@@ -1046,12 +1014,9 @@ public partial class MainWindow : Window
                 _ => ProjectPhase.TenantFitOut
             };
             draft.Scope.FilterFolders = true;
-            if (fromProvider is null)
-            {
-                // Same Helix/Procore project for both parts: keep only this part's items.
-                draft.Connection = existing.Connection is null ? null : viewModel.CloneProject(existing).Connection;
-                draft.Scope.FilterItems = existing.Connection is not null;
-            }
+            // Same Helix/Procore project for both parts: keep only this part's items.
+            draft.Connection = existing.Connection is null ? null : viewModel.CloneProject(existing).Connection;
+            draft.Scope.FilterItems = existing.Connection is not null;
         }
 
         draft.Scope.Phase = phase;
@@ -1093,20 +1058,9 @@ public partial class MainWindow : Window
         return null;
     }
 
-    private async void EditProject_Click(object sender, RoutedEventArgs e)
+    private void EditProject_Click(object sender, RoutedEventArgs e)
     {
         SetupPopup.IsOpen = false;
-        if (viewModel.SelectedProject is null)
-        {
-            return;
-        }
-
-        if (viewModel.SelectedProject.IsPlaceholder)
-        {
-            await CreateProjectAsync(viewModel.SelectedProject);
-            return;
-        }
-
         ShowProjectSettings();
     }
 
@@ -1118,11 +1072,7 @@ public partial class MainWindow : Window
     /// <summary>The header's Project settings: opens the selected project's settings, or goes back to its items.</summary>
     private async void ProjectSettingsButton_Click(object sender, RoutedEventArgs e)
     {
-        if (viewModel.SelectedProject is { IsPlaceholder: true } placeholder)
-        {
-            await CreateProjectAsync(placeholder);
-        }
-        else if (editingProject)
+        if (editingProject)
         {
             if (await ProjectView.LeaveAsync())
             {
@@ -1136,16 +1086,10 @@ public partial class MainWindow : Window
     }
 
     /// <summary>Project settings from the project list's right-click menu (or ⋯).</summary>
-    private async void ProjectSettingsMenu_Click(object sender, RoutedEventArgs e)
+    private void ProjectSettingsMenu_Click(object sender, RoutedEventArgs e)
     {
         if (ProjectsInSelection() is [var chosen])
         {
-            if (chosen.IsPlaceholder)
-            {
-                await CreateProjectAsync(chosen);
-                return;
-            }
-
             viewModel.SelectedProject = chosen;
             ShowProjectSettings();
         }
@@ -1201,7 +1145,7 @@ public partial class MainWindow : Window
         try
         {
             var target = viewModel.SelectedProject;
-            if (target?.Id == ProjectView.ShownId && !viewModel.IsMultiProject)
+            if (ProjectView.Shows(target?.Id) && !viewModel.IsMultiProject)
             {
                 return;
             }
@@ -1209,7 +1153,7 @@ public partial class MainWindow : Window
             if (!await ProjectView.LeaveAsync())
             {
                 // A change that can't be saved yet: stay on it.
-                viewModel.SelectedProject = viewModel.Projects.FirstOrDefault(project => project.Id == ProjectView.ShownId) ?? viewModel.SelectedProject;
+                viewModel.SelectedProject = viewModel.Projects.FirstOrDefault(project => ProjectView.Shows(project.Id)) ?? viewModel.SelectedProject;
                 return;
             }
 
@@ -1228,7 +1172,7 @@ public partial class MainWindow : Window
         }
 
         // Another project was clicked while that one was being saved: follow it too.
-        if (editingProject && !viewModel.IsMultiProject && viewModel.SelectedProject is { } now && now.Id != ProjectView.ShownId)
+        if (editingProject && !viewModel.IsMultiProject && viewModel.SelectedProject is { } now && !ProjectView.Shows(now.Id))
         {
             await FollowSelectionAsync();
         }
@@ -1256,6 +1200,14 @@ public partial class MainWindow : Window
     {
         await viewModel.UpdateProjectAsync(saved.Project);
         viewModel.ApplyWorkloadBinding(saved.Project.Id, saved.BindingChanged, saved.Binding, saved.CoverageChanged);
+
+        // A Helix/Procore project set up here and unlinked in the same change stays listed as it was:
+        // select the project just saved, whose settings these are. (Still linked, the selection moved already.)
+        if (viewModel.SelectedProject is { IsPlaceholder: true } selected && ProjectView.Shows(selected.Id)
+            && viewModel.Projects.FirstOrDefault(project => project.Id == saved.Project.Id) is { } setUp)
+        {
+            viewModel.SelectedProject = setUp;
+        }
     }
 
     private bool closingConfirmed;

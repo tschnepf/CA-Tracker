@@ -47,7 +47,8 @@ public sealed class ProjectViewModel : ObservableObject
 
     /// <summary>
     /// A Helix or Procore project you can open that isn't set up in the tracker yet. It is listed
-    /// under "No CA folder yet" and is never saved until you choose its CA folder.
+    /// under "No CA folder yet" and is never saved: the first change in its Project settings saves a
+    /// tracker project linked to it in its place.
     /// </summary>
     public static ProjectViewModel ForProviderProject(CatalogProject source)
     {

@@ -135,8 +135,10 @@ The list on the left has two sections:
 - **No CA folder yet**: every Helix or Procore project CA Tracker has seen (from signing in to Helix,
   from looking through your Procore companies, and from syncs) that isn't tracked yet. Procore
   ones are synced in the background like tracked ones, so their items show without a CA folder; the
-  subtitle names the company hosting each one. Select one and choose **Choose CA folder…** to start
-  tracking it; it moves up into the first section, already linked.
+  subtitle names the company hosting each one. Select one and open **Project settings** to set it up:
+  the first change there (its Workload Tracker project, its company, its part of the job, or its CA
+  folder) makes it a tracked project, already linked. It moves up into the first section once its CA
+  folder is chosen, which can come later.
 
 **Find a project** (Ctrl+F) above the list narrows it by name or hosting company; Esc clears it.
 
