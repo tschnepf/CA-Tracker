@@ -27,6 +27,7 @@ public class ItemLinkTests
     [InlineData("download")]
     [InlineData("verify")]
     [InlineData("discipline")]
+    [InlineData("rescan")]
     public void EveryButtonOfTheWebListIsAnAction(string action)
     {
         Assert.Equal(action, ItemLink.Parse(Valid.Replace("action=details", $"action={action}"))?.Action);

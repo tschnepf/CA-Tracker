@@ -227,6 +227,18 @@ public partial class MainWindow
             case ItemLinkActions.Discipline:
                 await ChooseDisciplineAsync(new[] { row }, row.Row.Folder?.Name ?? $"{row.Number} - {row.Title}");
                 break;
+            case ItemLinkActions.Rescan:
+                if (row.CanRescanFolder)
+                {
+                    await viewModel.RescanFolderAsync(row);
+                }
+                else
+                {
+                    await ShowDetailsAsync(row);
+                    viewModel.StatusMessage = $"{label}: {row.Project.Name} has no CA folder yet, so there is no folder to rescan. Choose one in Project settings.";
+                }
+
+                break;
             default:
                 await ShowDetailsAsync(row);
                 break;

@@ -598,6 +598,9 @@ public sealed class RowViewModel : ObservableObject
     /// <summary>Identifies the row across list rebuilds: its project, type, and folder or item.</summary>
     public string Key => $"{Project.Id}|{Row.ItemType}|{Row.Folder?.FullPath ?? "item:" + Row.Item?.ItemId}";
 
+    /// <summary>Identifies the row's item across list rebuilds, also once its folder is found, moved or renamed (null for a folder with no item).</summary>
+    public string? ItemKey => Row.Item is { } item ? $"{Project.Id}|{Row.ItemType}|item:{item.ItemId}" : null;
+
     /// <summary>The details pane's first line: "RFI 000252 · Aligned CMH03 · Helix".</summary>
     public string DetailsCrumb => string.Join(" · ", new[] { HasItem ? $"{TypeSingular} {Number}" : $"{TypeSingular} folder", ProjectName, Project.ProviderLabel }
         .Where(part => part.Length > 0));

@@ -230,12 +230,12 @@ Procore items update at the next background sync.
 ## Links from Workload Tracker
 
 The buttons in Workload Tracker's CA item lists (Download, Open folder, Open newest file, Verify folder,
-Set discipline, Show in CA Tracker) are links that open the item in CA Tracker on your PC:
+Rescan folder, Set discipline, Show in CA Tracker) are links that open the item in CA Tracker on your PC:
 
 ```
 smc-ca-tracker://item?provider=<helix|procore>&host=<site host>&project=<Helix/Procore project id>
     &type=<rfi|submittal>&id=<item id>&number=<item number, URL-encoded>
-    &action=<details|open|folder|newest|download|verify|discipline>
+    &action=<details|open|folder|newest|download|verify|discipline|rescan>
 ```
 
 - **Registration:** the installer registers `smc-ca-tracker://` for your Windows user
@@ -247,9 +247,9 @@ smc-ca-tracker://item?provider=<helix|procore>&host=<site host>&project=<Helix/P
 - **What happens:** CA Tracker leaves Settings or Project settings (saving or asking as usual), shows the
   project linked to that Helix or Procore project (of a Base Build / Tenant Fit Out pair, the one whose part
   includes the item) with every item and no search, selects the item and runs the button: the item
-  details, Open in Helix/Procore, its folder, its newest file, the download or verify window, or Set
-  discipline. Nothing changes a folder or a setting without the usual window. Download, verify and newest
-  file are for Helix items; for Procore the item details show instead. When the project or item isn't on
+  details, Open in Helix/Procore, its folder, its newest file, the download or verify window, Set
+  discipline, or Rescan folder (the status bar says what it found). Nothing changes a folder or a setting
+  without the usual window. When the project or item isn't on
   this PC, the status bar along the bottom of the window says so ("CA Tracker doesn't have RFI 000303 on
   this PC yet. Sync the project, then try again.").
 - **Safety:** a link is only read. Anything that isn't exactly this form — another scheme or host, a

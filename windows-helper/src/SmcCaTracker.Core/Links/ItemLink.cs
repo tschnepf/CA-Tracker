@@ -14,8 +14,9 @@ public static class ItemLinkActions
     public const string Download = "download";
     public const string Verify = "verify";
     public const string Discipline = "discipline";
+    public const string Rescan = "rescan";
 
-    public static readonly IReadOnlyList<string> All = [Details, Open, Folder, Newest, Download, Verify, Discipline];
+    public static readonly IReadOnlyList<string> All = [Details, Open, Folder, Newest, Download, Verify, Discipline, Rescan];
 }
 
 /// <summary>

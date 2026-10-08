@@ -1619,8 +1619,10 @@ public partial class MainWindow : Window
     private GridLength helixPanelWidth = new(0.9, GridUnitType.Star);
     private GridLength detailsPanelWidth = new(360);
 
-    // The selected row, by key, so the details follow it when the list is rebuilt (a sync, a folder change).
+    // The selected row, by key, so the details follow it when the list is rebuilt (a sync, a folder change);
+    // by its item too, for when its folder was found, moved or renamed (a new key).
     private string? selectedRowKey;
+    private string? selectedItemKey;
 
     /// <summary>Shows the Helix page beside the list, or when it closes, the details (if on) or nothing.</summary>
     private void ShowItemPanel(bool show) =>
@@ -1672,6 +1674,7 @@ public partial class MainWindow : Window
             if (SelectedRow() is { } row)
             {
                 selectedRowKey = row.Key;
+                selectedItemKey = row.ItemKey;
                 if (panelMode == PanelMode.Details)
                 {
                     DetailsPanel.Show(row);
@@ -1728,7 +1731,8 @@ public partial class MainWindow : Window
             return;
         }
 
-        var again = selectedRowKey is null ? null : viewModel.Rows.FirstOrDefault(row => row.Key == selectedRowKey);
+        var again = (selectedRowKey is null ? null : viewModel.Rows.FirstOrDefault(row => row.Key == selectedRowKey))
+            ?? (selectedItemKey is null ? null : viewModel.Rows.FirstOrDefault(row => row.ItemKey == selectedItemKey));
         if (again is not null)
         {
             ItemsGrid.SelectedItem = again;
