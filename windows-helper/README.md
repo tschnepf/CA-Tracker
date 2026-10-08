@@ -360,7 +360,10 @@ project it also reads the project:
 - **Procore:** in the background too, reading **every** RFI and Submittal (not just the rows a list
   shows), with your Procore sign-in: a hidden Procore page asks Procore's own REST service
   for the lists, as Procore's web pages do. It sees exactly what you can see in Procore — across every
-  company you belong to — and nothing has to be installed in any company's Procore account. A tool
+  company you belong to — and nothing has to be installed in any company's Procore account. The
+  Procore sign-in lasts when CA Tracker closes: Procore's own sign-in ends when a browser closes, so
+  after each successful read CA Tracker keeps it in the built-in browser's profile for 14 days (Procore
+  still decides when it ends; then you are asked to sign in again). A tool
   you can't see on a project (say, Submittals) is left as it was rather than emptied. A project is
   read in full the first time and once a week; other syncs ask only for items changed since the last
   read, and every 12 hours they also ask how many RFIs and Submittals Procore has (one row each). When
