@@ -33,7 +33,7 @@ public partial class SettingsPage : UserControl
         InitializeComponent();
 
         // Every edit updates Save/Discard and checks the field at once, rather than only on Save.
-        foreach (var box in new[] { RfiFolderBox, SubmittalFolderBox, ReturnedFolderBox, AlwaysStatusesBox, NeverStatusesBox, SyncIntervalBox, TimeoutBox })
+        foreach (var box in new[] { RfiFolderBox, SubmittalFolderBox, ReturnedFolderBox, AlwaysStatusesBox, NeverStatusesBox, WorkHoursIntervalBox, OffHoursIntervalBox, TimeoutBox })
         {
             box.TextChanged += (_, _) => OnEdited();
         }
@@ -76,7 +76,7 @@ public partial class SettingsPage : UserControl
         var model = DataContext as MainViewModel;
         var foldersLocked = model?.AreFoldersLocked == true;
         RfiFolderBox.IsEnabled = SubmittalFolderBox.IsEnabled = ReturnedFolderBox.IsEnabled = !foldersLocked;
-        SyncIntervalBox.IsEnabled = model?.IsSyncLocked != true;
+        WorkHoursIntervalBox.IsEnabled = OffHoursIntervalBox.IsEnabled = model?.IsSyncLocked != true;
         RfiFolderBox.Text = settings.Folders.RfiFolder;
         SubmittalFolderBox.Text = settings.Folders.SubmittalFolder;
         ReturnedFolderBox.Text = settings.Folders.ReturnedFolder;
@@ -89,7 +89,8 @@ public partial class SettingsPage : UserControl
 
         CloseWindowBox.IsChecked = settings.Browser.CloseWindowWhenDone;
         AutoSyncBox.IsChecked = settings.Sync.AutoSync;
-        SyncIntervalBox.Text = settings.Sync.IntervalMinutes.ToString();
+        WorkHoursIntervalBox.Text = settings.Sync.WorkHoursIntervalMinutes.ToString();
+        OffHoursIntervalBox.Text = settings.Sync.OffHoursIntervalMinutes.ToString();
         TimeoutBox.Text = settings.Browser.TimeoutSeconds.ToString();
         loading = false;
 
@@ -101,7 +102,7 @@ public partial class SettingsPage : UserControl
     /// <summary>Everything General settings edits (but the theme, which saves itself), to tell whether it changed.</summary>
     private string CurrentFields() => string.Join("\u001f",
         RfiFolderBox.Text, SubmittalFolderBox.Text, ReturnedFolderBox.Text, AlwaysStatusesBox.Text, NeverStatusesBox.Text,
-        SyncIntervalBox.Text, TimeoutBox.Text, WhenNotHeldBox.IsChecked, WhenClosedBox.IsChecked, WhenComingUpBox.IsChecked,
+        WorkHoursIntervalBox.Text, OffHoursIntervalBox.Text, TimeoutBox.Text, WhenNotHeldBox.IsChecked, WhenClosedBox.IsChecked, WhenComingUpBox.IsChecked,
         AutoSyncBox.IsChecked, CloseWindowBox.IsChecked);
 
     private bool IsDirty => !loading && editing is not null && CurrentFields() != savedFields;
@@ -135,9 +136,11 @@ public partial class SettingsPage : UserControl
 
         var folderProblems = Folders().Validate().ToList();
         Show(FoldersError, folderProblems.Count == 0 ? null : string.Join(" ", folderProblems));
-        Show(IntervalError, int.TryParse(SyncIntervalBox.Text.Trim(), out var interval) && interval is >= 5 and <= 240
-            ? null
-            : "Enter 5 to 240 minutes.");
+        Show(IntervalError, !InRange(WorkHoursIntervalBox, SyncSettings.WorkHoursMinimum, SyncSettings.WorkHoursMaximum)
+            ? $"Enter {SyncSettings.WorkHoursMinimum} to {SyncSettings.WorkHoursMaximum} minutes for 7 am to 5 pm."
+            : !InRange(OffHoursIntervalBox, SyncSettings.OffHoursMinimum, SyncSettings.OffHoursMaximum)
+                ? $"Enter {SyncSettings.OffHoursMinimum} to {SyncSettings.OffHoursMaximum} minutes for other times."
+                : null);
         Show(TimeoutError, int.TryParse(TimeoutBox.Text.Trim(), out var timeout) && timeout is >= 30 and <= 1800
             ? null
             : "Enter 30 to 1800 seconds.");
@@ -146,6 +149,9 @@ public partial class SettingsPage : UserControl
         ErrorText.Text = valid ? "" : "Fix the fields marked in red to save.";
         return valid;
     }
+
+    private static bool InRange(TextBox box, int minimum, int maximum) =>
+        int.TryParse(box.Text.Trim(), out var value) && value >= minimum && value <= maximum;
 
     private FolderLayout Folders() => new()
     {
@@ -402,7 +408,8 @@ public partial class SettingsPage : UserControl
         }
 
         int.TryParse(TimeoutBox.Text.Trim(), out var timeout);
-        int.TryParse(SyncIntervalBox.Text.Trim(), out var interval);
+        int.TryParse(WorkHoursIntervalBox.Text.Trim(), out var workHours);
+        int.TryParse(OffHoursIntervalBox.Text.Trim(), out var offHours);
         editing.Theme = SelectedTheme();
         editing.Folders = Folders();
         editing.Returned.WhenNoCompanyHolder = WhenNotHeldBox.IsChecked == true;
@@ -416,7 +423,8 @@ public partial class SettingsPage : UserControl
             TimeoutSeconds = timeout
         };
         editing.Sync.AutoSync = AutoSyncBox.IsChecked == true;
-        editing.Sync.IntervalMinutes = interval;
+        editing.Sync.WorkHoursIntervalMinutes = workHours;
+        editing.Sync.OffHoursIntervalMinutes = offHours;
 
         if (SaveRequested is not null)
         {

@@ -4,6 +4,7 @@ using Microsoft.Web.WebView2.Core;
 using Microsoft.Web.WebView2.Wpf;
 using SmcCaTracker.Core.Diagnostics;
 using SmcCaTracker.Core.Models;
+using SmcCaTracker.Core.Procore;
 using SmcCaTracker.Core.Refresh;
 using SmcCaTracker.Core.Storage;
 
@@ -74,6 +75,12 @@ public sealed class ProcoreDownloadSession : IItemFilesSession
         await gate.WaitAsync(closing);
         try
         {
+            // While Procore has asked CA Tracker to slow down (background sync or an earlier download), ask nothing.
+            if (ProcoreThrottle.Shared.WaitingUntil(DateTimeOffset.Now) is { } waitUntil)
+            {
+                throw new InvalidOperationException(ProcoreThrottle.WaitText(waitUntil));
+            }
+
             var server = Server(host);
             if (!IsOpen(server))
             {
@@ -88,6 +95,17 @@ public sealed class ProcoreDownloadSession : IItemFilesSession
                 await OpenAsync(server, $"https://{server}/");
                 await OpenAsync(server, DataUrl(server));
                 answer = await AskAsync(itemId, itemType, projectId, accountId);
+            }
+
+            if (ProcoreThrottle.IsSlowDown(Status(answer)))
+            {
+                var retryAfter = answer.ValueKind == JsonValueKind.Object && answer.TryGetProperty("retryAfter", out var seconds)
+                    && seconds.ValueKind == JsonValueKind.Number && seconds.TryGetDouble(out var wait)
+                    ? wait
+                    : (double?)null;
+                var until = ProcoreThrottle.Shared.SlowDown(DateTimeOffset.Now, retryAfter);
+                AppLog.Warn("download", $"Procore answered {Status(answer)} for {itemType} {itemId}; not asking again until {until.ToLocalTime():t}.");
+                throw new InvalidOperationException(ProcoreThrottle.WaitText(until));
             }
 
             if (TypeOf(answer) != "procore-item-files")

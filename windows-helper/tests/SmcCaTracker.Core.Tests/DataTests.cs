@@ -31,7 +31,7 @@ public class DatabaseTests
         {
             Theme = ThemePreference.Dark,
             Folders = new FolderLayout { RfiFolder = "RFIs", SubmittalFolder = "Submittals", ReturnedFolder = "~Returned" },
-            Sync = new SyncSettings { AutoSync = false, IntervalMinutes = 30 },
+            Sync = new SyncSettings { AutoSync = false, WorkHoursIntervalMinutes = 30, OffHoursIntervalMinutes = 240 },
             Projects = { project }
         };
     }
@@ -113,7 +113,8 @@ public class DatabaseTests
             var state = database.Load();
             Assert.Equal(ThemePreference.Dark, state.Settings.Theme);
             Assert.False(state.Settings.Sync.AutoSync);
-            Assert.Equal(30, state.Settings.Sync.IntervalMinutes);
+            Assert.Equal(30, state.Settings.Sync.WorkHoursIntervalMinutes);
+            Assert.Equal(240, state.Settings.Sync.OffHoursIntervalMinutes);
             var project = Assert.Single(state.Settings.Projects);
             Assert.Equal("CMH04 BB", project.Name);
             Assert.Equal("helix-1", project.Connection?.ProjectId);

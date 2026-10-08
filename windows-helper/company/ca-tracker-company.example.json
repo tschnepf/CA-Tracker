@@ -13,7 +13,8 @@
     { "code": "Plbg", "aliases": ["PLBG", "PLUMBING"] },
     { "code": "Security", "aliases": ["SECURITY"] }
   ],
-  "syncIntervalMinutes": 15,
+  "syncWorkHoursMinutes": 60,
+  "syncOffHoursMinutes": 180,
   "updateFeed": "\\\\server\\apps\\ca-tracker",
   "locked": ["folders", "disciplines"]
 }

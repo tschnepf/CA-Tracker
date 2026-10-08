@@ -102,7 +102,10 @@ public sealed class SyncRun
     public string Provider { get; set; } = "";
     public string ProjectId { get; set; } = "";
 
-    /// <summary>"full" (every item read) or "changes" (only items changed since the last read).</summary>
+    /// <summary>
+    /// "full" (every item read), "changes" (only items changed since the last read) or, for Procore,
+    /// "checked" (only changed items, and the counts in Procore matched the saved list).
+    /// </summary>
     public string Mode { get; set; } = "full";
     public DateTimeOffset StartedAt { get; set; }
     public DateTimeOffset? FinishedAt { get; set; }

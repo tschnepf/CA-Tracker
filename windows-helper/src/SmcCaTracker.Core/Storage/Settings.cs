@@ -106,17 +106,38 @@ public sealed class WorkloadBinding
     public WorkloadBinding Copy() => (WorkloadBinding)MemberwiseClone();
 }
 
-/// <summary>Keeping Helix items up to date in the background.</summary>
+/// <summary>Keeping Helix and Procore items up to date in the background.</summary>
 public sealed class SyncSettings
 {
-    /// <summary>Re-read tracked Helix projects in the background while the app is open (only changed items are read).</summary>
+    /// <summary>Working hours, in local time: from 7 am until 5 pm, every day.</summary>
+    public const int WorkdayStartHour = 7;
+    public const int WorkdayEndHour = 17;
+
+    public const int WorkHoursMinimum = 15;
+    public const int WorkHoursMaximum = 240;
+    public const int OffHoursMinimum = 30;
+    public const int OffHoursMaximum = 720;
+
+    /// <summary>Re-read tracked Helix projects and Procore projects in the background while the app is open (only changed items are read).</summary>
     public bool AutoSync { get; set; } = true;
 
-    /// <summary>Minutes between background reads.</summary>
-    public int IntervalMinutes { get; set; } = 15;
+    /// <summary>Minutes between background reads during working hours.</summary>
+    public int WorkHoursIntervalMinutes { get; set; } = 60;
 
-    /// <summary>Hours after which a project's items are all read again, to catch items removed in Helix.</summary>
+    /// <summary>Minutes between background reads outside working hours (while the app is open).</summary>
+    public int OffHoursIntervalMinutes { get; set; } = 180;
+
+    /// <summary>
+    /// Hours after which a project is checked for items removed in Helix or Procore: Helix reads every
+    /// item again; Procore compares its counts with the saved list and reads everything only when they differ.
+    /// </summary>
     public int FullReadHours { get; set; } = 12;
+
+    public static bool IsWorkingHours(DateTime localTime) => localTime.Hour is >= WorkdayStartHour and < WorkdayEndHour;
+
+    /// <summary>The time between background reads at <paramref name="localTime"/>.</summary>
+    public TimeSpan IntervalAt(DateTime localTime) =>
+        TimeSpan.FromMinutes(IsWorkingHours(localTime) ? WorkHoursIntervalMinutes : OffHoursIntervalMinutes);
 }
 
 /// <summary>How the built-in browser window behaves during a refresh.</summary>
@@ -462,7 +483,8 @@ public sealed class SettingsStore
         settings.WorkloadTracker.ClientId ??= "";
         settings.WorkloadTracker.TokenProtected ??= "";
         settings.WorkloadTracker.Account ??= "";
-        settings.Sync.IntervalMinutes = Math.Clamp(settings.Sync.IntervalMinutes, 5, 240);
+        settings.Sync.WorkHoursIntervalMinutes = Math.Clamp(settings.Sync.WorkHoursIntervalMinutes, SyncSettings.WorkHoursMinimum, SyncSettings.WorkHoursMaximum);
+        settings.Sync.OffHoursIntervalMinutes = Math.Clamp(settings.Sync.OffHoursIntervalMinutes, SyncSettings.OffHoursMinimum, SyncSettings.OffHoursMaximum);
         settings.Sync.FullReadHours = Math.Clamp(settings.Sync.FullReadHours, 1, 168);
         settings.Projects = (settings.Projects ?? new List<TrackerProject>())
             .Where(project => project is not null && !string.IsNullOrWhiteSpace(project.Id))

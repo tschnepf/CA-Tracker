@@ -225,11 +225,12 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         folderTimer.Tick += async (_, _) => await RunTimerAsync("folder check", CheckFoldersAsync);
         folderTimer.Start();
 
-        // Helix: tracked projects are read in the background every few minutes (changes only).
+        // Helix and Procore: projects are read in the background (changes only), hourly from 7 am to 5 pm
+        // and every three hours at other times (Settings → Background sync), and once soon after start.
         autoSyncTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(30) };
         autoSyncTimer.Tick += async (_, _) => await RunTimerAsync("automatic sync", AutoSyncAsync);
         autoSyncTimer.Start();
-        lastAutoSync = DateTimeOffset.Now - TimeSpan.FromMinutes(Settings.Sync.IntervalMinutes) + TimeSpan.FromSeconds(20);
+        lastAutoSync = DateTimeOffset.Now - Settings.Sync.IntervalAt(DateTime.Now) + TimeSpan.FromSeconds(20);
 
         LoadProjects();
         RefreshAccounts();
@@ -3491,14 +3492,16 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
     }
 
     /// <summary>
-    /// Background sync of the tracked projects on the interval in Settings: Helix (only changed items)
-    /// and Procore (when it can be read in the background). Sites whose sign-in has expired are skipped.
+    /// Background sync of the tracked projects on the schedule in Settings (one interval from 7 am to
+    /// 5 pm, a longer one at other times): Helix (only changed items) and Procore (when it can be read in
+    /// the background). Sites whose sign-in has expired are skipped, and Procore while it has asked to
+    /// slow down.
     /// </summary>
     private async Task AutoSyncAsync()
     {
         var sync = Settings.Sync;
         if (autoSyncRunning || !sync.AutoSync || refreshingMany
-            || DateTimeOffset.Now - lastAutoSync < TimeSpan.FromMinutes(sync.IntervalMinutes))
+            || DateTimeOffset.Now - lastAutoSync < sync.IntervalAt(DateTime.Now))
         {
             return;
         }
@@ -3512,7 +3515,8 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
                 await AutoSyncSiteAsync(Providers.Helix, project => IsHelix(project) && !project.IsArchived, (targets, starting) => SyncHelixAsync(targets, starting, null));
             }
 
-            var procoreReady = store.Account(Providers.Procore) is { NeedsSignIn: false } && !procoreSync.PageReadingUnavailable;
+            var procoreReady = store.Account(Providers.Procore) is { NeedsSignIn: false } && !procoreSync.PageReadingUnavailable
+                && ProcoreThrottle.Shared.WaitingUntil(DateTimeOffset.Now) is null;
             if (procoreReady && !procoreSync.IsBusy && !ConnectionFor(Providers.Procore).IsSyncing)
             {
                 // New projects appear without anyone pasting links: your companies are looked through

@@ -174,6 +174,7 @@ test("pages are asked for several at a time when Procore says how many rows ther
 
   assert.equal(result.rfis.length, 1250);
   assert.ok(most > 1, "pages were read in parallel");
+  assert.ok(most <= 3, "no more than three pages at a time");
 });
 
 test("a server that sends fewer rows per page than asked for is still read to the end", async () => {
@@ -297,4 +298,84 @@ test("if Procore refuses the changes filter, everything is read instead", async 
   assert.equal(result.changesOnly, false);
   assert.equal(result.rfis.length, 2);
   assert.equal(result.submittals.length, 2);
+});
+
+// A fetch answer with the given status, body and headers (header names are matched case-insensitively).
+function answer(status, body, headers) {
+  const named = Object.fromEntries(Object.entries(Object.assign({ "Content-Type": "application/json" }, headers || {}))
+    .map(([name, value]) => [name.toLowerCase(), String(value)]));
+  return { ok: status >= 200 && status < 300, status, headers: { get: (name) => named[name.toLowerCase()] ?? null }, json: async () => body };
+}
+
+test("Procore's 429 stops the read with how long it asked to wait", async () => {
+  const fetch = async () => answer(429, {}, { "Retry-After": "120" });
+
+  await assert.rejects(ProcoreSync.readProject(win, { projectId: "9" }, { fetch }),
+    (error) => error.status === 429 && error.retryAfter === 120);
+});
+
+test("without Retry-After, the wait runs until Procore's rate limit resets", async () => {
+  const reset = Math.floor(Date.now() / 1000) + 600;
+  const fetch = async () => answer(429, {}, { "X-Rate-Limit-Limit": "3600", "X-Rate-Limit-Remaining": "0", "X-Rate-Limit-Reset": String(reset) });
+
+  await assert.rejects(ProcoreSync.readProject(win, { projectId: "9" }, { fetch }),
+    (error) => error.status === 429 && error.retryAfter >= 598 && error.retryAfter <= 600);
+});
+
+test("a 503 with a Retry-After date waits until that date; one without says nothing", async () => {
+  const at = new Date(Date.now() + 300000).toUTCString();
+  await assert.rejects(ProcoreSync.readProject(win, { projectId: "9" }, { fetch: async () => answer(503, {}, { "Retry-After": at }) }),
+    (error) => error.status === 503 && error.retryAfter >= 298 && error.retryAfter <= 300);
+  await assert.rejects(ProcoreSync.readProject(win, { projectId: "9" }, { fetch: async () => answer(503, {}) }),
+    (error) => error.status === 503 && error.retryAfter === undefined);
+});
+
+test("a 429 while listing companies stops discovery instead of trying the next company", async () => {
+  const calls = [];
+  const fetch = async (path) => {
+    calls.push(path);
+    if (path.startsWith("/rest/v1.0/me")) return answer(200, { id: 1, name: "Tim S" });
+    if (path.startsWith("/rest/v1.0/companies")) return answer(200, [{ id: 10, name: "A" }, { id: 20, name: "B" }]);
+    return answer(429, {}, { "Retry-After": "60" });
+  };
+
+  await assert.rejects(ProcoreSync.discover(win, { fetch }), (error) => error.status === 429 && error.retryAfter === 60);
+  assert.ok(!calls.some((path) => path.includes("company_id=20")), "the second company wasn't asked");
+});
+
+test("a 429 on /me stops discovery too", async () => {
+  await assert.rejects(ProcoreSync.discover(win, { fetch: async () => answer(429, {}) }), (error) => error.status === 429);
+});
+
+test("with totals, each list is asked for one row to learn how many items Procore has", async () => {
+  const calls = [];
+  const fetch = async (path) => {
+    calls.push(decodeURIComponent(path));
+    const url = new URL(path, "https://app.procore.com");
+    if (url.pathname.endsWith("/submittals")) return answer(403, {});
+    if (url.searchParams.get("per_page") === "1") return answer(200, [{ id: 1 }], { Total: "357", "X-Rate-Limit-Limit": "100000", "X-Rate-Limit-Remaining": "99990" });
+    return answer(200, [{ id: 5 }], { "X-Rate-Limit-Limit": "100000", "X-Rate-Limit-Remaining": "99995" });
+  };
+
+  const result = await ProcoreSync.readProject(win, { projectId: "9", updatedSince: "2026-10-01T10:00:00.000Z", withTotals: true }, { fetch });
+
+  assert.deepEqual(result.totals, { rfis: 357, submittals: null });
+  assert.deepEqual(result.unavailable, ["submittals"]);
+  assert.ok(calls.includes("/rest/v1.0/projects/9/rfis?page=1&per_page=1"));
+  // The lowest headroom Procore stated during the read.
+  assert.deepEqual(result.rateLimit, { limit: 100000, remaining: 99990, reset: null });
+});
+
+test("without totals asked for, no extra request is made and no rate limit is invented", async () => {
+  const calls = [];
+  const fetch = async (path) => {
+    calls.push(path);
+    return answer(200, [{ id: 1 }]);
+  };
+
+  const result = await ProcoreSync.readProject(win, { projectId: "9", updatedSince: "2026-10-01T10:00:00.000Z" }, { fetch });
+
+  assert.deepEqual(result.totals, { rfis: null, submittals: null });
+  assert.equal(result.rateLimit, null);
+  assert.equal(calls.length, 2);
 });

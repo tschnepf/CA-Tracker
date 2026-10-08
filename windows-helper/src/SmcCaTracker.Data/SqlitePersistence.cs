@@ -592,12 +592,19 @@ public sealed class SqlitePersistence : ITrackerPersistence
         return accounts;
     }
 
+    // The sync runs worth keeping: the latest $limit of all, plus each project's latest complete run of
+    // each mode (a Procore project's last full read and last count check decide how its next read goes).
+    private const string KeptSyncRuns =
+        "WITH ranked AS (SELECT id, status, ROW_NUMBER() OVER (ORDER BY started_at DESC) AS recent, " +
+        "ROW_NUMBER() OVER (PARTITION BY provider, project_id, run_mode, status ORDER BY started_at DESC) AS latest " +
+        "FROM sync_runs) SELECT id FROM ranked WHERE recent <= $limit OR (latest = 1 AND status = 'complete')";
+
     private List<SyncRun> LoadSyncRuns(int limit)
     {
         var runs = new List<SyncRun>();
         using var command = Command(
             "SELECT id, provider, project_id, run_mode, started_at, finished_at, status, item_count, changed_count, error " +
-            "FROM sync_runs ORDER BY started_at DESC LIMIT $limit;",
+            $"FROM sync_runs WHERE id IN ({KeptSyncRuns}) ORDER BY started_at DESC;",
             null,
             ("$limit", limit));
         using var reader = command.ExecuteReader();
@@ -977,7 +984,7 @@ public sealed class SqlitePersistence : ITrackerPersistence
             ("$id", run.Id), ("$provider", run.Provider), ("$project", run.ProjectId), ("$mode", run.Mode), ("$started", Iso(run.StartedAt)),
             ("$finished", Iso(run.FinishedAt)), ("$status", run.Status), ("$items", run.ItemCount), ("$changed", run.ChangedCount),
             ("$error", run.Error));
-        Execute("DELETE FROM sync_runs WHERE id NOT IN (SELECT id FROM sync_runs ORDER BY started_at DESC LIMIT 2000);", transaction);
+        Execute($"DELETE FROM sync_runs WHERE id NOT IN ({KeptSyncRuns});", transaction, ("$limit", 2000));
         scope.Commit();
     }
 

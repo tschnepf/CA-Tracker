@@ -140,11 +140,27 @@
                             <TextBlock Style="{StaticResource Muted}" TextWrapping="Wrap" Margin="0,0,0,10"
                                        Text="Helix and Procore are read in the background with your sign-in from Connections. Every Procore project you can see is found by itself; right-click a project to stop syncing it." />
                             <CheckBox x:Name="AutoSyncBox" Content="Keep Helix and Procore projects up to date in the background" Margin="0,0,0,8" />
-                            <StackPanel Orientation="Horizontal" Margin="24,0,0,0">
-                                <TextBlock Text="Every" VerticalAlignment="Center" Margin="0,0,8,0" />
-                                <TextBox x:Name="SyncIntervalBox" Width="60" AutomationProperties.Name="Sync every how many minutes" />
-                                <TextBlock Text="minutes (5–240; only changed items are read)" VerticalAlignment="Center" Margin="8,0,0,0" />
-                            </StackPanel>
+                            <Grid Margin="24,0,0,0">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                </Grid.RowDefinitions>
+                                <TextBlock Text="7 am to 5 pm: every" VerticalAlignment="Center" Margin="0,0,8,0" />
+                                <TextBox x:Name="WorkHoursIntervalBox" Grid.Column="1" Width="60"
+                                         AutomationProperties.Name="From 7 am to 5 pm, sync every how many minutes" />
+                                <TextBlock Grid.Column="2" Text="minutes (15–240)" VerticalAlignment="Center" Margin="8,0,0,0" />
+                                <TextBlock Grid.Row="1" Text="Other times: every" VerticalAlignment="Center" Margin="0,8,8,0" />
+                                <TextBox x:Name="OffHoursIntervalBox" Grid.Row="1" Grid.Column="1" Width="60" Margin="0,8,0,0"
+                                         AutomationProperties.Name="At other times, sync every how many minutes" />
+                                <TextBlock Grid.Row="1" Grid.Column="2" Text="minutes (30–720)" VerticalAlignment="Center" Margin="8,8,0,0" />
+                            </Grid>
+                            <TextBlock Style="{StaticResource Muted}" TextWrapping="Wrap" Margin="24,6,0,0"
+                                       Text="Only changed items are read. Procore projects are read in full once a week, and sooner when Procore's item counts show something was removed." />
                             <TextBlock x:Name="IntervalError" Style="{StaticResource FieldError}" Margin="24,4,0,0" />
 
                             <TextBlock Text="WHEN PROCORE NEEDS THE BROWSER WINDOW" Style="{StaticResource SectionTitle}" Margin="0,16,0,6" />

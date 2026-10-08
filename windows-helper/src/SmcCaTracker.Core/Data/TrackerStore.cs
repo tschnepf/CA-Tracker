@@ -28,6 +28,10 @@ public sealed class TrackerStore : IDisposable
     private readonly Dictionary<string, ProviderSnapshot> snapshots = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, TypeFolderScan> folderScans = new(StringComparer.OrdinalIgnoreCase);
     private readonly List<SyncRun> recentRuns = new();
+
+    // Per project and mode ("provider|project id|mode"): its latest complete sync run, kept however many
+    // runs come after it (recentRuns keeps only the latest few hundred of all projects).
+    private readonly Dictionary<string, SyncRun> latestComplete = new(StringComparer.Ordinal);
     private readonly Dictionary<string, OutboxEntry> outbox = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, WorkloadAssignment> assignments = new(StringComparer.Ordinal);
     private readonly Dictionary<int, List<WorkloadCompletion>> completions = new();
@@ -64,6 +68,11 @@ public sealed class TrackerStore : IDisposable
         accounts = state.Accounts ?? new List<ProviderAccount>();
         view = state.View ?? new ViewState();
         recentRuns.AddRange(state.RecentSyncRuns ?? new List<SyncRun>());
+        foreach (var run in recentRuns)
+        {
+            NoteComplete(run);
+        }
+
         foreach (var entry in state.Outbox ?? new List<OutboxEntry>())
         {
             outbox[SnapshotKey(entry.Provider, entry.ProjectId)] = entry;
@@ -1190,9 +1199,39 @@ public sealed class TrackerStore : IDisposable
                 recentRuns.RemoveRange(0, recentRuns.Count - 500);
             }
 
+            NoteComplete(run);
             Enqueue(target => target.RecordSyncRun(run));
         }
     }
+
+    /// <summary>
+    /// The latest complete sync of one project in one mode ("full", "changes", "checked"), however long
+    /// ago, as long as the database still has it (it keeps each project's latest of each).
+    /// </summary>
+    public SyncRun? LastCompleteSyncRun(string provider, string projectId, string mode)
+    {
+        lock (gate)
+        {
+            return latestComplete.TryGetValue(RunKey(provider, projectId, mode), out var run) ? run : null;
+        }
+    }
+
+    private void NoteComplete(SyncRun run)
+    {
+        if (run.Status != "complete")
+        {
+            return;
+        }
+
+        var key = RunKey(run.Provider, run.ProjectId, run.Mode);
+        if (!latestComplete.TryGetValue(key, out var known) || run.StartedAt >= known.StartedAt)
+        {
+            latestComplete[key] = run;
+        }
+    }
+
+    private static string RunKey(string provider, string projectId, string mode) =>
+        $"{provider.ToLowerInvariant()}|{projectId}|{mode.ToLowerInvariant()}";
 
     /// <summary>The latest finished sync of one Helix/Procore project (or the latest that read everything it meant to).</summary>
     public SyncRun? LastSyncRun(string provider, string projectId, bool completeOnly = false)

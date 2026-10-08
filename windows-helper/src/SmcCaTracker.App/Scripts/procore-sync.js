@@ -15,12 +15,54 @@
   const PAGE_SIZE = 100;
   const MAX_PAGES = 1000;
   // Pages asked for at the same time once Procore has said how many rows a list has.
-  const PARALLEL_PAGES = 6;
+  const PARALLEL_PAGES = 3;
 
-  function httpError(message, status) {
+  function httpError(message, status, retryAfter) {
     const error = new Error(message);
     error.status = Number(status || 0);
+    if (retryAfter !== undefined && retryAfter !== null) error.retryAfter = retryAfter;
     return error;
+  }
+
+  // Procore asking to slow down (429, too many requests) or to come back later (503).
+  function isSlowDown(error) {
+    return Boolean(error) && (error.status === 429 || error.status === 503);
+  }
+
+  function header(response, name) {
+    return response && response.headers && typeof response.headers.get === "function" ? response.headers.get(name) : null;
+  }
+
+  function wholeNumber(value) {
+    const text = String(value === null || value === undefined ? "" : value).trim();
+    return /^\d+$/.test(text) ? Number(text) : null;
+  }
+
+  // Seconds Procore asks to wait: its Retry-After (seconds or a date), else until its rate limit
+  // resets (X-Rate-Limit-Reset, in Unix seconds). Null when it doesn't say.
+  function retryAfterSeconds(response, nowMs) {
+    const retry = String(header(response, "Retry-After") || "").trim();
+    if (wholeNumber(retry) !== null) return wholeNumber(retry);
+    const at = retry ? Date.parse(retry) : NaN;
+    if (!Number.isNaN(at)) return Math.max(0, Math.round((at - nowMs) / 1000));
+    const reset = wholeNumber(header(response, "X-Rate-Limit-Reset"));
+    return reset === null ? null : Math.max(0, reset - Math.floor(nowMs / 1000));
+  }
+
+  // Wraps fetch to keep the lowest rate-limit headroom Procore states during one read
+  // ({ limit, remaining, reset } from its X-Rate-Limit-* headers), or null when it states none.
+  function metered(fetchImpl) {
+    const meter = { rateLimit: null };
+    const fetch = async (path, init) => {
+      const response = await fetchImpl(path, init);
+      const limit = wholeNumber(header(response, "X-Rate-Limit-Limit"));
+      const remaining = wholeNumber(header(response, "X-Rate-Limit-Remaining"));
+      if (limit !== null && remaining !== null && (!meter.rateLimit || remaining < meter.rateLimit.remaining)) {
+        meter.rateLimit = { limit, remaining, reset: wholeNumber(header(response, "X-Rate-Limit-Reset")) };
+      }
+      return response;
+    };
+    return { fetch, meter };
   }
 
   function withPage(path, page) {
@@ -38,7 +80,9 @@
     if (companyId) headers["Procore-Company-Id"] = String(companyId);
     const response = await fetchImpl(path, { credentials: "include", headers });
     if (!response.ok) {
-      throw httpError(`Procore answered ${response.status} for ${path.split("?")[0]}`, response.status);
+      const status = Number(response.status || 0);
+      throw httpError(`Procore answered ${status} for ${path.split("?")[0]}`, status,
+        status === 429 || status === 503 ? retryAfterSeconds(response, Date.now()) : undefined);
     }
     const type = response.headers && typeof response.headers.get === "function"
       ? String(response.headers.get("content-type") || "")
@@ -149,7 +193,7 @@
           }
         : null;
     } catch (error) {
-      if (error && (error.status === 401 || error.status === 406)) throw error;
+      if (error && (error.status === 401 || error.status === 406 || isSlowDown(error))) throw error;
     }
 
     const companies = (await list(fetchImpl, "/rest/v1.0/companies", null))
@@ -182,7 +226,8 @@
       try {
         projects = await list(fetchImpl, `/rest/v1.0/projects?company_id=${encodeURIComponent(companyId)}`, companyId);
       } catch (error) {
-        if (error && error.status === 401) throw error;
+        // Signed out, or Procore asked to slow down: the other companies would only be refused too.
+        if (error && (error.status === 401 || isSlowDown(error))) throw error;
         entry.error = String(error && error.message || error);
         entry.status = Number(error && error.status || 0);
         continue;
@@ -234,12 +279,16 @@
   /**
    * Reads every RFI and Submittal of one project. A tool you can't see on that project (403/404)
    * counts as empty and is named in `unavailable`, so one project's permissions don't stop the rest.
-   * Resolves to { rfis, submittals, unavailable: ["rfis"|"submittals"] }. Rejects with `status` when
-   * neither list can be read (401: signed out; 403/404: no access to the project).
+   * With `request.withTotals`, also asks each list for one row to learn how many items Procore has in
+   * all (its "Total" header), so items removed in Procore can be noticed without reading everything.
+   * Resolves to { rfis, submittals, unavailable: ["rfis"|"submittals"], changesOnly, totals: { rfis,
+   * submittals } (null each when not asked or not sent), rateLimit: { limit, remaining, reset } | null }.
+   * Rejects with `status` when neither list can be read (401: signed out; 403/404: no access to the
+   * project) and with `status` and `retryAfter` (seconds, when Procore says) on 429/503.
    */
   async function readProject(win, request, options) {
     const opts = options || {};
-    const fetchImpl = opts.fetch || win.fetch.bind(win);
+    const { fetch: fetchImpl, meter } = metered(opts.fetch || win.fetch.bind(win));
     const base = `/rest/v1.0/projects/${encodeURIComponent(String(request.projectId))}`;
     const unavailable = [];
     const failures = [];
@@ -288,7 +337,18 @@
         ? "Procore couldn't find this project (it may have been removed or you no longer have access)."
         : "You don't have access to this project's RFIs or Submittals in Procore.", status);
     }
-    return { rfis, submittals, unavailable, changesOnly };
+    const totals = { rfis: null, submittals: null };
+    if (request.withTotals) {
+      for (const name of ["rfis", "submittals"]) {
+        if (unavailable.indexOf(name) !== -1) continue;
+        try {
+          totals[name] = (await getPage(fetchImpl, `${base}/${name}?page=1&per_page=1`, request.companyId)).total;
+        } catch (error) {
+          if (!error || (error.status !== 403 && error.status !== 404)) throw error;
+        }
+      }
+    }
+    return { rfis, submittals, unavailable, changesOnly, totals, rateLimit: meter.rateLimit };
   }
 
   /**

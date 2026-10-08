@@ -28,7 +28,8 @@ No Chrome extension or browser add-in is involved.
   reads each tracked project through Helix's own data service — no windows. The first read of a
   project in a session reads everything; later reads ask Helix only for items changed since, so a
   sync of many projects takes seconds. Every 12 hours a project is read in full again so items
-  deleted in Helix drop out. Tracked projects sync every 15 minutes (Settings → Background sync).
+  deleted in Helix drop out. Tracked projects sync every hour from 7 am to 5 pm and every three hours
+  at other times while the app is open (Settings → Background sync).
 - **The list redraws once** per change, not once per row.
 - **A timing log** (Settings → Open the log folder) records how long each step took and marks any
   slow one, so a sluggish step can be found instead of guessed at.
@@ -341,8 +342,9 @@ to for new projects. A project that can't be read is marked and the rest carry o
 button reads **Stop syncing**, which finishes the current project and skips the rest. Progress shows
 on the right of the status bar along the bottom of the window and on each Connections card. A connection's last sync is the most recent read
 of any of its projects. While the app is open, tracked Helix projects and every Procore project
-(except those set to not sync) also sync by themselves every 15 minutes, and your Procore companies
-are looked through again for new projects every 6 hours (Settings → Background sync).
+(except those set to not sync) also sync by themselves every hour from 7 am to 5 pm and every three
+hours at other times, and your Procore companies are looked through again for new projects every
+6 hours (Settings → Background sync).
 
 ## Syncing one project
 
@@ -357,7 +359,15 @@ project it also reads the project:
   shows), with your Procore sign-in: a hidden Procore page asks Procore's own REST service
   for the lists, as Procore's web pages do. It sees exactly what you can see in Procore — across every
   company you belong to — and nothing has to be installed in any company's Procore account. A tool
-  you can't see on a project (say, Submittals) is left as it was rather than emptied. If Procore
+  you can't see on a project (say, Submittals) is left as it was rather than emptied. A project is
+  read in full the first time and once a week; other syncs ask only for items changed since the last
+  read, and every 12 hours they also ask how many RFIs and Submittals Procore has (one row each). When
+  a count differs from the saved list (something was removed), the project is read in full at once.
+  These times are kept in the sync history, so restarting the app doesn't start over. If Procore
+  answers "too many requests" (429) or "come back later" (503), or says its rate limit is nearly used
+  up, CA Tracker asks it nothing more (syncs and downloads) until the time Procore gave, or for 30
+  minutes when it doesn't say; the status bar says until when. The log notes Procore's rate-limit
+  headroom after each sync. If Procore
   refuses the page way for your account, the sync falls back to reading the RFIs and Submittals lists
   in the CA Tracker browser window, as before; those reads only see the rows Procore's lists show.
 **Settings → Connections → Sign out of Helix and Procore** ends the sign-in (saved passwords stay).

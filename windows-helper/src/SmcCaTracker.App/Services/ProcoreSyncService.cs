@@ -83,8 +83,11 @@ public sealed class ProcoreDiscovery
 /// <list type="bullet">
 /// <item>the companies you belong to and every project you can see in each (<see cref="DiscoverAsync"/>), so
 /// projects hosted by other companies are found without switching companies or pasting links;</item>
-/// <item>every RFI and Submittal of each project (<see cref="SyncAsync"/>).</item>
+/// <item>the RFIs and Submittals of each project (<see cref="SyncAsync"/>): every one the first time and
+/// once a week, otherwise only those changed since the last read (see <see cref="ProcoreReadPlan"/>).</item>
 /// </list>
+/// When Procore answers 429 (too many requests) or 503, or says its rate limit is nearly used up, nothing
+/// more is asked of it until the time it gave (<see cref="ProcoreThrottle"/>).
 /// Nothing has to be installed in any company's Procore account; it only sees what you can see. If
 /// Procore won't serve its lists to this sign-in, the result says so and the app falls back to reading
 /// Procore's lists in the browser window. Read-only. Use from the screen's thread.
@@ -111,15 +114,20 @@ public sealed class ProcoreSyncService : IDisposable
     /// <summary>Until when the hidden page must not be opened again (set when signing out).</summary>
     private DateTimeOffset pausedUntil = DateTimeOffset.MinValue;
 
-    // When each project was last read in full this session. The first read of a project in a session
-    // is full; later ones ask only for items changed since, and every few hours it is read in full
-    // again so items deleted in Procore drop out (as Helix does).
-    private readonly Dictionary<string, DateTimeOffset> lastFullRead = new(StringComparer.Ordinal);
+    // Shared with downloads: while Procore has asked to slow down, nothing is asked of it.
+    private readonly ProcoreThrottle throttle;
 
-    public ProcoreSyncService(AppPaths paths, TrackerStore store)
+    // Projects whose counts in Procore didn't match the saved list: read in full next (at once).
+    private readonly HashSet<string> fullReadWanted = new(StringComparer.Ordinal);
+
+    // The least rate-limit headroom Procore stated during the current run, for the log.
+    private (long Limit, long Remaining)? runRateLimit;
+
+    public ProcoreSyncService(AppPaths paths, TrackerStore store, ProcoreThrottle? throttle = null)
     {
         this.paths = paths;
         this.store = store;
+        this.throttle = throttle ?? ProcoreThrottle.Shared;
     }
 
     public bool IsBusy => gate.CurrentCount == 0;
@@ -172,6 +180,11 @@ public sealed class ProcoreSyncService : IDisposable
         siteHost ??= ProviderLinks.DefaultProcoreHost;
         try
         {
+            if (throttle.WaitingUntil(DateTimeOffset.Now) is { } waitUntil)
+            {
+                return new ProcoreDiscovery { Problem = ProcoreThrottle.WaitText(waitUntil) };
+            }
+
             var problem = await EnsurePageAsync(siteHost);
             if (problem is not null)
             {
@@ -199,6 +212,11 @@ public sealed class ProcoreSyncService : IDisposable
                 {
                     store.MarkSignInNeeded(Providers.Procore);
                     return new ProcoreDiscovery { Problem = "Procore needs you to sign in again: Settings → Connections → Sign in to Procore.", NeedsSignIn = true };
+                }
+
+                if (ProcoreThrottle.IsSlowDown(status))
+                {
+                    return new ProcoreDiscovery { Problem = ProcoreThrottle.WaitText(SlowDown(status, answer)) };
                 }
 
                 return new ProcoreDiscovery { Problem = $"CA Tracker couldn't list your Procore projects: {message}" };
@@ -334,7 +352,7 @@ public sealed class ProcoreSyncService : IDisposable
         {
             foreach (var server in ProcoreServers.Where(server => !string.Equals(server, askedHost, StringComparison.OrdinalIgnoreCase)))
             {
-                if (missing.Count == 0 || cancelRequested)
+                if (missing.Count == 0 || cancelRequested || throttle.WaitingUntil(DateTimeOffset.Now) is not null)
                 {
                     break;
                 }
@@ -352,6 +370,12 @@ public sealed class ProcoreSyncService : IDisposable
                 if (TypeOf(answer) != "procore-discovered")
                 {
                     AppLog.Warn("procore", $"{server} didn't list projects ({Status(answer)}): {Message(answer) ?? "no answer"}");
+                    if (ProcoreThrottle.IsSlowDown(Status(answer)))
+                    {
+                        SlowDown(Status(answer), answer);
+                        break;
+                    }
+
                     continue;
                 }
 
@@ -393,9 +417,16 @@ public sealed class ProcoreSyncService : IDisposable
         cancelRequested = false;
         stopping = new CancellationTokenSource();
         activeRun = run;
+        runRateLimit = null;
         try
         {
-            return await SyncThroughPageAsync(targets, starting, stop);
+            var result = await SyncThroughPageAsync(targets, starting, stop);
+            if (runRateLimit is { } rateLimit)
+            {
+                AppLog.Info("procore", $"Procore's rate limit: {rateLimit.Remaining:N0} of {rateLimit.Limit:N0} requests left.");
+            }
+
+            return result;
         }
         catch (OperationCanceledException)
         {
@@ -435,6 +466,12 @@ public sealed class ProcoreSyncService : IDisposable
                 return new ProviderSyncResult { SyncedProjectIds = synced, FailedProjectIds = failed, Stopped = true, Changed = changed };
             }
 
+            if (throttle.WaitingUntil(DateTimeOffset.Now) is { } waitUntil)
+            {
+                // Procore asked to slow down (or its rate limit is nearly used up): ask nothing more until then.
+                return new ProviderSyncResult { SyncedProjectIds = synced, FailedProjectIds = failed, Changed = changed, Problem = ProcoreThrottle.WaitText(waitUntil) };
+            }
+
             var target = targets[index];
             var siteHost = target.Host ?? ProviderLinks.DefaultProcoreHost;
             var problem = await EnsurePageAsync(siteHost);
@@ -453,19 +490,33 @@ public sealed class ProcoreSyncService : IDisposable
             starting?.Invoke(index, target);
             var existing = store.Snapshot(Providers.Procore, target.ProjectId);
             var startedAt = DateTimeOffset.Now;
-            var fullEvery = TimeSpan.FromHours(Math.Max(1, store.Settings.Sync.FullReadHours));
-            var full = existing is null
-                || !lastFullRead.TryGetValue(target.ProjectId, out var lastFull)
-                || startedAt - lastFull >= fullEvery;
+            // Full the first time, weekly, and when the counts stopped matching; otherwise changes only,
+            // with Procore's counts compared every FullReadHours to notice removed items.
+            var kind = fullReadWanted.Contains(target.ProjectId)
+                ? ProcoreReadKind.Full
+                : ProcoreReadPlan.For(
+                    existing is not null,
+                    store.LastCompleteSyncRun(Providers.Procore, target.ProjectId, ProcoreReadPlan.FullMode)?.StartedAt,
+                    store.LastCompleteSyncRun(Providers.Procore, target.ProjectId, ProcoreReadPlan.CheckedMode)?.StartedAt,
+                    startedAt,
+                    TimeSpan.FromHours(Math.Max(1, store.Settings.Sync.FullReadHours)));
+            var full = kind == ProcoreReadKind.Full;
+            var withTotals = kind == ProcoreReadKind.ChangesAndCount;
             // A little overlap, so an item saved while the last read ran isn't missed.
             var since = full ? null : existing!.ScannedAt.ToUniversalTime().AddMinutes(-10).ToString("yyyy-MM-ddTHH:mm:ssZ");
-            var run = new SyncRun { Provider = Providers.Procore, ProjectId = target.ProjectId, StartedAt = startedAt, Mode = full ? "full" : "changes" };
+            var run = new SyncRun
+            {
+                Provider = Providers.Procore,
+                ProjectId = target.ProjectId,
+                StartedAt = startedAt,
+                Mode = full ? ProcoreReadPlan.FullMode : ProcoreReadPlan.ChangesMode
+            };
             try
             {
                 JsonElement? answer;
-                using (AppLog.Time("procore.page", $"{target.DisplayName} ({(full ? "full" : "changes")})", 20_000))
+                using (AppLog.Time("procore.page", $"{target.DisplayName} ({(full ? "full" : withTotals ? "changes, counts" : "changes")})", 20_000))
                 {
-                    answer = await RequestWithLibraryAsync(id => ProviderScripts.ProcoreReadProject(id, target.ProjectId, target.AccountId, since), TimeSpan.FromMinutes(3));
+                    answer = await RequestWithLibraryAsync(id => ProviderScripts.ProcoreReadProject(id, target.ProjectId, target.AccountId, since, withTotals), TimeSpan.FromMinutes(3));
                 }
 
                 if (cancelRequested)
@@ -530,13 +581,32 @@ public sealed class ProcoreSyncService : IDisposable
                             store.SaveSnapshot(snapshot);
                         }
 
-                        run.ItemCount = store.Snapshot(Providers.Procore, target.ProjectId)?.Items.Count ?? snapshot.Items.Count;
+                        var saved = store.Snapshot(Providers.Procore, target.ProjectId);
+                        run.ItemCount = saved?.Items.Count ?? snapshot.Items.Count;
+                        if (withTotals && saved is not null)
+                        {
+                            var totals = Totals(value, types);
+                            var mismatched = ProcoreReadPlan.Mismatched(saved, totals);
+                            if (totals.Values.All(total => total is null) || mismatched.Count > 0)
+                            {
+                                // Items were removed in Procore (or appeared without changing), or Procore
+                                // didn't say how many it has: read the project in full right away.
+                                AppLog.Info("procore", mismatched.Count > 0
+                                    ? $"{target.DisplayName}: Procore's count of {string.Join(" and ", mismatched.Select(ItemTypes.Plural))} differs from the saved list; reading everything."
+                                    : $"{target.DisplayName}: Procore didn't say how many items it has; reading everything.");
+                                fullReadWanted.Add(target.ProjectId);
+                            }
+                            else
+                            {
+                                run.Mode = ProcoreReadPlan.CheckedMode;
+                            }
+                        }
                     }
                     else
                     {
-                        run.Mode = "full";
+                        run.Mode = ProcoreReadPlan.FullMode;
                         store.SaveSnapshot(snapshot);
-                        lastFullRead[target.ProjectId] = startedAt;
+                        fullReadWanted.Remove(target.ProjectId);
                         run.ItemCount = snapshot.Items.Count;
                     }
 
@@ -546,12 +616,29 @@ public sealed class ProcoreSyncService : IDisposable
                         AppLog.Info("procore", $"{target.DisplayName}: no access to {string.Join(" and ", unavailable)} in Procore; left as they were.");
                     }
 
+                    NoteRateLimit(value);
+                    if (fullReadWanted.Contains(target.ProjectId))
+                    {
+                        // Read the same project again, in full.
+                        index--;
+                        continue;
+                    }
+
                     synced.Add(target.ProjectId);
                     continue;
                 }
 
                 var status = Status(answer);
                 run.Error = Message(answer) ?? "Procore did not answer in time.";
+                if (ProcoreThrottle.IsSlowDown(status))
+                {
+                    // Procore asked to slow down: stop here rather than go on to the next project. Not a
+                    // failure of this project, so it isn't marked "last sync failed".
+                    run.Error = ProcoreThrottle.WaitText(SlowDown(status, answer));
+                    run.Status = "stopped";
+                    return new ProviderSyncResult { SyncedProjectIds = synced, FailedProjectIds = failed, Changed = changed, Problem = run.Error };
+                }
+
                 if (status == 401)
                 {
                     store.MarkSignInNeeded(Providers.Procore);
@@ -593,7 +680,7 @@ public sealed class ProcoreSyncService : IDisposable
             finally
             {
                 run.FinishedAt = DateTimeOffset.Now;
-                if (run.Status != "complete")
+                if (run.Status is not ("complete" or "stopped"))
                 {
                     // Stopped on purpose (Cancel) isn't a failure: the project isn't marked "last sync failed".
                     run.Status = cancelRequested && run.Error is null ? "stopped" : "failed";
@@ -757,6 +844,66 @@ public sealed class ProcoreSyncService : IDisposable
             throw new PageCrashedException("The hidden Procore page stopped responding.");
         }
     }
+
+    /// <summary>
+    /// Notes Procore's "slow down" (429) or "come back later" (503): nothing is asked of Procore until the
+    /// time it gave (its Retry-After or rate-limit reset), or for <see cref="ProcoreThrottle.DefaultWait"/>.
+    /// </summary>
+    private DateTimeOffset SlowDown(int status, JsonElement? answer)
+    {
+        var retryAfter = answer is { } value && value.ValueKind == JsonValueKind.Object
+            && value.TryGetProperty("retryAfter", out var seconds) && seconds.ValueKind == JsonValueKind.Number && seconds.TryGetDouble(out var wait)
+            ? wait
+            : (double?)null;
+        var until = throttle.SlowDown(DateTimeOffset.Now, retryAfter);
+        AppLog.Warn("procore", $"Procore answered {status} (slow down{(retryAfter is null ? "" : $", retry after {retryAfter:0} s")}); not asking again until {until.ToLocalTime():t}.");
+        return until;
+    }
+
+    /// <summary>
+    /// Keeps the least rate-limit headroom Procore stated (for the log); when it is nearly used up,
+    /// waits until it resets rather than going on until Procore refuses.
+    /// </summary>
+    private void NoteRateLimit(JsonElement value)
+    {
+        if (!value.TryGetProperty("rateLimit", out var rateLimit) || rateLimit.ValueKind != JsonValueKind.Object
+            || Whole(rateLimit, "limit") is not { } limit || Whole(rateLimit, "remaining") is not { } remaining)
+        {
+            return;
+        }
+
+        if (runRateLimit is not { } known || remaining < known.Remaining)
+        {
+            runRateLimit = (limit, remaining);
+        }
+
+        if (ProcoreThrottle.NearlyUsedUp(limit, remaining))
+        {
+            var reset = Whole(rateLimit, "reset") is { } resetAt ? resetAt - DateTimeOffset.UtcNow.ToUnixTimeSeconds() : (long?)null;
+            var until = throttle.SlowDown(DateTimeOffset.Now, reset);
+            AppLog.Warn("procore", $"Procore's rate limit is nearly used up ({remaining:N0} of {limit:N0} left); not asking again until {until.ToLocalTime():t}.");
+        }
+    }
+
+    /// <summary>Procore's count of each readable item type ("totals" of a "procore-result"); null where it didn't say.</summary>
+    private static Dictionary<string, int?> Totals(JsonElement value, IReadOnlyList<string> types)
+    {
+        var totals = new Dictionary<string, int?>(StringComparer.OrdinalIgnoreCase);
+        foreach (var type in types)
+        {
+            var name = type == ItemTypes.Rfi ? "rfis" : "submittals";
+            totals[type] = value.TryGetProperty("totals", out var all) && all.ValueKind == JsonValueKind.Object
+                && Whole(all, name) is { } count and >= 0 and <= int.MaxValue
+                ? (int)count
+                : null;
+        }
+
+        return totals;
+    }
+
+    /// <summary>A whole number property, or null when it is missing, null or not a whole number.</summary>
+    private static long? Whole(JsonElement element, string name) =>
+        element.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.Number && value.TryGetInt64(out var number) ? number : null;
 
     private static string? TypeOf(JsonElement? answer) =>
         answer is { } value && value.ValueKind == JsonValueKind.Object && value.TryGetProperty("type", out var type) ? type.GetString() : null;
