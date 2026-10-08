@@ -1509,6 +1509,15 @@ public partial class MainWindow : Window
         ShowDownloadWindow(new[] { request }, verify: true);
     }
 
+    /// <summary>A row's Rescan folder: lists its RFI or Submittal folder again now, e.g. after a folder was made in Explorer.</summary>
+    private async void RescanRowFolder_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is FrameworkElement { DataContext: RowViewModel row })
+        {
+            await viewModel.RescanFolderAsync(row);
+        }
+    }
+
     /// <summary>A row's Open Online: the item in the built-in Helix page, or a Procore item in your web browser.</summary>
     private async void OpenRow_Click(object sender, RoutedEventArgs e)
     {

@@ -638,6 +638,13 @@ public sealed class RowViewModel : ObservableObject
         ? "Choose files to download into a \"number - name\" folder"
         : "No Helix or Procore item for this folder";
 
+    /// <summary>Its RFI or Submittal folder can be listed again now (Rescan folder): its project has a CA folder.</summary>
+    public bool CanRescanFolder => Project.HasCaFolder && !Project.IsPlaceholder;
+
+    public string RescanFolderToolTip => CanRescanFolder
+        ? $"List the {TypeLabel} folder again now, e.g. after making, renaming or moving a folder in Explorer"
+        : "This project has no CA folder yet. Choose one in Project settings.";
+
     /// <summary>Hover text for the whole row: what double-clicking does.</summary>
     public string RowToolTip => HasFolder ? "Double-click to open this folder" : HasItem ? "Double-click to open this item" : "";
     public string? SourceUrl => Row.Item?.SourceUrl;

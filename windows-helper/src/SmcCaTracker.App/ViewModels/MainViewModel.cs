@@ -3439,6 +3439,58 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         await CompareAsync();
     }
 
+    /// <summary>
+    /// A row's Rescan folder: lists its RFI or Submittal folder again now (after a folder was made, renamed or
+    /// moved in Explorer), compares, and says in the status bar where the item's folder is now.
+    /// </summary>
+    public async Task RescanFolderAsync(RowViewModel row)
+    {
+        if (!row.CanRescanFolder)
+        {
+            return;
+        }
+
+        var projectId = row.Project.Id;
+        var tracked = row.Project.Project;
+        var itemType = row.Row.ItemType;
+        var itemId = row.Row.Item?.ItemId;
+        var folderPath = row.Row.Folder?.FullPath;
+        var typeFolder = $"{row.TypeLabel} folder";
+        var layout = tracked.EffectiveFolders(Settings.Folders);
+        IsBusy = true;
+        StatusMessage = $"Rescanning the {typeFolder}…";
+        TypeFolderScan scan;
+        try
+        {
+            scan = await Task.Run(() => folderIndex.Rescan(tracked, itemType, layout));
+        }
+        catch (Exception error)
+        {
+            AppLog.Error("folders", "Rescanning a CA folder failed", error);
+            scan = new TypeFolderScan { ItemType = itemType, Error = error.Message };
+        }
+
+        await CompareAsync();
+        if (scan.Error is { Length: > 0 } problem)
+        {
+            SetRefreshMessage($"Couldn't rescan the {typeFolder}: {problem}", true);
+            return;
+        }
+
+        // The rows were rebuilt: find this one again (an item by its id; a folder with no item by its path).
+        var now = allRows.FirstOrDefault(other => other.Project.Id == projectId && other.Row.ItemType == itemType
+            && (itemId is not null
+                ? other.Row.Item?.ItemId == itemId
+                : string.Equals(other.Row.Folder?.FullPath, folderPath, StringComparison.OrdinalIgnoreCase)));
+        SetRefreshMessage(now switch
+        {
+            null when itemId is null => $"{typeFolder} rescanned: {Path.GetFileName(folderPath)} isn't there any more.",
+            { HasItem: true, HasFolder: true } => $"{typeFolder} rescanned: {now.TypeSingular} {now.Number} is in {now.FolderPathText}.",
+            { HasItem: true } => $"{typeFolder} rescanned: {now.TypeSingular} {now.Number} has no folder yet.",
+            _ => $"{typeFolder} rescanned."
+        }, false);
+    }
+
     /// <summary>Checks the CA folders soon (the window calls this when you come back to it, e.g. from Explorer).</summary>
     public void CheckFoldersSoon() => _ = CheckFoldersAsync();
 

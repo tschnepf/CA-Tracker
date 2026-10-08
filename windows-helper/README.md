@@ -298,6 +298,11 @@ saved with a date in front or as a copy counting as there. Each item says `All 7
 `3 of 7 missing` or `No folder yet`, the missing files start checked (whatever their kind), and the
 window sums up how many folders are complete; **Download** then gets just what is missing.
 
+**Rescan folder** (a row's right-click or ▾ menu) lists that project's RFI or Submittal folder again
+straight away, for a folder you just made, renamed or moved in Explorer. The status bar then says where
+the item's folder is, or that it still has none. CA Tracker also rechecks the folders by itself when you
+come back to its window and every few minutes.
+
 For a folder that already exists, only PDFs not in it yet start checked (items added since); files
 already in the folder start unchecked and are never replaced; a checked duplicate is saved as
 `name (2).pdf`. PDFs get their upload date in front of the name (`2026-08-03 Review markup.pdf`), and

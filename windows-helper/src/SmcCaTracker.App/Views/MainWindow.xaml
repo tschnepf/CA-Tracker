@@ -22,6 +22,8 @@
             <MenuItem Header="Open folder" Click="OpenRowFolder_Click" IsEnabled="{Binding HasFolder}" />
             <MenuItem Header="Verify folder…" Click="VerifyRow_Click" IsEnabled="{Binding CanDownload}"
                       ToolTip="Check that the item's folder has every file Helix has for it" />
+            <MenuItem Header="Rescan folder" Click="RescanRowFolder_Click" IsEnabled="{Binding CanRescanFolder}"
+                      ToolTip="{Binding RescanFolderToolTip}" ToolTipService.ShowOnDisabled="True" />
             <Separator />
             <MenuItem Header="Set discipline…" Click="SetRowDiscipline_Click" IsEnabled="{Binding CanSelect}" />
             <MenuItem Header="Assign to…" Click="AssignRow_Click" IsEnabled="{Binding CanAssign}"
@@ -37,6 +39,8 @@
             <MenuItem Header="Open folder" Click="OpenRowFolder_Click" IsEnabled="{Binding HasFolder}" />
             <MenuItem Header="Verify folder…" Click="VerifyRow_Click" IsEnabled="{Binding CanDownload}"
                       ToolTip="Check that the item's folder has every file Helix has for it" />
+            <MenuItem Header="Rescan folder" Click="RescanRowFolder_Click" IsEnabled="{Binding CanRescanFolder}"
+                      ToolTip="{Binding RescanFolderToolTip}" ToolTipService.ShowOnDisabled="True" />
             <Separator />
             <MenuItem Header="Set discipline…" Click="SetRowDiscipline_Click" IsEnabled="{Binding CanSelect}" />
             <MenuItem Header="Assign to…" Click="AssignRow_Click" IsEnabled="{Binding CanAssign}"
