@@ -126,6 +126,7 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
     private string sortBy = ItemSorts.Number;
     private string disciplineFilter = "";
     private bool isBusy;
+    private bool busyShown;
     private string statusMessage = "";
     private string refreshMessage = "";
     private bool refreshMessageIsError;
@@ -169,6 +170,13 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         {
             viewStateTimer.Stop();
             SaveViewState();
+        };
+
+        busyShowDelay.Tick += (_, _) =>
+        {
+            busyShowDelay.Stop();
+            busyShown = isBusy;
+            OnStatusChanged();
         };
 
         badgeTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(400) };
@@ -1411,7 +1419,14 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         {
             if (Set(ref isBusy, value))
             {
-                OnPropertyChanged(nameof(HasFooter));
+                busyShown = false;
+                busyShowDelay.Stop();
+                if (value)
+                {
+                    busyShowDelay.Start();
+                }
+
+                OnStatusChanged();
             }
         }
     }
@@ -1423,13 +1438,33 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         {
             if (Set(ref statusMessage, value ?? ""))
             {
-                OnPropertyChanged(nameof(HasFooter));
+                OnStatusChanged();
             }
         }
     }
 
-    /// <summary>The footer shows only while there is a message or work going on.</summary>
-    public bool HasFooter => statusMessage.Length > 0 || isBusy;
+    // Work that ends this quickly (most reads from the saved folder lists) never shows the status at all.
+    private readonly DispatcherTimer busyShowDelay = new() { Interval = TimeSpan.FromMilliseconds(300) };
+
+    /// <summary>
+    /// The status in the window's bottom-right corner, over the page so nothing moves: work going on
+    /// ("Reading 3 projects…") once it has taken a moment, or a message until it is dismissed or replaced.
+    /// </summary>
+    public bool ShowsStatus => isBusy ? busyShown : statusMessage.Length > 0;
+
+    public string StatusText => statusMessage.Length > 0 ? statusMessage : "Working…";
+
+    /// <summary>A message (not work in progress) can be dismissed; while working the status lets clicks through.</summary>
+    public bool CanDismissStatus => !isBusy && statusMessage.Length > 0;
+
+    public void DismissStatus() => StatusMessage = "";
+
+    private void OnStatusChanged()
+    {
+        OnPropertyChanged(nameof(ShowsStatus));
+        OnPropertyChanged(nameof(StatusText));
+        OnPropertyChanged(nameof(CanDismissStatus));
+    }
 
     /// <summary>Helix and Procore, for the Connections settings page, the sign-in banner and Sync all.</summary>
     public ObservableCollection<ConnectionViewModel> Connections { get; } = new(

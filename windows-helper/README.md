@@ -248,8 +248,8 @@ smc-ca-tracker://item?provider=<helix|procore>&host=<site host>&project=<Helix/P
   details, Open in Helix/Procore, its folder, its newest file, the download or verify window, or Set
   discipline. Nothing changes a folder or a setting without the usual window. Download, verify and newest
   file are for Helix items; for Procore the item details show instead. When the project or item isn't on
-  this PC, the footer says so ("CA Tracker doesn't have RFI 000303 on this PC yet. Sync the project, then
-  try again.").
+  this PC, the status card in the window's bottom-right corner says so ("CA Tracker doesn't have RFI 000303
+  on this PC yet. Sync the project, then try again."); ✕ dismisses it.
 - **Safety:** a link is only read. Anything that isn't exactly this form — another scheme or host, a
   provider, type or action not in the lists, ids other than 1–64 letters, digits and `. _ : -`, a host that
   isn't a plain name, an item number over 64 characters or with control characters — is ignored.
