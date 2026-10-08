@@ -355,7 +355,7 @@ public partial class ProjectPage : UserControl
     {
         for (var node = source; node is not null; node = System.Windows.Media.VisualTreeHelper.GetParent(node) ?? LogicalTreeHelper.GetParent(node))
         {
-            if (node is ComboBox { IsDropDownOpen: true })
+            if (node is ComboBox { IsDropDownOpen: true } or SearchPicker { IsDropDownOpen: true })
             {
                 return true;
             }
@@ -540,7 +540,8 @@ public partial class ProjectPage : UserControl
     /// The Workload Tracker project's team, each with who they are in Helix or Procore: linked, suggested
     /// by name, or not linked. The people offered are those named on this project's items.
     /// </summary>
-    private async Task LoadTeamAsync(bool refresh)
+    /// <param name="sent">The rows whose links were just sent: their picks are settled, so they aren't kept.</param>
+    private async Task LoadTeamAsync(bool refresh, IReadOnlyCollection<TeamLinkRow>? sent = null)
     {
         var version = ++teamVersion;
         var sync = viewModel.WorkloadTracker;
@@ -551,7 +552,13 @@ public partial class ProjectPage : UserControl
             return;
         }
 
-        teamLoadedFor = $"{binding.Id}|{project.Connection.Provider}|{project.Connection.ProjectId}";
+        // Someone picked on a row but not confirmed yet survives a reload of the same team (after another row is confirmed, say).
+        var key = $"{binding.Id}|{project.Connection.Provider}|{project.Connection.ProjectId}";
+        var waiting = key == teamLoadedFor
+            ? teamRows.Where(row => row.State == PersonLinkState.Changed && !(sent?.Contains(row) ?? false))
+                .ToDictionary(row => row.Member.PersonId, row => row.Choice!.Person.Key)
+            : [];
+        teamLoadedFor = key;
         TeamPanel.Visibility = Visibility.Visible;
         ShowTeamProblem(null);
         var snapshot = viewModel.SnapshotFor(project);
@@ -601,6 +608,12 @@ public partial class ProjectPage : UserControl
         }).ToList();
         foreach (var row in teamRows)
         {
+            if (waiting.TryGetValue(row.Member.PersonId, out var pickedKey)
+                && teamOptions.Options.FirstOrDefault(option => option.Person.Key == pickedKey) is { } picked)
+            {
+                row.Choice = picked;
+            }
+
             row.PropertyChanged += (_, args) =>
             {
                 if (args.PropertyName == nameof(TeamLinkRow.State))
@@ -701,7 +714,7 @@ public partial class ProjectPage : UserControl
 
         var (results, problem) = await sync.LinkPeopleAsync(project.Connection.Provider.ToLowerInvariant(), changes);
         var refused = results.Where(result => result.Outcome == CaPersonLinkOutcomeEnum.Rejected).Select(result => RejectionText(changes[result.Index].Person, result.Reason)).ToList();
-        await LoadTeamAsync(refresh: false);
+        await LoadTeamAsync(refresh: false, sent: rows);
         ShowTeamProblem(problem ?? (refused.Count > 0 ? string.Join(" ", refused) : null));
     }
 
