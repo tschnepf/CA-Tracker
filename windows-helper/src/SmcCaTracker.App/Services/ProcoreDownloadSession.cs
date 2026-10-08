@@ -113,6 +113,7 @@ public sealed class ProcoreDownloadSession : IItemFilesSession
                 throw new InvalidOperationException(Problem(answer));
             }
 
+            await ProcoreSignIn.KeepAsync(browser.CoreWebView2);
             return new ItemFiles(null, null, ItemFilesMessages.Attachments(answer), DateTimeOffset.Now);
         }
         finally

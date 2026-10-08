@@ -231,6 +231,8 @@ public partial class SignInWindow : Window
 
         if (ProviderSites.IsProcore(provider))
         {
+            // Procore's sign-in is session cookies: keep them, or the next start asks you to sign in again.
+            _ = ProcoreSignIn.KeepAsync(Browser.CoreWebView2);
             _ = FindProcoreProjectsAsync();
         }
     }
@@ -272,6 +274,7 @@ public partial class SignInWindow : Window
         var discovery = ProcoreSyncService.ParseDiscovery(root, siteHost);
         ProcoreSearchFinished = true;
         procoreSearching = false;
+        _ = ProcoreSignIn.KeepAsync(Browser.CoreWebView2);
         if (!string.IsNullOrWhiteSpace(discovery.UserName))
         {
             store.RecordAccount(provider, discovery.UserName, null, DateTimeOffset.Now, discovery.UserId, discovery.UserEmail);

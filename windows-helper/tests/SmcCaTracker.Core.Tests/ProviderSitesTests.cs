@@ -45,4 +45,18 @@ public sealed class ProviderSitesTests
         Assert.False(ProviderSites.IsHelixNewApp(new Uri("https://project.helixteam.com/Projects/42/Submittals")));
         Assert.False(ProviderSites.IsHelixNewApp(new Uri("http://app.helixteam.com/")));
     }
+
+    [Theory]
+    [InlineData(".procore.com", true)]
+    [InlineData("app.procore.com", true)]
+    [InlineData("login.procore.com", true)]
+    [InlineData(".us02.procore.com", true)]
+    [InlineData("procore.com", true)]
+    [InlineData("notprocore.com", false)]
+    [InlineData("procore.com.example.net", false)]
+    [InlineData(".helixteam.com", false)]
+    [InlineData("", false)]
+    [InlineData(null, false)]
+    public void ProcoresSignInCookiesAreThoseOfProcoreAndItsServers(string? domain, bool procore) =>
+        Assert.Equal(procore, ProviderSites.IsProcoreCookieDomain(domain));
 }

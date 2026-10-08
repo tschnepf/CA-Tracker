@@ -222,6 +222,7 @@ public sealed class ProcoreSyncService : IDisposable
                 return new ProcoreDiscovery { Problem = $"CA Tracker couldn't list your Procore projects: {message}" };
             }
 
+            await ProcoreSignIn.KeepAsync(core);
             return ParseDiscovery(answer!.Value, siteHost);
         }
         catch (OperationCanceledException)
@@ -424,6 +425,11 @@ public sealed class ProcoreSyncService : IDisposable
             if (runRateLimit is { } rateLimit)
             {
                 AppLog.Info("procore", $"Procore's rate limit: {rateLimit.Remaining:N0} of {rateLimit.Limit:N0} requests left.");
+            }
+
+            if (result.SyncedProjectIds.Count > 0)
+            {
+                await ProcoreSignIn.KeepAsync(core);
             }
 
             return result;
