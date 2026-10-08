@@ -6,7 +6,7 @@
     "x-source": {
       "repository": "workload-tracker",
       "file": "backend/openapi.json",
-      "commit": "e23db66ade1d9500898c94e4e81c94b17b6c0a6b"
+      "commit": "12b2cdc0a1866abf1806b6781f3d80f7027a72d5"
     }
   },
   "paths": {
@@ -1416,8 +1416,8 @@
           "folderPath": {
             "type": "string",
             "nullable": true,
-            "description": "The item's folder relative to the project's CA folder.",
-            "maxLength": 500
+            "description": "The full path of the item's folder as CA Tracker sees it (the first one when it has several), for pasting into Explorer.",
+            "maxLength": 1024
           }
         },
         "required": [
@@ -1592,7 +1592,8 @@
           },
           "folderPath": {
             "type": "string",
-            "nullable": true
+            "nullable": true,
+            "description": "The item's folder as a full path, to paste into Explorer."
           },
           "freshness": {
             "$ref": "#/components/schemas/CaFreshnessEnum"

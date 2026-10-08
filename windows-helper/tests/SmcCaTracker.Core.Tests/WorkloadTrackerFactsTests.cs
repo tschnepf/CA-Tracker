@@ -61,21 +61,26 @@ public class ItemFactsTests
     [Fact]
     public void TheDisciplineGoesAsTheListShowsItWithHowItWasFound()
     {
-        var project = new TrackerProject { CaFolder = CaFolder };
         var electrical = Disciplines.Find("Electrical")!;
 
-        var detected = ItemFacts.Of(Row(RowStatus.Open, Folder(@"RFIs\Elec\RFI-0001 - Panel"), electrical, DisciplineSource.Detected), project)!;
-        Assert.Equal(new ItemFacts("Electrical", "detected", "open", @"RFIs\Elec\RFI-0001 - Panel"), detected);
+        // The folder goes as its full path, as people paste it into Explorer.
+        var detected = ItemFacts.Of(Row(RowStatus.Open, Folder(@"RFIs\Elec\RFI-0001 - Panel"), electrical, DisciplineSource.Detected))!;
+        Assert.Equal(new ItemFacts("Electrical", "detected", "open", $@"{CaFolder}\RFIs\Elec\RFI-0001 - Panel"), detected);
 
-        var set = ItemFacts.Of(Row(RowStatus.Filed, Folder(@"RFIs\~Returned\RFI-0001 - Panel", FolderLocation.Returned), electrical, DisciplineSource.Manual), project)!;
-        Assert.Equal(new ItemFacts("Electrical", "set", "filed", @"RFIs\~Returned\RFI-0001 - Panel"), set);
+        var set = ItemFacts.Of(Row(RowStatus.Filed, Folder(@"RFIs\~Returned\RFI-0001 - Panel", FolderLocation.Returned), electrical, DisciplineSource.Manual))!;
+        Assert.Equal(new ItemFacts("Electrical", "set", "filed", $@"{CaFolder}\RFIs\~Returned\RFI-0001 - Panel"), set);
 
         // Set to none by hand, and nothing found: both say there is none, but only one was chosen.
-        Assert.Equal(new ItemFacts(null, "set", "no_folder", null), ItemFacts.Of(Row(RowStatus.NoFolder, source: DisciplineSource.Manual), project));
-        Assert.Equal(new ItemFacts(null, null, "no_folder", null), ItemFacts.Of(Row(RowStatus.NoFolder), project));
+        Assert.Equal(new ItemFacts(null, "set", "no_folder", null), ItemFacts.Of(Row(RowStatus.NoFolder, source: DisciplineSource.Manual)));
+        Assert.Equal(new ItemFacts(null, null, "no_folder", null), ItemFacts.Of(Row(RowStatus.NoFolder)));
 
         // A folder with no item isn't sent.
-        Assert.Null(ItemFacts.Of(Row(RowStatus.NotInProvider, Folder(@"RFIs\RFI-0009 - Gone"), item: false), project));
+        Assert.Null(ItemFacts.Of(Row(RowStatus.NotInProvider, Folder(@"RFIs\RFI-0009 - Gone"), item: false)));
+
+        // A path longer than the contract allows is cut to 1024 characters.
+        var deep = ItemFacts.Of(Row(RowStatus.Open, Folder(string.Join('\\', Enumerable.Repeat(new string('d', 99), 12)))))!;
+        Assert.Equal(1024, deep.FolderPath!.Length);
+        Assert.StartsWith(CaFolder, deep.FolderPath);
     }
 
     [Fact]
@@ -126,8 +131,8 @@ public class ItemFactsTests
 
         var facts = ItemFacts.ForProject(snapshot, settings, Folders);
 
-        Assert.Equal(@"RFIs\BB-001 - Slab", facts["rfi|10"].FolderPath);
-        Assert.Equal(@"RFIs\TFO-002 - Ceiling", facts["rfi|11"].FolderPath);
+        Assert.Equal(@"Z:\Jobs\Tower BB\CA\RFIs\BB-001 - Slab", facts["rfi|10"].FolderPath);
+        Assert.Equal(@"Z:\Jobs\Tower TFO\CA\RFIs\TFO-002 - Ceiling", facts["rfi|11"].FolderPath);
         // Of a Procore item's revisions only the newest is compared; the older one keeps what the tracker has.
         Assert.Equal("no_folder", facts["rfi|13"].FolderStatus);
         Assert.False(facts.ContainsKey("rfi|12"));
@@ -172,9 +177,17 @@ public class ItemFactsTests
 
         Assert.Empty(PinnedSchema.Problems("CaItemRequest", without.ToJsonString()));
         Assert.Empty(PinnedSchema.Problems("CaItemRequest", cleared.ToJsonString()));
-        var full = ObservationBuilder.Item(item, new ItemFacts("Electrical", "set", "ready_to_return", @"RFIs\RFI-0001 - Panel"));
+        var path = $@"{CaFolder}\RFIs\RFI-0001 - Panel";
+        var full = ObservationBuilder.Item(item, new ItemFacts("Electrical", "set", "ready_to_return", path));
         Assert.Empty(PinnedSchema.Problems("CaItemRequest", JsonSerializer.Serialize(full, ContractJson.Options)));
-        Assert.Equal(ItemFacts.FingerprintOf(full), new ItemFacts("Electrical", "set", "ready_to_return", @"RFIs\RFI-0001 - Panel").Fingerprint);
+        Assert.Equal(ItemFacts.FingerprintOf(full), new ItemFacts("Electrical", "set", "ready_to_return", path).Fingerprint);
+
+        // The pinned schema takes a full path of up to 1024 characters.
+        var longest = ObservationBuilder.Item(item, new ItemFacts(null, null, "open", new string('p', 1024)));
+        Assert.Empty(PinnedSchema.Problems("CaItemRequest", JsonSerializer.Serialize(longest, ContractJson.Options)));
+        var tooLong = JsonNode.Parse(JsonSerializer.Serialize(longest, ContractJson.Options))!.AsObject();
+        tooLong["folderPath"] = new string('p', 1025);
+        Assert.NotEmpty(PinnedSchema.Problems("CaItemRequest", tooLong.ToJsonString()));
         Assert.Null(ItemFacts.FingerprintOf(ObservationBuilder.Item(item)));
     }
 }
@@ -274,7 +287,7 @@ public sealed class WorkloadTrackerFactsSyncTests : IDisposable
         var observation = Assert.Single(tracker.Observations);
         Assert.Empty(PinnedSchema.Problems("CaObservationPartRequest", observation.ToJsonString()));
         var first = Sent(observation, "1");
-        Assert.Equal(("Electrical", "detected", "open", @"RFIs\RFI-0001 - Elec - Item 1"),
+        Assert.Equal(("Electrical", "detected", "open", $@"{CaFolder}\RFIs\RFI-0001 - Elec - Item 1"),
             (first["discipline"]!.GetValue<string>(), first["disciplineSource"]!.GetValue<string>(),
                 first["folderStatus"]!.GetValue<string>(), first["folderPath"]!.GetValue<string>()));
         var second = Sent(observation, "2");
@@ -329,7 +342,7 @@ public sealed class WorkloadTrackerFactsSyncTests : IDisposable
         await sync.SendAsync();
 
         var item = Assert.Single(Assert.Single(tracker.Observations)["items"]!.AsArray())!;
-        Assert.Equal(("1", "reopened", @"RFIs\~Returned\RFI-0001 - Elec - Item 1"),
+        Assert.Equal(("1", "reopened", $@"{CaFolder}\RFIs\~Returned\RFI-0001 - Elec - Item 1"),
             (item["providerItemId"]!.GetValue<string>(), item["folderStatus"]!.GetValue<string>(), item["folderPath"]!.GetValue<string>()));
     }
 

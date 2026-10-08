@@ -9,13 +9,14 @@ namespace SmcCaTracker.Core.WorkloadTracker;
 /// <summary>
 /// What CA Tracker itself knows about an item, sent with it so Workload Tracker's lists can show the
 /// desktop's Discipline and Folder status columns: the discipline as the list shows it (without "(auto)")
-/// and whether it was detected or set by hand, where the item's CA folder stands, and the folder relative
-/// to the project's CA folder. Values are already cut to the contract, so they hash the same as sent.
+/// and whether it was detected or set by hand, where the item's CA folder stands, and the folder's full path
+/// as this PC sees it (people copy it into Explorer). Values are already cut to the contract, so they hash
+/// the same as sent.
 /// </summary>
 public sealed record ItemFacts(string? Discipline, string? DisciplineSource, string FolderStatus, string? FolderPath)
 {
     private const int MaxDiscipline = 100;
-    private const int MaxFolderPath = 500;
+    private const int MaxFolderPath = 1024;
 
     /// <summary>Changes when anything sent changes; kept per item once the tracker has accepted it.</summary>
     public string Fingerprint => FingerprintOf(Discipline, DisciplineSource, FolderStatus, FolderPath);
@@ -43,7 +44,7 @@ public sealed record ItemFacts(string? Discipline, string? DisciplineSource, str
     /// A compared row's facts, or null when it has no item. "Set" with no discipline means it was set to
     /// none by hand; neither a discipline nor a source means none was found.
     /// </summary>
-    public static ItemFacts? Of(ComparisonRow row, TrackerProject project)
+    public static ItemFacts? Of(ComparisonRow row)
     {
         if (row.Item is null || FolderStatusOf(row.Status) is not { } status)
         {
@@ -57,12 +58,7 @@ public sealed record ItemFacts(string? Discipline, string? DisciplineSource, str
             _ => null
         };
         var discipline = row.Discipline is null ? null : Cut(row.Discipline.Label, MaxDiscipline);
-        string? path = null;
-        if (row.Folder is { } folder)
-        {
-            path = Cut(string.IsNullOrWhiteSpace(project.CaFolder) ? folder.FullPath : Path.GetRelativePath(project.CaFolder, folder.FullPath), MaxFolderPath);
-        }
-
+        var path = row.Folder is { } folder ? Cut(folder.FullPath, MaxFolderPath) : null;
         return new ItemFacts(discipline, source, status, path);
     }
 
@@ -103,7 +99,7 @@ public sealed record ItemFacts(string? Discipline, string? DisciplineSource, str
             {
                 foreach (var row in type.Rows)
                 {
-                    if (Of(row, project) is not { } facts)
+                    if (Of(row) is not { } facts)
                     {
                         continue;
                     }
@@ -122,8 +118,9 @@ public sealed record ItemFacts(string? Discipline, string? DisciplineSource, str
 
     /// <summary>
     /// Whether a row's folder beats the one kept: any folder beats none, then an active folder beats a
-    /// returned one, then the first path. Rows of an item with several folders come in no fixed order, so
-    /// the choice is made the same way every time (the folder path would otherwise change between sends).
+    /// returned one, then the first path. An item with several folders (Duplicate) sends its first one; its
+    /// rows come in no fixed order, so "first" is decided the same way every time (the path would otherwise
+    /// change between sends).
     /// </summary>
     private static bool Better(FolderEntry? candidate, FolderEntry? kept)
     {

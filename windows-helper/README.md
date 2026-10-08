@@ -316,9 +316,9 @@ downloads aren't supported yet.
   Windows user), **Send now** and **Disconnect…** (revokes this PC's connection). Once connected, what
   you read from Helix and Procore is sent every minute while CA Tracker is open: items of projects set
   up in the app, counts only for the others. Each item also carries its discipline (and whether it was
-  detected or set by hand) and its folder status, with its folder's path inside the CA folder; a discipline
-  set by hand or a folder that moves is sent at the next send. The CA folder's own location and the files
-  stay on this PC. A project bound to a Workload Tracker project (Project settings) shows an **Assigned**
+  detected or set by hand) and its folder status, with its folder's full path as this PC sees it (Workload
+  Tracker offers it to copy into Explorer); a discipline set by hand or a folder that moves is sent at the
+  next send. The files stay on this PC. A project bound to a Workload Tracker project (Project settings) shows an **Assigned**
   column; assignments made here show at once and are sent with the next send, and others' are read back
   every five minutes. An item someone marked complete in Workload Tracker that isn't returned in Helix or
   Procore yet shows **Done in Workload Tracker** beside the names (and in the item details).
