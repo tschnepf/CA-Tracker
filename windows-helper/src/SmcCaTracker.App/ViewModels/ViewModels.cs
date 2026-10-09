@@ -633,7 +633,7 @@ public sealed class RowViewModel : ObservableObject
             : $"Open it in {Project.ProviderLabel} (in your web browser)";
 
     /// <summary>Hover text for the row's Open folder: where its folder is, or why there is none to open.</summary>
-    public string OpenFolderToolTip => HasFolder ? $"Open its folder: {FolderPathText}"
+    public string OpenFolderToolTip => Row.Folder is { } folder ? $"Open its folder: {folder.FullPath}"
         : CanOpenParentFolder ? "No folder for it yet. Download makes one; ▾ → Open parent folder opens where it will go."
         : "No folder for it yet, and this project has no CA folder. Choose one in Project settings.";
 
