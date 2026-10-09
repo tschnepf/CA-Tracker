@@ -49,6 +49,13 @@ public partial class DownloadWindow : Window
     private int filesDone;
     private int filesPlanned;
 
+    /// <summary>
+    /// Set discipline on an item with none: asks for its discipline (over this window) and saves it, as the row's Set
+    /// discipline does, then returns the item as it is now (a new folder's parent follows the discipline). Null when
+    /// nothing was chosen. Set by the main window.
+    /// </summary>
+    public Func<DownloadRequest, Window, Task<DownloadRequest?>>? DisciplineChooser { get; init; }
+
     /// <param name="verify">
     /// Checking the items' folders against Helix or Procore: each says whether its folder has every file the
     /// site has for it, and the missing files start checked, so Download gets exactly those.
@@ -372,6 +379,19 @@ public partial class DownloadWindow : Window
         {
             // Picking the item's own folder uses it; picking any other folder puts a new item folder inside it.
             item.ChooseFolder(dialog.FolderName);
+        }
+    }
+
+    private async void SetDiscipline_Click(object sender, RoutedEventArgs e)
+    {
+        if (DisciplineChooser is null || sender is not FrameworkElement { DataContext: DownloadItemViewModel { CanSetDiscipline: true } item })
+        {
+            return;
+        }
+
+        if (await DisciplineChooser(item.Request, this) is { } now)
+        {
+            item.ApplyDiscipline(now);
         }
     }
 

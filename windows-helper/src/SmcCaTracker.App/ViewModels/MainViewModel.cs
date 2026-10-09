@@ -2687,17 +2687,7 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
             return null;
         }
 
-        string? parent = null;
-        if (!string.IsNullOrWhiteSpace(project.CaFolder)
-            && row.Comparison.For(row.Row.ItemType).Scan is { Error: null } scan && scan.TypeFolderPath.Length > 0)
-        {
-            // Into the matching discipline and BB/TFO folders when the project is organised that way
-            // (e.g. Submittals\Elec\BB); otherwise the RFI/Submittal folder itself. The discipline is
-            // the one set by hand for the item, else the one detected from its title.
-            var phase = project.Scope is { IsSplit: true } scope ? scope.Phase : (ProjectPhase?)null;
-            parent = FolderScanner.SuggestParent(scan.TypeFolderPath, row.Row.Discipline, phase);
-        }
-
+        var parent = NewFolderParent(row);
         var projectName = !string.IsNullOrWhiteSpace(project.Connection.ProjectName)
             ? project.Connection.ProjectName
             : row.Project.Snapshot?.ProjectName ?? "";
@@ -2711,8 +2701,78 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         return new DownloadRequest(project.Connection.Provider, item.ItemType, item.ItemId, project.Connection.ProjectId, item.Number, item.Title,
             projectName, row.Row.Folder?.FullPath, parent, moveBackTo,
             string.IsNullOrWhiteSpace(project.Connection.AccountId) ? null : project.Connection.AccountId,
-            string.IsNullOrWhiteSpace(project.Connection.Host) ? null : project.Connection.Host);
+            string.IsNullOrWhiteSpace(project.Connection.Host) ? null : project.Connection.Host,
+            row.Row.Discipline?.Label, row.Row.DisciplineSource);
     }
+
+    /// <summary>
+    /// Where the row's item folder is or will be (Open parent folder): the folder its folder is in, or for an item
+    /// with no folder yet the one Download makes it in. Null when its project has no CA folder or its RFI/Submittal
+    /// folder couldn't be listed.
+    /// </summary>
+    public string? ParentFolderFor(RowViewModel row) => row.Row.Folder is { } folder
+        ? Path.GetDirectoryName(Path.TrimEndingDirectorySeparator(folder.FullPath))
+        : NewFolderParent(row);
+
+    /// <summary>
+    /// What a row's Open parent folder opens: <see cref="ParentFolderFor"/>, or when that isn't there yet (a discipline
+    /// folder Download would make, a new "Elec"), the nearest folder above it, with a note for the status bar saying so.
+    /// No folder: the note says why (shown as a message).
+    /// </summary>
+    public (string? Folder, string? Note) ParentFolderToOpen(RowViewModel row)
+    {
+        if (ParentFolderFor(row) is not { } parent)
+        {
+            return (null, $"The {row.TypeLabel} folder couldn't be listed, so where its folder goes isn't known. Try Rescan folder.");
+        }
+
+        var existing = parent;
+        while (!Directory.Exists(existing) && Path.GetDirectoryName(existing) is { } up)
+        {
+            existing = up;
+        }
+
+        if (!Directory.Exists(existing))
+        {
+            return (null, $"{parent} can't be found. Check that the CA folder's drive is connected.");
+        }
+
+        if (string.Equals(Path.TrimEndingDirectorySeparator(existing), Path.TrimEndingDirectorySeparator(parent), StringComparison.OrdinalIgnoreCase))
+        {
+            return (parent, null);
+        }
+
+        var name = Path.GetFileName(Path.TrimEndingDirectorySeparator(existing));
+        return (existing, $"Its folder goes in {Path.GetRelativePath(existing, parent)}, which isn't in {name} yet (Download makes it), so {name} opened.");
+    }
+
+    /// <summary>
+    /// Where Download makes a new "&lt;number&gt; - &lt;name&gt;" folder for the row's item: into the matching discipline
+    /// and BB/TFO folders when the project is organised that way (e.g. Submittals\Elec\BB), otherwise the RFI/Submittal
+    /// folder itself. The discipline is the one set by hand for the item, else the one detected from its title. A
+    /// discipline folder that isn't there yet (a new "Elec") is made when files are downloaded.
+    /// </summary>
+    private static string? NewFolderParent(RowViewModel row)
+    {
+        var project = row.Project.Project;
+        if (string.IsNullOrWhiteSpace(project.CaFolder)
+            || row.Comparison.For(row.Row.ItemType).Scan is not { Error: null } scan || scan.TypeFolderPath.Length == 0)
+        {
+            return null;
+        }
+
+        var phase = project.Scope is { IsSplit: true } scope ? scope.Phase : (ProjectPhase?)null;
+        return FolderScanner.SuggestParent(scan.TypeFolderPath, row.Row.Discipline, phase);
+    }
+
+    /// <summary>The row of the item a download window lists, while its project is shown.</summary>
+    public RowViewModel? RowForDownload(DownloadRequest request) => allRows.FirstOrDefault(row =>
+        row.Row.Item is { } item
+        && item.ItemId == request.ItemId
+        && string.Equals(item.ItemType, request.ItemType, StringComparison.OrdinalIgnoreCase)
+        && row.Project.Project.Connection is { } connection
+        && connection.ProjectId == request.ProjectId
+        && string.Equals(connection.Provider, request.Provider, StringComparison.OrdinalIgnoreCase));
 
     public IReadOnlyList<CatalogProject> KnownProviderProjects() => store.CatalogWithSnapshots();
 

@@ -3,6 +3,7 @@ using System.ComponentModel;
 using System.Globalization;
 using System.IO;
 using SmcCaTracker.App.Services;
+using SmcCaTracker.Core.Comparison;
 using SmcCaTracker.Core.Downloads;
 using SmcCaTracker.Core.Models;
 using SmcCaTracker.Core.Operations;
@@ -19,6 +20,11 @@ namespace SmcCaTracker.App.ViewModels;
 /// </param>
 /// <param name="AccountId">Procore: the project's company, which Procore needs to answer for it.</param>
 /// <param name="Host">Procore: the server the project is on ("app.procore.com", "us02.procore.com").</param>
+/// <param name="Discipline">The item's discipline ("Electrical"), set by hand or detected; null when it has none.</param>
+/// <param name="DisciplineSource">
+/// Where that came from. <see cref="Core.Comparison.DisciplineSource.None"/>: none was set or detected, so the window asks
+/// for one. Set by hand to none is <see cref="Core.Comparison.DisciplineSource.Manual"/> with no discipline.
+/// </param>
 public sealed record DownloadRequest(
     string Provider,
     string ItemType,
@@ -31,7 +37,9 @@ public sealed record DownloadRequest(
     string? ParentFolder,
     string? MoveBackTo = null,
     string? AccountId = null,
-    string? Host = null)
+    string? Host = null,
+    string? Discipline = null,
+    DisciplineSource DisciplineSource = DisciplineSource.None)
 {
     /// <summary>"Helix" or "Procore", for what the windows say.</summary>
     public string ProviderLabel => Providers.Label(Provider);
@@ -157,6 +165,7 @@ public sealed class DownloadItemViewModel : ObservableObject
         FolderName = DownloadNaming.FolderName(request.Number, request.Title, request.ProjectName);
         Revision = DownloadNaming.Revision(request.Title, request.Number);
         Heading = $"{(request.ItemType == ItemTypes.Submittal ? "Submittal" : "RFI")} {request.Number} · {request.Title}";
+        ShowsDiscipline = request.DisciplineSource == DisciplineSource.None;
         itemFolder = request.ExistingFolder;
         if (IsNewRound)
         {
@@ -172,7 +181,56 @@ public sealed class DownloadItemViewModel : ObservableObject
             : string.IsNullOrWhiteSpace(request.ParentFolder) ? null : WithRevision(Path.Combine(request.ParentFolder, FolderName));
     }
 
-    public DownloadRequest Request { get; }
+    /// <summary>The item and where its files go by default (its discipline and the parent folder follow Set discipline).</summary>
+    public DownloadRequest Request { get; private set; }
+
+    // ---- Discipline ----------------------------------------------------------------------------
+
+    /// <summary>
+    /// The item had no discipline when the window opened (none set by hand and none detected), so a line under its
+    /// heading asks for one. Optional, but it picks the discipline folder a new folder goes in. The line stays for
+    /// the window's life and says what was set, so nothing below it moves.
+    /// </summary>
+    public bool ShowsDiscipline { get; }
+
+    /// <summary>Still no discipline: the line is a warning with Set discipline.</summary>
+    public bool NeedsDiscipline => Request.DisciplineSource == DisciplineSource.None;
+
+    public string DisciplineHeadline => NeedsDiscipline ? "No discipline set"
+        : $"Discipline: {Request.Discipline ?? "None"}{(Request.DisciplineSource == DisciplineSource.Detected ? " (auto)" : "")}";
+
+    public string DisciplineNote => NeedsDiscipline
+        ? itemFolder is null && !folderChosen
+            ? "Optional, but it picks the discipline folder the new folder goes in."
+            : "Optional. CA Tracker and Workload Tracker sort items by discipline."
+        : itemFolder is null && !folderChosen && !HasSaved && Request.ParentFolder is { } parent
+            ? $"The new folder goes in {ShortPath(parent)}."
+            : "Saved for this item.";
+
+    public string DisciplineButtonText => NeedsDiscipline ? "Set discipline…" : "Change discipline…";
+
+    /// <summary>Not while its files are being saved (where they go could change).</summary>
+    public bool CanSetDiscipline => State != DownloadItemState.Downloading;
+
+    /// <summary>
+    /// The discipline was set (Set discipline): the item as it is now. A new folder not saved into yet follows it to
+    /// its discipline folder; a folder that exists, or one chosen with Change, stays where it is.
+    /// </summary>
+    public void ApplyDiscipline(DownloadRequest now)
+    {
+        var parentChanged = !string.Equals(now.ParentFolder, Request.ParentFolder, StringComparison.OrdinalIgnoreCase);
+        Request = Request with { Discipline = now.Discipline, DisciplineSource = now.DisciplineSource, ParentFolder = now.ParentFolder };
+        if (parentChanged && itemFolder is null && !folderChosen && !HasSaved && State != DownloadItemState.Downloading)
+        {
+            Destination = string.IsNullOrWhiteSpace(Request.ParentFolder) ? null : WithRevision(Path.Combine(Request.ParentFolder, FolderName));
+            ApplyChoices(resetChecks: false);
+        }
+
+        foreach (var name in new[] { nameof(NeedsDiscipline), nameof(DisciplineHeadline), nameof(DisciplineNote), nameof(DisciplineButtonText) })
+        {
+            OnPropertyChanged(name);
+        }
+    }
 
     /// <summary>Checking the item's folder against Helix or Procore: every missing file starts checked (not just new PDFs).</summary>
     public bool Verifying { get; }
@@ -202,6 +260,7 @@ public sealed class DownloadItemViewModel : ObservableObject
             {
                 OnPropertyChanged(nameof(CanRetry));
                 OnPropertyChanged(nameof(CanChangeFolder));
+                OnPropertyChanged(nameof(CanSetDiscipline));
             }
         }
     }
@@ -253,6 +312,7 @@ public sealed class DownloadItemViewModel : ObservableObject
             {
                 OnPropertyChanged(nameof(DestinationText));
                 OnPropertyChanged(nameof(DestinationNote));
+                OnPropertyChanged(nameof(DisciplineNote));
             }
         }
     }
@@ -409,7 +469,13 @@ public sealed class DownloadItemViewModel : ObservableObject
     public bool HasSaved
     {
         get => hasSaved;
-        private set => Set(ref hasSaved, value);
+        private set
+        {
+            if (Set(ref hasSaved, value))
+            {
+                OnPropertyChanged(nameof(DisciplineNote));
+            }
+        }
     }
 
     public int CheckedCount => Files.Count(file => file.IsChecked);

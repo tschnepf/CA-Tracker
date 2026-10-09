@@ -20,6 +20,8 @@
             <MenuItem Header="Open newest file" Click="OpenNewestFile_Click" IsEnabled="{Binding CanDownload}"
                       ToolTip="The copy in its folder when it's there, otherwise a copy from Helix (the CA folder isn't changed)" />
             <MenuItem Header="Open folder" Click="OpenRowFolder_Click" IsEnabled="{Binding HasFolder}" />
+            <MenuItem Header="Open parent folder" Click="OpenRowParentFolder_Click" IsEnabled="{Binding CanOpenParentFolder}"
+                      ToolTip="{Binding OpenParentFolderToolTip}" ToolTipService.ShowOnDisabled="True" />
             <MenuItem Header="Verify folder…" Click="VerifyRow_Click" IsEnabled="{Binding CanDownload}"
                       ToolTip="Check that the item's folder has every file Helix has for it" />
             <MenuItem Header="Rescan folder" Click="RescanRowFolder_Click" IsEnabled="{Binding CanRescanFolder}"
@@ -37,6 +39,8 @@
             <MenuItem Header="Open newest file" Click="OpenNewestFile_Click" IsEnabled="{Binding CanDownload}"
                       ToolTip="The copy in its folder when it's there, otherwise a copy from Helix (the CA folder isn't changed)" />
             <MenuItem Header="Open folder" Click="OpenRowFolder_Click" IsEnabled="{Binding HasFolder}" />
+            <MenuItem Header="Open parent folder" Click="OpenRowParentFolder_Click" IsEnabled="{Binding CanOpenParentFolder}"
+                      ToolTip="{Binding OpenParentFolderToolTip}" ToolTipService.ShowOnDisabled="True" />
             <MenuItem Header="Verify folder…" Click="VerifyRow_Click" IsEnabled="{Binding CanDownload}"
                       ToolTip="Check that the item's folder has every file Helix has for it" />
             <MenuItem Header="Rescan folder" Click="RescanRowFolder_Click" IsEnabled="{Binding CanRescanFolder}"

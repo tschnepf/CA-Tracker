@@ -288,6 +288,14 @@ with a leading project name or code taken off the name:
 - Otherwise a new folder is made in the project's RFI or Submittal folder.
 - **Change…** picks somewhere else (needed for projects without a CA folder).
 
+An item with no discipline (none set and none detected from its title or folder) has a yellow **No
+discipline set** line under its heading, shown even while the item is folded away. A discipline is
+optional, but it picks the discipline folder a new folder goes in. **Set discipline…** on that line is
+the row's own Set discipline; once saved, the line says what was set (`Discipline: Plbg  The new folder
+goes in Submittals\Plbg.`) in the same space, and the item's new folder moves to that discipline's
+folder. A folder that exists, or one picked with **Change…**, stays where it is. Its project must be
+shown in the main window.
+
 Nothing is written until you select **Download**, which saves every checked file of every item, item by
 item, with a progress bar (an item still being read is downloaded with its new files when its turn
 comes). **Stop** finishes the file being saved and stops. A file that fails doesn't stop the rest: it
@@ -475,7 +483,8 @@ are recognised too. Items with no folder yet are detected from their title. Dete
 in italics.
 
 Use **Set** in the Discipline column, or check folders and choose **Set discipline…**, to pick one by
-hand, mark a folder as having none, or go back to detecting it. Choices are saved in the tracker per
+hand, mark a folder as having none, or go back to detecting it (the download window asks for one too
+when an item has none). Choices are saved in the tracker per
 folder name, so they follow a folder into `~Returned`. Folders are never renamed. The **Discipline**
 filter above the list shows one discipline at a time.
 
@@ -486,6 +495,12 @@ on one row) and the choice is saved for those items. **Download** then puts the 
 for a Base Build project). If the Submittal or RFI folder is split by discipline but has no folder for
 that one yet, a new one (e.g. `Mech`) is suggested; the download window shows the full path before
 anything is created. The choice stays with the item after its folder exists.
+
+**Open parent folder** (a row's right-click or ▾ menu, right after Open folder) opens the folder the
+item's folder is in, or for an item with no folder yet, the folder **Download** will make it in (its
+discipline folder when the project has them). A discipline folder that Download would make isn't there
+yet, so the RFI or Submittal folder opens instead and the status bar says so. It is off, with a tooltip
+saying why, for a project with no CA folder.
 
 ## What "returned" means
 

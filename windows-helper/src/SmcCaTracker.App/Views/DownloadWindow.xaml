@@ -125,6 +125,45 @@
                                     </ToggleButton>
                                 </DockPanel>
 
+                                <!-- No discipline when the window opened: a warning under the heading (shown folded too) with Set
+                                     discipline. Once set it says what was set, in the same space, so nothing below it moves. -->
+                                <Border CornerRadius="6" BorderThickness="1" Padding="8,4" Margin="24,6,0,2"
+                                        Visibility="{Binding ShowsDiscipline, Converter={StaticResource Visible}}">
+                                    <Border.Style>
+                                        <Style TargetType="Border">
+                                            <Setter Property="Background" Value="{DynamicResource NeutralSoftBrush}" />
+                                            <Setter Property="BorderBrush" Value="Transparent" />
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding NeedsDiscipline}" Value="True">
+                                                    <Setter Property="Background" Value="{DynamicResource WarningSoftBrush}" />
+                                                    <Setter Property="BorderBrush" Value="{DynamicResource WarningBrush}" />
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </Border.Style>
+                                    <DockPanel>
+                                        <Button DockPanel.Dock="Right" Content="{Binding DisciplineButtonText}" Click="SetDiscipline_Click"
+                                                IsEnabled="{Binding CanSetDiscipline}" Margin="8,0,0,0" VerticalAlignment="Center"
+                                                ToolTip="Choose its discipline (the same as Set discipline… on its row)" />
+                                        <TextBlock DockPanel.Dock="Left" Width="20" FontSize="14" VerticalAlignment="Center">
+                                            <TextBlock.Style>
+                                                <Style TargetType="TextBlock">
+                                                    <Setter Property="Text" Value="✓" />
+                                                    <Setter Property="Foreground" Value="{DynamicResource SuccessBrush}" />
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding NeedsDiscipline}" Value="True">
+                                                            <Setter Property="Text" Value="⚠" />
+                                                            <Setter Property="Foreground" Value="{DynamicResource WarningBrush}" />
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </TextBlock.Style>
+                                        </TextBlock>
+                                        <!-- The runs are on one line: a line break between them would add a space. -->
+                                        <TextBlock VerticalAlignment="Center" TextTrimming="CharacterEllipsis"><Run Text="{Binding DisciplineHeadline, Mode=OneWay}" FontWeight="SemiBold" /><Run Text="   " /><Run Text="{Binding DisciplineNote, Mode=OneWay}" Foreground="{DynamicResource TextSecondary}" /></TextBlock>
+                                    </DockPanel>
+                                </Border>
+
                                 <TextBlock Text="{Binding Message}" TextWrapping="Wrap" Foreground="{DynamicResource WarningBrush}" Margin="24,2,0,2"
                                            Visibility="{Binding HasMessage, Converter={StaticResource Visible}}" />
 

@@ -687,16 +687,42 @@ public partial class MainWindow : Window
         await ChooseDisciplineAsync(rows, $"{rows.Count} checked item{(rows.Count == 1 ? "" : "s")}");
     }
 
-    private async Task ChooseDisciplineAsync(IReadOnlyList<RowViewModel> rows, string subject)
+    /// <summary>Asks for the rows' discipline (over <paramref name="owner"/>, else this window) and saves it. False when cancelled.</summary>
+    private async Task<bool> ChooseDisciplineAsync(IReadOnlyList<RowViewModel> rows, string subject, Window? owner = null)
     {
         var current = rows.Count == 1 && rows[0].Row.DisciplineSource == DisciplineSource.Manual
             ? rows[0].Row.Discipline?.Code ?? Disciplines.NoneCode
             : null;
-        var window = new DisciplineWindow(subject, current) { Owner = this };
-        if (window.ShowDialog() == true)
+        var window = new DisciplineWindow(subject, current) { Owner = owner ?? this };
+        if (window.ShowDialog() != true)
         {
-            await viewModel.SetDisciplineAsync(rows, window.Result);
+            return false;
         }
+
+        await viewModel.SetDisciplineAsync(rows, window.Result);
+        return true;
+    }
+
+    /// <summary>
+    /// A download window's Set discipline, for an item it lists: the row's Set discipline, then the item as it is now
+    /// (where a new folder goes follows the discipline). The item's row is needed, so its project must be shown.
+    /// </summary>
+    private async Task<DownloadRequest?> ChooseDownloadDisciplineAsync(DownloadRequest request, Window owner)
+    {
+        if (viewModel.RowForDownload(request) is not { CanSelect: true } row)
+        {
+            MessageBox.Show(owner, "Its project isn't shown in CA Tracker now. Show its project, then set the discipline on its row.",
+                "CA Tracker", MessageBoxButton.OK, MessageBoxImage.Information);
+            return null;
+        }
+
+        if (!await ChooseDisciplineAsync(new[] { row }, row.Row.Folder?.Name ?? $"{row.Number} - {row.Title}", owner))
+        {
+            return null;
+        }
+
+        // The list was compared again: the item's row is a new one.
+        return viewModel.RowForDownload(request) is { } now ? viewModel.DownloadRequestFor(now) : null;
     }
 
     private DateTime personPopupClosedAt;
@@ -1421,6 +1447,28 @@ public partial class MainWindow : Window
         }
     }
 
+    /// <summary>A row's Open parent folder (see <see cref="MainViewModel.ParentFolderToOpen"/>).</summary>
+    private void OpenRowParentFolder_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not FrameworkElement { DataContext: RowViewModel { CanOpenParentFolder: true } row })
+        {
+            return;
+        }
+
+        var (folder, note) = viewModel.ParentFolderToOpen(row);
+        if (folder is null)
+        {
+            ShowInfo(note ?? "That folder can't be found.");
+            return;
+        }
+
+        OpenInExplorer(folder);
+        if (note is not null)
+        {
+            viewModel.StatusMessage = note;
+        }
+    }
+
     private DownloadWindow? batchWindow;
 
     /// <summary>
@@ -1466,7 +1514,7 @@ public partial class MainWindow : Window
 
     private DownloadWindow ShowDownloadWindow(IReadOnlyList<DownloadRequest> requests, bool verify = false)
     {
-        var window = new DownloadWindow(requests, viewModel.Paths, verify) { Owner = this };
+        var window = new DownloadWindow(requests, viewModel.Paths, verify) { Owner = this, DisciplineChooser = ChooseDownloadDisciplineAsync };
         window.Downloaded += async (_, _) => await viewModel.RecheckFoldersAsync();
         downloadWindowsOpen++;
         window.Closed += (_, _) => downloadWindowsOpen--;
