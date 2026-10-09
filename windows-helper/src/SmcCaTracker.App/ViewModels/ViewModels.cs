@@ -226,8 +226,9 @@ public sealed class ProjectViewModel : ObservableObject
         }
     }
 
-    private string CompanyPart =>
-        IsPlaceholder && !string.IsNullOrWhiteSpace(project.CompanyName) ? $" · {project.CompanyName}" : "";
+    /// <summary>The subtitle's start, source first: "Helix · BB", or "Procore · Ryan Companies" for a project with no CA folder yet.</summary>
+    private string SourcePart => string.Join(" · ", new[] { ProviderLabel, IsPlaceholder ? project.CompanyName?.Trim() ?? "" : "", PhaseText }
+        .Where(text => text.Length > 0));
 
     public RefreshRequest? ActiveRefresh
     {
@@ -321,51 +322,51 @@ public sealed class ProjectViewModel : ObservableObject
     {
         get
         {
-            var part = PhaseText.Length > 0 ? $"{PhaseText} · " : "";
             if (project.Connection is null)
             {
-                return $"{part}Not linked to Helix or Procore";
+                return PhaseText.Length > 0 ? $"Not linked to Helix or Procore · {PhaseText}" : "Not linked to Helix or Procore";
             }
 
+            var source = SourcePart;
             if (IsArchived)
             {
-                return $"{part}{(project.Connection is null ? "" : ProviderLabel + CompanyPart + " · ")}archived";
+                return $"{source} · archived";
             }
 
             if (IsRefreshing)
             {
-                return $"{part}{ProviderLabel}{CompanyPart} · syncing now…";
+                return $"{source} · syncing now…";
             }
 
             if (isQueued)
             {
-                return $"{part}{ProviderLabel}{CompanyPart} · waiting to sync…";
+                return $"{source} · waiting to sync…";
             }
 
             if (JustSynced && !LastReadFailed && snapshot is not null)
             {
-                return $"{part}{ProviderLabel}{CompanyPart} · synced just now ({snapshot.Items.Count} items)";
+                return $"{source} · synced just now ({snapshot.Items.Count} items)";
             }
 
             if (IsSyncSkipped)
             {
-                return $"{part}{ProviderLabel}{CompanyPart} · sync turned off";
+                return $"{source} · sync turned off";
             }
 
             if (LastReadFailed)
             {
-                return $"{part}{ProviderLabel}{CompanyPart} · ⚠ last sync failed {Formatting.When(lastRun!.StartedAt)}";
+                return $"{source} · ⚠ last sync failed {Formatting.When(lastRun!.StartedAt)}";
             }
 
             if (IsPlaceholder && snapshot is null)
             {
-                return $"{ProviderLabel}{CompanyPart} · waiting for the first sync";
+                return $"{source} · waiting for the first sync";
             }
 
             // When it was synced is in the tooltip (and the pill above the list); this says what's coming up.
             return snapshot is null
-                ? $"{part}{ProviderLabel} · not synced yet"
-                : $"{part}{ProviderLabel}{CompanyPart}{(nextDue.Length > 0 ? $" · {nextDue}" : "")}";
+                ? $"{source} · not synced yet"
+                : $"{source}{(nextDue.Length > 0 ? $" · {nextDue}" : "")}";
         }
     }
 
@@ -626,10 +627,15 @@ public sealed class RowViewModel : ObservableObject
 
     /// <summary>Hover text for the row's Open Online: where the item opens (a folder with no item has nothing to open online).</summary>
     public string OpenToolTip => !HasItem
-        ? "No Helix or Procore item for this folder. ▾ → Open folder opens the folder."
+        ? "No Helix or Procore item for this folder. The folder button beside this one opens the folder."
         : string.Equals(Project.Project.Connection?.Provider, Providers.Helix, StringComparison.OrdinalIgnoreCase)
             ? "Open it in Helix, in the panel on the right"
             : $"Open it in {Project.ProviderLabel} (in your web browser)";
+
+    /// <summary>Hover text for the row's Open folder: where its folder is, or why there is none to open.</summary>
+    public string OpenFolderToolTip => HasFolder ? $"Open its folder: {FolderPathText}"
+        : CanOpenParentFolder ? "No folder for it yet. Download makes one; ▾ → Open parent folder opens where it will go."
+        : "No folder for it yet, and this project has no CA folder. Choose one in Project settings.";
 
     /// <summary>"Open in Helix" / "Open in Procore" in the row's menu.</summary>
     public string OpenOnlineText => Project.ProviderLabel.Length > 0 ? $"Open in {Project.ProviderLabel}" : "Open online";

@@ -181,8 +181,9 @@ many items they act on; the count beside them says when some checked items are h
 - **Column widths** fit the longest text in each column (every row, not just those on screen), so
   titles and names show in full. If the window is too narrow, only Title, Ball in court, Folder and the
   other long-text columns shorten (hover for the full text); anything still too wide scrolls sideways.
-  The check box and each row's **Folder**, **Open Online**, **Download** and **Verify** links stay in place (the same
-  actions, and Set discipline, are on right-click).
+  The check box and each row's buttons stay in place: **Open Online** (globe), **Open folder** (folder),
+  **Download** and **▾** (the same actions, and Set discipline, are on right-click). **Due** sits right before
+  **Days in court**.
 
 ## Items: filter and sort
 
@@ -212,7 +213,7 @@ updating so the new fields are read.
 
 ## Opening an item
 
-**Open Online** on a row (or double-clicking a row that has no folder yet) opens that exact RFI or
+**Open Online** (the globe button) on a row (or double-clicking a row that has no folder yet) opens that exact RFI or
 Submittal; double-clicking a row with a folder opens the folder. Helix items open in the **item panel** beside the
 list (drag the bar between them to resize): Helix has no web address for a single item, so the panel
 opens the project's RFI or Submittal list in CA Tracker's browser (already signed in) and then the item
@@ -496,7 +497,10 @@ for a Base Build project). If the Submittal or RFI folder is split by discipline
 that one yet, a new one (e.g. `Mech`) is suggested; the download window shows the full path before
 anything is created. The choice stays with the item after its folder exists.
 
-**Open parent folder** (a row's right-click or ▾ menu, right after Open folder) opens the folder the
+**Open folder** (the folder button on a row, or right-click) opens the item's folder in Explorer; it is off,
+with a tooltip saying why, for an item with no folder yet.
+
+**Open parent folder** (a row's ▾ menu, or right-click right after Open folder) opens the folder the
 item's folder is in, or for an item with no folder yet, the folder **Download** will make it in (its
 discipline folder when the project has them). A discipline folder that Download would make isn't there
 yet, so the RFI or Submittal folder opens instead and the status bar says so. It is off, with a tooltip

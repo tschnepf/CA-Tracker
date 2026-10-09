@@ -33,12 +33,12 @@
                       ToolTip="{Binding AssignMenuToolTip}" ToolTipService.ShowOnDisabled="True" />
         </ContextMenu>
 
-        <!-- A row's ▾: what isn't on its own buttons (Open and Download are). Not shared, so each ▾ gets its own. -->
+        <!-- A row's ▾: what isn't on its own buttons (Open Online, Open folder and Download are). Not shared, so each ▾
+             gets its own. -->
         <ContextMenu x:Key="RowMoreMenu" x:Shared="False">
             <MenuItem Header="Show details" Click="ShowRowDetails_Click" ToolTip="Show this item in the details pane beside the list" />
             <MenuItem Header="Open newest file" Click="OpenNewestFile_Click" IsEnabled="{Binding CanDownload}"
                       ToolTip="The copy in its folder when it's there, otherwise a copy from Helix (the CA folder isn't changed)" />
-            <MenuItem Header="Open folder" Click="OpenRowFolder_Click" IsEnabled="{Binding HasFolder}" />
             <MenuItem Header="Open parent folder" Click="OpenRowParentFolder_Click" IsEnabled="{Binding CanOpenParentFolder}"
                       ToolTip="{Binding OpenParentFolderToolTip}" ToolTipService.ShowOnDisabled="True" />
             <MenuItem Header="Verify folder…" Click="VerifyRow_Click" IsEnabled="{Binding CanDownload}"
@@ -51,6 +51,15 @@
                       Visibility="{Binding ShowsAssignMenu, Converter={StaticResource Visible}}"
                       ToolTip="{Binding AssignMenuToolTip}" ToolTipService.ShowOnDisabled="True" />
         </ContextMenu>
+
+        <!-- A row's icon buttons (Open Online's globe, Open folder's folder): Windows' own icon font, square, as tall as
+             Download beside them. -->
+        <Style x:Key="RowIconButton" TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
+            <Setter Property="FontFamily" Value="Segoe Fluent Icons, Segoe MDL2 Assets" />
+            <Setter Property="FontSize" Value="14" />
+            <Setter Property="Padding" Value="0" />
+            <Setter Property="Width" Value="30" />
+        </Style>
 
         <!-- A view at the top of the project list (My work, Overdue): looks like a project row, highlighted
              while it is the one showing (Tag bound to whether it is). -->
@@ -945,22 +954,25 @@
                                     </DataTemplate>
                                 </DataGridTemplateColumn.CellTemplate>
                             </DataGridTemplateColumn>
-                            <!-- Open Online (the item in the built-in Helix page, or a Procore item in your web browser),
-                                 Download, and ▾ for the rest (everything is also on right-click). Beside the box so they
-                                 never scroll out of sight. -->
-                            <DataGridTemplateColumn x:Name="ActionsColumn" Width="232" CanUserSort="False" CanUserResize="False">
+                            <!-- Open Online (globe: the item in the built-in Helix page, or a Procore item in your web
+                                 browser), Open folder (folder icon), Download, and ▾ for the rest (everything is also on
+                                 right-click). Beside the box so they never scroll out of sight. -->
+                            <DataGridTemplateColumn x:Name="ActionsColumn" Width="204" CanUserSort="False" CanUserResize="False">
                                 <DataGridTemplateColumn.CellTemplate>
                                     <DataTemplate>
                                         <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
-                                            <Button Content="Open Online" Click="OpenRow_Click" IsEnabled="{Binding HasItem}" Padding="10,2" FontSize="12.5"
+                                            <Button Style="{StaticResource RowIconButton}" Content="&#xE774;" Click="OpenRow_Click" IsEnabled="{Binding HasItem}"
                                                     ToolTip="{Binding OpenToolTip}" ToolTipService.ShowOnDisabled="True"
                                                     AutomationProperties.Name="{Binding Number, StringFormat=Open {0} online}" />
+                                            <Button Style="{StaticResource RowIconButton}" Content="&#xE8B7;" Click="OpenRowFolder_Click" IsEnabled="{Binding HasFolder}"
+                                                    Margin="4,0,0,0" ToolTip="{Binding OpenFolderToolTip}" ToolTipService.ShowOnDisabled="True"
+                                                    AutomationProperties.Name="{Binding Number, StringFormat=Open the folder of {0}}" />
                                             <Button Content="Download" Click="DownloadRow_Click" IsEnabled="{Binding CanDownload}" Padding="9,2"
                                                     FontSize="12.5" Margin="4,0,0,0"
                                                     ToolTip="{Binding DownloadToolTip}" ToolTipService.ShowOnDisabled="True"
                                                     AutomationProperties.Name="{Binding Number, StringFormat=Download {0}}" />
                                             <Button Content="▾" Click="RowMenu_Click" Padding="7,2" FontSize="12.5" Margin="4,0,0,0"
-                                                    ToolTip="Open its newest file or its folder, verify its folder, or set its discipline"
+                                                    ToolTip="Open its newest file or parent folder, verify or rescan its folder, or set its discipline"
                                                     AutomationProperties.Name="{Binding Number, StringFormat=More for {0}}" />
                                         </StackPanel>
                                     </DataTemplate>
@@ -971,31 +983,6 @@
                             <DataGridTextColumn x:Name="TypeColumn" Header="Type" Binding="{Binding TypeSingular}" Width="85"
                                                 IsReadOnly="True" SortMemberPath="TypeLabel" />
                             <DataGridTextColumn x:Name="NumberColumn" Header="Number" Binding="{Binding Number}" Width="110" IsReadOnly="True" SortMemberPath="Number" />
-                            <!-- The date and how far off it is: "Sep 7 · 26 days overdue". Right after the number, so it
-                                 stays in view in a narrow window. (Named for the column it replaced, so a choice to hide
-                                 it is kept.) -->
-                            <DataGridTemplateColumn x:Name="DaysTillDueColumn" Header="Due" Width="160" SortMemberPath="DaysTillDue">
-                                <DataGridTemplateColumn.CellTemplate>
-                                    <DataTemplate>
-                                        <TextBlock Text="{Binding DueText}" VerticalAlignment="Center" ToolTip="{Binding DueToolTip}">
-                                            <TextBlock.Style>
-                                                <Style TargetType="TextBlock">
-                                                    <Style.Triggers>
-                                                        <DataTrigger Binding="{Binding IsOverdue}" Value="True">
-                                                            <Setter Property="Foreground" Value="{DynamicResource DangerBrush}" />
-                                                            <Setter Property="FontWeight" Value="SemiBold" />
-                                                        </DataTrigger>
-                                                        <DataTrigger Binding="{Binding IsDueToday}" Value="True">
-                                                            <Setter Property="Foreground" Value="{DynamicResource WarningBrush}" />
-                                                            <Setter Property="FontWeight" Value="SemiBold" />
-                                                        </DataTrigger>
-                                                    </Style.Triggers>
-                                                </Style>
-                                            </TextBlock.Style>
-                                        </TextBlock>
-                                    </DataTemplate>
-                                </DataGridTemplateColumn.CellTemplate>
-                            </DataGridTemplateColumn>
                             <!-- The item's title, or (grey italic) the folder's name when there's no item. -->
                             <DataGridTextColumn x:Name="TitleColumn" Header="Title" Binding="{Binding TitleText}" Width="300" IsReadOnly="True" SortMemberPath="Title">
                                 <DataGridTextColumn.ElementStyle>
@@ -1037,6 +1024,30 @@
                                             <TextBlock Text="{Binding AssignedText}" ToolTip="{Binding AssignedToolTip}" TextTrimming="CharacterEllipsis"
                                                        VerticalAlignment="Center" />
                                         </DockPanel>
+                                    </DataTemplate>
+                                </DataGridTemplateColumn.CellTemplate>
+                            </DataGridTemplateColumn>
+                            <!-- The date and how far off it is: "Sep 7 · 26 days overdue". Right before Days in court, so the
+                                 two read together. (Named for the column it replaced, so a choice to hide it is kept.) -->
+                            <DataGridTemplateColumn x:Name="DaysTillDueColumn" Header="Due" Width="160" SortMemberPath="DaysTillDue">
+                                <DataGridTemplateColumn.CellTemplate>
+                                    <DataTemplate>
+                                        <TextBlock Text="{Binding DueText}" VerticalAlignment="Center" ToolTip="{Binding DueToolTip}">
+                                            <TextBlock.Style>
+                                                <Style TargetType="TextBlock">
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding IsOverdue}" Value="True">
+                                                            <Setter Property="Foreground" Value="{DynamicResource DangerBrush}" />
+                                                            <Setter Property="FontWeight" Value="SemiBold" />
+                                                        </DataTrigger>
+                                                        <DataTrigger Binding="{Binding IsDueToday}" Value="True">
+                                                            <Setter Property="Foreground" Value="{DynamicResource WarningBrush}" />
+                                                            <Setter Property="FontWeight" Value="SemiBold" />
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </TextBlock.Style>
+                                        </TextBlock>
                                     </DataTemplate>
                                 </DataGridTemplateColumn.CellTemplate>
                             </DataGridTemplateColumn>

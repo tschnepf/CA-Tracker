@@ -46,8 +46,8 @@ public partial class MainWindow
         new ColumnFit(CourtColumn, row => row.HolderText, 150, 600),
         // The "Done in Workload Tracker" pill follows the names on items marked complete there.
         new ColumnFit(AssignedColumn, row => row.AssignedText, 110, 420, Pill: row => row.ShowsDoneFlag ? RowViewModel.DoneFlagText : null),
-        new ColumnFit(DaysInCourtColumn, row => row.DaysInCourtText, 0, 160),
         new ColumnFit(DaysTillDueColumn, row => row.DueText, 0, 260, Bold: true),
+        new ColumnFit(DaysInCourtColumn, row => row.DaysInCourtText, 0, 160),
         new ColumnFit(FolderColumn, row => row.FolderName, 140, 520),
         // The "Set" link sits beside the discipline text.
         new ColumnFit(DisciplineColumn, row => row.DisciplineText, 110, 300, Extra: 44),
