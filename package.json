@@ -1,6 +1,6 @@
 {
   "name": "smc-ca-tracker",
-  "version": "3.12.2",
+  "version": "3.12.3",
   "private": true,
   "description": "Tests for the read-only Helix and Procore scan scripts the SMC CA Tracker app runs in its built-in browser.",
   "scripts": {
