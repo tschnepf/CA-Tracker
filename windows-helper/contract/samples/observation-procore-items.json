@@ -1,0 +1,139 @@
+{
+  "schemaVersion": "1.0",
+  "appVersion": "3.4.0",
+  "clientId": "6f1c2a8e-3b7d-4c55-9a0e-1d2f3a4b5c6d",
+  "observationId": "0b8f4e2c-7a1d-4f3e-8c9b-2a1e3d4c5b6a",
+  "part": 1,
+  "totalParts": 1,
+  "observationKind": "items",
+  "providerProject": {
+    "provider": "procore",
+    "host": "app.procore.com",
+    "accountId": "company-1",
+    "projectId": "project-1",
+    "name": "Sample tower",
+    "company": "Company A"
+  },
+  "bindings": [
+    {"trackerProjectId": 101, "scope": "base_build", "includeUnlabeled": true},
+    {"trackerProjectId": 102, "scope": "tenant_fit_out", "includeUnlabeled": false}
+  ],
+  "scannedAt": "2026-10-07T14:05:00Z",
+  "coverage": [
+    {
+      "itemType": "rfi",
+      "scannedAt": "2026-10-07T14:05:00Z",
+      "detailsComplete": true,
+      "presenceVerified": true,
+      "fullSet": true,
+      "itemCount": 2,
+      "openCount": 1
+    },
+    {
+      "itemType": "submittal",
+      "scannedAt": "2026-10-07T14:04:30Z",
+      "detailsComplete": true,
+      "presenceVerified": true,
+      "fullSet": true,
+      "itemCount": 2,
+      "openCount": 2
+    }
+  ],
+  "collector": {
+    "providerUserId": "user-1",
+    "email": "person-1@example.invalid",
+    "name": "Person 1",
+    "company": "Company B",
+    "companyId": "company-2"
+  },
+  "items": [
+    {
+      "itemType": "rfi",
+      "providerItemId": "item-1",
+      "number": "BB-014",
+      "revision": null,
+      "title": "Item BB-014",
+      "status": "Open",
+      "closed": false,
+      "dueDate": "2026-10-10",
+      "createdDate": "2026-09-28T13:12:44Z",
+      "scopeTag": "base_build",
+      "sourceUrl": "https://app.procore.com/project-1/project/rfi/show/item-1",
+      "holders": [
+        {
+          "name": "Person 1",
+          "company": "Company B",
+          "companyId": "company-2",
+          "providerUserId": "user-1",
+          "email": "person-1@example.invalid",
+          "state": "current",
+          "since": "2026-10-01T15:00:00Z"
+        }
+      ]
+    },
+    {
+      "itemType": "rfi",
+      "providerItemId": "item-2",
+      "number": "TFO-003",
+      "revision": null,
+      "title": "Item TFO-003",
+      "status": "Closed",
+      "closed": true,
+      "dueDate": null,
+      "createdDate": "2026-08-02T09:00:00Z",
+      "scopeTag": "tenant_fit_out",
+      "sourceUrl": "https://app.procore.com/project-1/project/rfi/show/item-2",
+      "holders": []
+    },
+    {
+      "itemType": "submittal",
+      "providerItemId": "item-3",
+      "number": "03 30 00-1",
+      "revision": "0",
+      "title": "Item 03 30 00-1",
+      "status": "Revise and Resubmit",
+      "closed": false,
+      "dueDate": "2026-09-15",
+      "createdDate": "2026-09-01T12:00:00Z",
+      "scopeTag": "unlabeled",
+      "sourceUrl": "https://app.procore.com/project-1/project/submittal_logs/item-3",
+      "holders": []
+    },
+    {
+      "itemType": "submittal",
+      "providerItemId": "item-4",
+      "number": "03 30 00-1",
+      "revision": "1",
+      "title": "Item 03 30 00-1",
+      "status": "Open",
+      "closed": false,
+      "dueDate": "2026-10-20",
+      "createdDate": "2026-10-02T12:00:00Z",
+      "scopeTag": "unlabeled",
+      "sourceUrl": "https://app.procore.com/project-1/project/submittal_logs/item-4",
+      "holders": [
+        {
+          "name": "Person 2",
+          "company": "Company B",
+          "companyId": "company-2",
+          "providerUserId": "user-2",
+          "email": "person-2@example.invalid",
+          "state": "current",
+          "since": "2026-10-03T10:30:00Z"
+        },
+        {
+          "name": "Person 3",
+          "company": "Company C",
+          "companyId": "company-3",
+          "providerUserId": null,
+          "email": null,
+          "state": "upcoming",
+          "since": null
+        }
+      ]
+    }
+  ],
+  "removed": [
+    {"itemType": "rfi", "providerItemId": "item-9"}
+  ]
+}

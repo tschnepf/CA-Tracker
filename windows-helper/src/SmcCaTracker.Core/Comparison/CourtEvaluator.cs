@@ -17,7 +17,10 @@ public enum CourtState
     /// <summary>Closed, complete, or voided.</summary>
     Closed,
 
-    /// <summary>The provider did not say who holds it (e.g. Procore's visible grid).</summary>
+    /// <summary>
+    /// Whose court can't be told: the company isn't known, or the provider names its people without
+    /// their company (Procore's Ball In Court).
+    /// </summary>
     Unknown
 }
 
@@ -95,12 +98,13 @@ public static class CourtEvaluator
         };
     }
 
+    /// <summary>Whose court it is, as a sentence; empty when that can't be told (nothing stands in for it).</summary>
     public static string Describe(CourtState state, CompanyIdentity company) => state switch
     {
         CourtState.InCourt => $"In {company.DisplayName}'s court",
         CourtState.ComingUp => $"Coming up for {company.DisplayName}",
         CourtState.NotHeld => $"Out of {company.DisplayName}'s court",
         CourtState.Closed => "Closed",
-        _ => "Holder not reported"
+        _ => ""
     };
 }

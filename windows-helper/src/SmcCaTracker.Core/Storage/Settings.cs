@@ -20,8 +20,8 @@ public sealed class TrackerSettings
     public BrowserSettings Browser { get; set; } = new();
     public SyncSettings Sync { get; set; } = new();
 
-    /// <summary>The company's CA Tracker server (optional): shares projects, disciplines and items.</summary>
-    public CentralSettings Central { get; set; } = new();
+    /// <summary>The Workload Tracker connection (optional): sends this PC's scans to the company's tracker.</summary>
+    public WorkloadTrackerSettings WorkloadTracker { get; set; } = new();
 
     /// <summary>Procore: projects you chose not to sync, and when your projects were last listed.</summary>
     public SmcCaTracker.Core.Procore.ProcoreSettings Procore { get; set; } = new();
@@ -38,27 +38,109 @@ public sealed class TrackerSettings
             && string.Equals(project.Connection.ProjectId, projectId, StringComparison.Ordinal));
 }
 
-/// <summary>Connection to the company's CA Tracker server.</summary>
-public sealed class CentralSettings
+/// <summary>
+/// The connection to Workload Tracker (decision D2). Without an address and a token the app works on
+/// its own, as it always has.
+/// </summary>
+public sealed class WorkloadTrackerSettings
 {
-    /// <summary>The server's address (the company settings file may set it for everyone).</summary>
-    public string Server { get; set; } = "";
+    /// <summary>The tracker's https address, typed in by the person.</summary>
+    public string Address { get; set; } = "";
 
-    /// <summary>Your access token from the server, encrypted for this Windows user.</summary>
+    /// <summary>This installation's id, sent with every call: a copied token shows up with another one.</summary>
+    public string ClientId { get; set; } = "";
+
+    /// <summary>The CA Tracker token from the tracker, encrypted for this Windows user.</summary>
     public string TokenProtected { get; set; } = "";
+
+    /// <summary>The tracker's session for the token (for Disconnect) and when it ends.</summary>
+    public int? SessionId { get; set; }
+    public DateTimeOffset? ExpiresAt { get; set; }
+
+    /// <summary>Who the token belongs to, from the tracker's /api/auth/me/: tags the outbox and shows "Connected as".</summary>
+    public string Account { get; set; } = "";
+    public string? AccountName { get; set; }
+    public int? PersonId { get; set; }
+    public string? PersonName { get; set; }
+
+    /// <summary>
+    /// Per tracker project entry (<see cref="TrackerProject.Id"/>): the Workload Tracker project its items go
+    /// to, chosen in Project settings (decision D3). Kept when disconnecting, as this PC's choice; forgotten
+    /// when connecting to a different tracker, whose project ids mean other projects.
+    /// </summary>
+    public Dictionary<string, WorkloadBinding> Bindings { get; set; } = new(StringComparer.Ordinal);
+
+    public bool IsPaired => Address.Length > 0 && TokenProtected.Length > 0 && Account.Length > 0;
 }
 
-/// <summary>Keeping Helix items up to date in the background.</summary>
+/// <summary>An existing Workload Tracker project a local project entry is bound to.</summary>
+public sealed class WorkloadBinding
+{
+    public int ProjectId { get; set; }
+    public string? ProjectNumber { get; set; }
+    public string ProjectName { get; set; } = "";
+
+    public const string Bound = "bound";
+    public const string Conflict = "conflict";
+    public const string Rejected = "rejected";
+
+    /// <summary>
+    /// What the tracker answered when the binding was last sent: <see cref="Bound"/>, <see cref="Conflict"/>
+    /// (someone else bound the Helix or Procore project differently) or <see cref="Rejected"/> (this
+    /// account can't see the project). Null until sent.
+    /// </summary>
+    public string? Outcome { get; set; }
+
+    /// <summary>On a conflict: the project the tracker uses, and who chose it.</summary>
+    public int? TheirProjectId { get; set; }
+    public string? TheirProjectNumber { get; set; }
+    public string? TheirProjectName { get; set; }
+    public string? TheirAssertedBy { get; set; }
+
+    public string Label => LabelOf(ProjectNumber, ProjectName);
+
+    public string? TheirLabel => TheirProjectName is null ? null : LabelOf(TheirProjectNumber, TheirProjectName);
+
+    public static string LabelOf(string? number, string name) => string.IsNullOrWhiteSpace(number) ? name : $"{number} · {name}";
+
+    public WorkloadBinding Copy() => (WorkloadBinding)MemberwiseClone();
+}
+
+/// <summary>Keeping Helix and Procore items up to date in the background.</summary>
 public sealed class SyncSettings
 {
-    /// <summary>Re-read tracked Helix projects in the background while the app is open (only changed items are read).</summary>
+    /// <summary>Working hours, in local time: from 7 am until 5 pm (weekdays; weekends don't sync by themselves).</summary>
+    public const int WorkdayStartHour = 7;
+    public const int WorkdayEndHour = 17;
+
+    public const int WorkHoursMinimum = 15;
+    public const int WorkHoursMaximum = 240;
+    public const int OffHoursMinimum = 30;
+    public const int OffHoursMaximum = 720;
+
+    /// <summary>Re-read tracked Helix projects and Procore projects in the background while the app is open (only changed items are read).</summary>
     public bool AutoSync { get; set; } = true;
 
-    /// <summary>Minutes between background reads.</summary>
-    public int IntervalMinutes { get; set; } = 15;
+    /// <summary>Minutes between background reads during working hours.</summary>
+    public int WorkHoursIntervalMinutes { get; set; } = 60;
 
-    /// <summary>Hours after which a project's items are all read again, to catch items removed in Helix.</summary>
+    /// <summary>Minutes between background reads outside working hours on weekdays (while the app is open).</summary>
+    public int OffHoursIntervalMinutes { get; set; } = 180;
+
+    /// <summary>
+    /// Hours after which a project is checked for items removed in Helix or Procore: Helix reads every
+    /// item again; Procore compares its counts with the saved list and reads everything only when they differ.
+    /// </summary>
     public int FullReadHours { get; set; } = 12;
+
+    public static bool IsWorkingHours(DateTime localTime) => localTime.Hour is >= WorkdayStartHour and < WorkdayEndHour;
+
+    /// <summary>Nothing syncs by itself on Saturdays and Sundays (Sync all still does).</summary>
+    public static bool SyncsAt(DateTime localTime) => localTime.DayOfWeek is not (DayOfWeek.Saturday or DayOfWeek.Sunday);
+
+    /// <summary>The time between background reads at <paramref name="localTime"/>.</summary>
+    public TimeSpan IntervalAt(DateTime localTime) =>
+        TimeSpan.FromMinutes(IsWorkingHours(localTime) ? WorkHoursIntervalMinutes : OffHoursIntervalMinutes);
 }
 
 /// <summary>How the built-in browser window behaves during a refresh.</summary>
@@ -399,8 +481,13 @@ public sealed class SettingsStore
         settings.Procore ??= new SmcCaTracker.Core.Procore.ProcoreSettings();
         settings.Procore.SkippedProjectIds ??= new List<string>();
         settings.Procore.DiscoverEveryHours = Math.Clamp(settings.Procore.DiscoverEveryHours, 1, 168);
-        settings.Central ??= new CentralSettings();
-        settings.Sync.IntervalMinutes = Math.Clamp(settings.Sync.IntervalMinutes, 5, 240);
+        settings.WorkloadTracker ??= new WorkloadTrackerSettings();
+        settings.WorkloadTracker.Address ??= "";
+        settings.WorkloadTracker.ClientId ??= "";
+        settings.WorkloadTracker.TokenProtected ??= "";
+        settings.WorkloadTracker.Account ??= "";
+        settings.Sync.WorkHoursIntervalMinutes = Math.Clamp(settings.Sync.WorkHoursIntervalMinutes, SyncSettings.WorkHoursMinimum, SyncSettings.WorkHoursMaximum);
+        settings.Sync.OffHoursIntervalMinutes = Math.Clamp(settings.Sync.OffHoursIntervalMinutes, SyncSettings.OffHoursMinimum, SyncSettings.OffHoursMaximum);
         settings.Sync.FullReadHours = Math.Clamp(settings.Sync.FullReadHours, 1, 168);
         settings.Projects = (settings.Projects ?? new List<TrackerProject>())
             .Where(project => project is not null && !string.IsNullOrWhiteSpace(project.Id))
@@ -413,6 +500,17 @@ public sealed class SettingsStore
             project.Disciplines = (project.Disciplines ?? new Dictionary<string, string>())
                 .GroupBy(entry => entry.Key.ToLowerInvariant())
                 .ToDictionary(group => group.Key, group => group.Last().Value);
+        }
+
+        // Bindings of projects that were removed go with them.
+        var projectIds = settings.Projects.Select(project => project.Id).ToHashSet(StringComparer.Ordinal);
+        settings.WorkloadTracker.Bindings = new Dictionary<string, WorkloadBinding>(
+            (settings.WorkloadTracker.Bindings ?? new Dictionary<string, WorkloadBinding>())
+                .Where(pair => pair.Value is { ProjectId: > 0 } && projectIds.Contains(pair.Key)),
+            StringComparer.Ordinal);
+        foreach (var binding in settings.WorkloadTracker.Bindings.Values)
+        {
+            binding.ProjectName ??= "";
         }
 
         return settings;

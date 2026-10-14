@@ -1,12 +1,15 @@
+using System.Diagnostics;
 using System.IO;
 using System.Net.Http;
+using System.Security.Principal;
 using System.Windows;
 using SmcCaTracker.App.Services;
 using SmcCaTracker.App.ViewModels;
 using SmcCaTracker.App.Views;
-using SmcCaTracker.Core.Central;
+using SmcCaTracker.Core.WorkloadTracker;
 using SmcCaTracker.Core.Data;
 using SmcCaTracker.Core.Diagnostics;
+using SmcCaTracker.Core.Links;
 using SmcCaTracker.Core.Matching;
 using SmcCaTracker.Core.Procore;
 using SmcCaTracker.Core.Storage;
@@ -21,25 +24,46 @@ public partial class App : Application
     private ProcoreSyncService? procoreSync;
     private HttpClient? http;
     private Mutex? instance;
+    private InstanceChannel? channel;
 
     protected override void OnStartup(StartupEventArgs e)
     {
         base.OnStartup(e);
-        var paths = AppPaths.Default;
+        var paths = AppPaths.ForArguments(e.Args);
 
-        // One CA Tracker at a time: two copies would overwrite each other's changes.
-        instance = new Mutex(true, @"Local\SMC-CA-Tracker", out var first);
+        // A clicked smc-ca-tracker:// link from Workload Tracker (Windows passes it as the argument).
+        var linkText = ItemLink.FindInArguments(e.Args);
+        var link = ItemLink.Parse(linkText);
+        var pipeName = InstanceNames.Pipe(paths, WindowsIdentity.GetCurrent().User?.Value ?? Environment.UserName,
+            Process.GetCurrentProcess().SessionId);
+
+        // One CA Tracker at a time: two copies would overwrite each other's changes. A copy run with
+        // --data-folder has data of its own, so it only excludes another copy on the same folder.
+        instance = new Mutex(true, InstanceNames.Mutex(paths), out var first);
         if (!first)
         {
-            MessageBox.Show("CA Tracker is already open.", "CA Tracker", MessageBoxButton.OK, MessageBoxImage.Information);
             instance.Dispose();
             instance = null;
+
+            // Hand the running copy the link (or just bring it forward) and leave quietly. An earlier version
+            // doesn't listen for that.
+            if (!InstanceChannel.TrySend(pipeName, link?.ToUri() ?? "", TimeSpan.FromSeconds(5)))
+            {
+                MessageBox.Show("CA Tracker is already open.", "CA Tracker", MessageBoxButton.OK, MessageBoxImage.Information);
+            }
+
             Shutdown(0);
             return;
         }
 
         AppLog.Start(paths.LogsDirectory);
         AppLog.Info("app", $"CA Tracker {TrackerVersion.Current} starting.");
+
+        // Later starts (a clicked link, or the app opened again) come here instead of starting another copy.
+        // Listening starts now, so a start while this one is loading isn't turned away; what it hands over is
+        // dealt with on the screen's thread, once startup is done and the window is there.
+        channel = new InstanceChannel(pipeName);
+        channel.Start(message => Dispatcher.InvokeAsync(() => (MainWindow as Views.MainWindow)?.OnStartedAgain(message)));
         AppDomain.CurrentDomain.UnhandledException += (_, args) =>
         {
             AppLog.Error("app", "CA Tracker stopped unexpectedly", args.ExceptionObject as Exception);
@@ -87,10 +111,25 @@ public partial class App : Application
                 var viewModel = new MainViewModel(paths, store, folderIndex, helixSync, procoreSync, protector);
                 viewModel.UseCompanySettings(company, companyPath, companyError);
                 viewModel.UseUpdates(new UpdateService(http));
-                viewModel.UseCentral(new CentralSync(store, http, protector) { CompanyServer = company?.CentralServer });
+                viewModel.UseWorkloadTracker(new WorkloadTrackerSync(store, new WorkloadTrackerApi(http), protector));
                 var window = new MainWindow(viewModel, paths);
                 MainWindow = window;
                 window.Show();
+                if (link is not null)
+                {
+                    window.OpenLinkWhenReady(link);
+                }
+                else if (linkText is not null)
+                {
+                    AppLog.Warn("links", "Started with a link that isn't a CA Tracker item link; it was ignored.");
+                }
+
+                // Workload Tracker's buttons open smc-ca-tracker:// links with this app (never a --data-folder copy).
+                if (paths.IsDefault)
+                {
+                    var exePath = Environment.ProcessPath;
+                    _ = Task.Run(() => ProtocolRegistry.EnsureRegistered(exePath));
+                }
             }
         }
         catch (DatabaseInUseException)
@@ -222,6 +261,7 @@ public partial class App : Application
 
     protected override void OnExit(ExitEventArgs e)
     {
+        channel?.Dispose();
         helixSync?.Dispose();
         procoreSync?.Dispose();
         http?.Dispose();

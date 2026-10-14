@@ -124,7 +124,8 @@ public static class ProviderScripts
             post(Object.assign({ type: "procore-discovered", fromPage: false }, result));
           } catch (error) {
             const status = Number(error && error.status || 0);
-            if (status !== 401) {
+            // Signed out, or Procore asked to slow down (429/503): say so rather than look on the page.
+            if (status !== 401 && status !== 429 && status !== 503) {
               // Procore wouldn't list companies here: take the projects the home page links to.
               const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
               for (let wait = 0; wait < 20; wait += 1) {
@@ -137,7 +138,8 @@ public static class ProviderScripts
                 await sleep(500);
               }
             }
-            post({ type: "procore-error", status, message: String(error && error.message || error) });
+            post({ type: "procore-error", status, message: String(error && error.message || error),
+              retryAfter: error && typeof error.retryAfter === "number" ? error.retryAfter : null });
           }
         })(
         """ + JsonSerializer.Serialize(requestId) + ");";
@@ -161,7 +163,8 @@ public static class ProviderScripts
                 const result = await CaTrackerProcoreSync.listCompanyProjects(window, request.companies, {});
                 post(Object.assign({ type: "procore-discovered", fromPage: false, user: null }, result));
               } catch (error) {
-                post({ type: "procore-error", status: Number(error && error.status || 0), message: String(error && error.message || error) });
+                post({ type: "procore-error", status: Number(error && error.status || 0), message: String(error && error.message || error),
+                  retryAfter: error && typeof error.retryAfter === "number" ? error.retryAfter : null });
               }
             })(
             """ + request + ");";
@@ -170,21 +173,48 @@ public static class ProviderScripts
     /// <summary>
     /// Background Procore read through the signed-in Procore page: asks Procore's REST service (same
     /// site, same sign-in as its web pages) for every RFI and Submittal of a project, page by page.
-    /// Posts "procore-result" with both lists (and any tool you can't see there), "procore-error"
-    /// with the HTTP status, or "procore-missing".
+    /// Posts "procore-result" with both lists (and any tool you can't see there, each list's total in
+    /// Procore when <paramref name="withTotals"/>, and Procore's rate-limit headroom when it states it),
+    /// "procore-error" with the HTTP status (and on 429/503 the seconds to wait, when Procore says), or
+    /// "procore-missing".
     /// </summary>
-    public static string ProcoreReadProject(string requestId, string projectId, string? companyId, string? updatedSince = null)
+    public static string ProcoreReadProject(string requestId, string projectId, string? companyId, string? updatedSince = null, bool withTotals = false)
     {
-        var request = JsonSerializer.Serialize(new { requestId, projectId, companyId, updatedSince });
+        var request = JsonSerializer.Serialize(new { requestId, projectId, companyId, updatedSince, withTotals });
         return """
             (async (request) => {
               const post = (message) => window.chrome.webview.postMessage(Object.assign({ requestId: request.requestId }, message));
               if (typeof CaTrackerProcoreSync === "undefined") { post({ type: "procore-missing" }); return; }
               try {
                 const result = await CaTrackerProcoreSync.readProject(window, request, {});
-                post({ type: "procore-result", rfis: result.rfis, submittals: result.submittals, unavailable: result.unavailable, changesOnly: result.changesOnly });
+                post({ type: "procore-result", rfis: result.rfis, submittals: result.submittals, unavailable: result.unavailable, changesOnly: result.changesOnly,
+                  totals: result.totals || null, rateLimit: result.rateLimit || null });
               } catch (error) {
-                post({ type: "procore-error", status: Number(error && error.status || 0), message: String(error && error.message || error) });
+                post({ type: "procore-error", status: Number(error && error.status || 0), message: String(error && error.message || error),
+                  retryAfter: error && typeof error.retryAfter === "number" ? error.retryAfter : null });
+              }
+            })(
+            """ + request + ");";
+    }
+
+    /// <summary>
+    /// Lists one RFI's or Submittal's files and their download links through the signed-in Procore page
+    /// (Procore's REST service, read-only). Posts "procore-item-files" with { attachments: [{ id, filename,
+    /// uploadedAt, url, uploadedBy }] } (as Helix's "prepared" does), "procore-error" with the HTTP status, or "procore-missing".
+    /// </summary>
+    public static string ProcoreReadItemFiles(string requestId, string projectId, string? companyId, string itemType, string itemId)
+    {
+        var request = JsonSerializer.Serialize(new { requestId, projectId, companyId, itemType, itemId });
+        return """
+            (async (request) => {
+              const post = (message) => window.chrome.webview.postMessage(Object.assign({ requestId: request.requestId }, message));
+              if (typeof CaTrackerProcoreSync === "undefined" || typeof CaTrackerProcoreSync.readItemFiles !== "function") { post({ type: "procore-missing" }); return; }
+              try {
+                const result = await CaTrackerProcoreSync.readItemFiles(window, request, {});
+                post({ type: "procore-item-files", attachments: result.attachments });
+              } catch (error) {
+                post({ type: "procore-error", status: Number(error && error.status || 0), message: String(error && error.message || error),
+                  retryAfter: error && typeof error.retryAfter === "number" ? error.retryAfter : null });
               }
             })(
             """ + request + ");";

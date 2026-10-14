@@ -7,4 +7,7 @@
   <Folder Name="/tests/">
     <Project Path="tests/SmcCaTracker.Core.Tests/SmcCaTracker.Core.Tests.csproj" />
   </Folder>
+  <Folder Name="/tools/">
+    <Project Path="tools/SmcCaTracker.ContractGen/SmcCaTracker.ContractGen.csproj" />
+  </Folder>
 </Solution>

@@ -74,11 +74,31 @@
                             </DockPanel>
                             <DockPanel Margin="0,3">
                                 <TextBlock Text="With" Style="{StaticResource Label}" />
-                                <TextBlock Text="{Binding WithText}" Style="{StaticResource Value}" ToolTip="{Binding CourtText}" />
+                                <TextBlock Text="{Binding WithText}" Style="{StaticResource Value}" ToolTip="{Binding CourtToolTip}" />
                             </DockPanel>
                             <DockPanel Margin="0,3" Visibility="{Binding HasNext, Converter={StaticResource Visible}}">
                                 <TextBlock Text="Next" Style="{StaticResource Label}" />
                                 <TextBlock Text="{Binding NextText}" Style="{StaticResource Value}" />
+                            </DockPanel>
+                            <!-- Workload Tracker: who is assigned, and who marked it complete there (warning colour while it
+                                 still needs returning in Helix or Procore). -->
+                            <DockPanel Margin="0,3" Visibility="{Binding ShowsAssignedDetails, Converter={StaticResource Visible}}">
+                                <TextBlock Text="Assigned" Style="{StaticResource Label}" />
+                                <TextBlock Text="{Binding AssignedDetailsText}" Style="{StaticResource Value}" ToolTip="{Binding AssignedToolTip}" />
+                            </DockPanel>
+                            <DockPanel Margin="0,3" Visibility="{Binding HasCompletions, Converter={StaticResource Visible}}">
+                                <TextBlock Text="Workload Tracker" Style="{StaticResource Label}" TextWrapping="Wrap" />
+                                <TextBlock Text="{Binding CompletedText}" ToolTip="{Binding DoneFlagToolTip}">
+                                    <TextBlock.Style>
+                                        <Style TargetType="TextBlock" BasedOn="{StaticResource Value}">
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding ShowsDoneFlag}" Value="True">
+                                                    <Setter Property="Foreground" Value="{DynamicResource WarningBrush}" />
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </TextBlock.Style>
+                                </TextBlock>
                             </DockPanel>
                             <DockPanel Margin="0,3" Visibility="{Binding HasItem, Converter={StaticResource Visible}}">
                                 <TextBlock Text="Status" Style="{StaticResource Label}" />

@@ -16,6 +16,14 @@ public static class ProviderSites
     public static string HomeUrl(string provider) =>
         IsProcore(provider) ? $"https://{ProviderLinks.DefaultProcoreHost}/" : $"https://{ProviderLinks.HelixHost}/";
 
+    /// <summary>A cookie of Procore's (procore.com or any of its servers, e.g. ".procore.com", "login.procore.com").</summary>
+    public static bool IsProcoreCookieDomain(string? domain)
+    {
+        var host = (domain ?? "").Trim().TrimStart('.');
+        return string.Equals(host, "procore.com", StringComparison.OrdinalIgnoreCase)
+            || host.EndsWith(".procore.com", StringComparison.OrdinalIgnoreCase);
+    }
+
     public static bool IsProviderHost(string provider, Uri uri) =>
         uri.Scheme == Uri.UriSchemeHttps
         && (IsProcore(provider)

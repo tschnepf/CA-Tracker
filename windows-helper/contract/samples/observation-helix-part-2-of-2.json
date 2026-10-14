@@ -1,0 +1,58 @@
+{
+  "schemaVersion": "1.0",
+  "appVersion": "3.4.0",
+  "clientId": "6f1c2a8e-3b7d-4c55-9a0e-1d2f3a4b5c6d",
+  "observationId": "5d3c2b1a-9e8f-4a7b-b6c5-d4e3f2a1b0c9",
+  "part": 2,
+  "totalParts": 2,
+  "observationKind": "items",
+  "providerProject": {
+    "provider": "helix",
+    "host": "project.helixteam.com",
+    "accountId": null,
+    "projectId": "project-2",
+    "name": "Sample data hall",
+    "company": null
+  },
+  "bindings": [
+    {"trackerProjectId": 103, "scope": "whole", "includeUnlabeled": true}
+  ],
+  "scannedAt": "2026-10-07T13:00:00Z",
+  "coverage": [
+    {
+      "itemType": "rfi",
+      "scannedAt": "2026-10-07T13:00:00Z",
+      "detailsComplete": false,
+      "presenceVerified": true,
+      "fullSet": false,
+      "itemCount": 5,
+      "openCount": null
+    }
+  ],
+  "collector": {
+    "providerUserId": null,
+    "email": null,
+    "name": "Person 1",
+    "company": "Company B",
+    "companyId": "company-2"
+  },
+  "items": [
+    {
+      "itemType": "rfi",
+      "providerItemId": "item-13",
+      "number": "RFI-0044",
+      "revision": null,
+      "title": "Item RFI-0044",
+      "status": "Complete",
+      "closed": true,
+      "dueDate": "2026-09-30T21:00:00-04:00",
+      "createdDate": "2026-09-20T11:00:00Z",
+      "scopeTag": "unlabeled",
+      "sourceUrl": "https://project.helixteam.com/Projects/project-2/RFI",
+      "holders": []
+    }
+  ],
+  "removed": [
+    {"itemType": "rfi", "providerItemId": "item-10"}
+  ]
+}

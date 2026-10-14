@@ -76,8 +76,17 @@ test("getContext derives project and user identity from the current Helix page",
     itemType: "rfi",
     itemLabel: "RFI",
     itemLabelPlural: "RFIs",
-    user: { id: user._id, contactId: "contact-current", fullName: user.fullName, companyId: "company-current", company: "Example Co" }
+    user: { id: user._id, contactId: "contact-current", fullName: user.fullName, companyId: "company-current", company: "Example Co", email: null }
   });
+});
+
+test("the signed-in contact's email comes with the user, for Workload Tracker", () => {
+  const page = mockWindow({});
+  page.loginObject = { contact: { _id: "contact-current", email: " current.user@smc.example " } };
+  assert.equal(Bridge.getContext(page).user.email, "current.user@smc.example");
+  assert.equal(Bridge.currentUser(page).email, "current.user@smc.example");
+  page.loginObject.contact.email = "not an email";
+  assert.equal(Bridge.currentUser(page).email, null);
 });
 
 test("Overview scans both current-project RFIs and Submittals", async () => {
@@ -537,7 +546,8 @@ test("prepareItemDownload resolves the official Details report and current prote
     id: "attachment-current",
     filename: "Review markup.pdf",
     uploadedAt: "2026-08-03T18:45:00.000Z",
-    url: "https://storage.googleapis.com/example/signed-file"
+    url: "https://storage.googleapis.com/example/signed-file",
+    uploadedBy: null
   }]);
   assert.deepEqual(protectedCalls, [["getDownloadURL", {
     collectionName: "HelixProjectAttachments",
@@ -620,7 +630,8 @@ test("on Helix's home page (no directory entry) the signed-in contact says who y
     contactId: "contact-current",
     fullName: "Current User",
     companyId: "company-1",
-    company: "Example Co"
+    company: "Example Co",
+    email: null
   });
 
   // No full name: first and last name.
@@ -673,6 +684,53 @@ test("prepareItemDownload still lists attachments when Helix offers no Details r
   assert.equal(result.report, null);
   assert.match(result.reportError, /Details \(Submittals\)/);
   assert.deepEqual(result.attachments.map((attachment) => attachment.filename), ["Drawings - R2.pdf"]);
+});
+
+function submittalFilesPage(datasets) {
+  const page = mockWindow(Object.assign({ HelixProjectReports: [] }, datasets), "submittal");
+  page.Master.readFromCollection = (original => async (collection, query) => {
+    if (collection === "HelixProjectSubmittalPackages") return [{ _id: "s1", refProject: { _id: projectId }, number: "000641" }];
+    return original(collection, query);
+  })(page.Master.readFromCollection);
+  page.Master.callCustomEndpoint = async (_name, request) => ({ downloadURL: `https://files.example/${request._id}` });
+  return page;
+}
+
+test("prepareItemDownload says who uploaded each file and their company", async () => {
+  // As Helix sends an attachment's uploader: their directory entry with the company's name as
+  // nameCompany and only its id in refCompany (Helix lets you read only your own directory entry).
+  const uploader = (name, company) => ({
+    _id: `dir-${name}`, fullName: name, nameCompany: company, refCompany: { _id: `co-${company}` }, refContact: { _id: `contact-${name}` }
+  });
+  const page = submittalFilesPage({
+    HelixProjectAttachments: [
+      { _id: "a1", idItem: "s1", filename: "Product data.pdf", nameEditor: "Amanda Imhoff", refDirectoryCreator: uploader("Amanda Imhoff", "ISC Constructors, LLC.") },
+      // The editor can be a login; the uploader's full name wins.
+      { _id: "a2", idItem: "s1", filename: "Review.pdf", nameEditor: "alex.reviewer", refDirectoryCreator: uploader("Alex Reviewer", "Example Architects, LLC") },
+      // A company only as refCompany's name, or none at all.
+      { _id: "a3", idItem: "s1", filename: "Markup.pdf", refDirectoryCreator: { _id: "dir-3", fullName: "Juan Cortez", refCompany: { _id: "co-3", name: "Strategic Mission Critical" } } },
+      { _id: "a4", idItem: "s1", filename: "Sketch.pdf", refDirectoryCreator: { _id: "dir-4", fullName: "No Company", nameCompany: " " } },
+      // No uploader named: Helix's last editor.
+      { _id: "a5", idItem: "s1", filename: "Old.pdf", nameEditor: "Someone Older" },
+      { _id: "a6", idItem: "s1", filename: "Nobody.pdf" }
+    ].map((file) => Object.assign({ isActive: true, isCurrent: true, _kmd: { ect: "2026-09-25T15:00:00Z" } }, file))
+  });
+
+  const result = await Bridge.prepareItemDownload(page, "s1", "submittal", projectId);
+
+  assert.deepEqual(result.attachments.map((attachment) => [attachment.filename, attachment.uploadedBy]), [
+    ["Product data.pdf", { name: "Amanda Imhoff", company: "ISC Constructors, LLC." }],
+    ["Review.pdf", { name: "Alex Reviewer", company: "Example Architects, LLC" }],
+    ["Markup.pdf", { name: "Juan Cortez", company: "Strategic Mission Critical" }],
+    ["Sketch.pdf", { name: "No Company", company: null }],
+    ["Old.pdf", { name: "Someone Older", company: null }],
+    ["Nobody.pdf", null]
+  ]);
+  const attachmentRead = page.calls.find((call) => call.collection === "HelixProjectAttachments");
+  assert.ok(attachmentRead.query.fields.includes("refDirectoryCreator"));
+  assert.ok(attachmentRead.query.fields.includes("nameEditor"));
+  // Nothing else is read for it.
+  assert.equal(page.calls.filter((call) => call.collection === "HelixProjectDirectory").length, 0);
 });
 
 test("prepareItemDownload works from the Helix home page when told the item's project and type", async () => {

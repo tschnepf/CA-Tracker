@@ -20,23 +20,46 @@
             <MenuItem Header="Open newest file" Click="OpenNewestFile_Click" IsEnabled="{Binding CanDownload}"
                       ToolTip="The copy in its folder when it's there, otherwise a copy from Helix (the CA folder isn't changed)" />
             <MenuItem Header="Open folder" Click="OpenRowFolder_Click" IsEnabled="{Binding HasFolder}" />
+            <MenuItem Header="Open parent folder" Click="OpenRowParentFolder_Click" IsEnabled="{Binding CanOpenParentFolder}"
+                      ToolTip="{Binding OpenParentFolderToolTip}" ToolTipService.ShowOnDisabled="True" />
             <MenuItem Header="Verify folder…" Click="VerifyRow_Click" IsEnabled="{Binding CanDownload}"
                       ToolTip="Check that the item's folder has every file Helix has for it" />
+            <MenuItem Header="Rescan folder" Click="RescanRowFolder_Click" IsEnabled="{Binding CanRescanFolder}"
+                      ToolTip="{Binding RescanFolderToolTip}" ToolTipService.ShowOnDisabled="True" />
             <Separator />
             <MenuItem Header="Set discipline…" Click="SetRowDiscipline_Click" IsEnabled="{Binding CanSelect}" />
+            <MenuItem Header="Assign to…" Click="AssignRow_Click" IsEnabled="{Binding CanAssign}"
+                      Visibility="{Binding ShowsAssignMenu, Converter={StaticResource Visible}}"
+                      ToolTip="{Binding AssignMenuToolTip}" ToolTipService.ShowOnDisabled="True" />
         </ContextMenu>
 
-        <!-- A row's ▾: what isn't on its own buttons (Open and Download are). Not shared, so each ▾ gets its own. -->
+        <!-- A row's ▾: what isn't on its own buttons (Open Online, Open folder and Download are). Not shared, so each ▾
+             gets its own. -->
         <ContextMenu x:Key="RowMoreMenu" x:Shared="False">
             <MenuItem Header="Show details" Click="ShowRowDetails_Click" ToolTip="Show this item in the details pane beside the list" />
             <MenuItem Header="Open newest file" Click="OpenNewestFile_Click" IsEnabled="{Binding CanDownload}"
                       ToolTip="The copy in its folder when it's there, otherwise a copy from Helix (the CA folder isn't changed)" />
-            <MenuItem Header="Open folder" Click="OpenRowFolder_Click" IsEnabled="{Binding HasFolder}" />
+            <MenuItem Header="Open parent folder" Click="OpenRowParentFolder_Click" IsEnabled="{Binding CanOpenParentFolder}"
+                      ToolTip="{Binding OpenParentFolderToolTip}" ToolTipService.ShowOnDisabled="True" />
             <MenuItem Header="Verify folder…" Click="VerifyRow_Click" IsEnabled="{Binding CanDownload}"
                       ToolTip="Check that the item's folder has every file Helix has for it" />
+            <MenuItem Header="Rescan folder" Click="RescanRowFolder_Click" IsEnabled="{Binding CanRescanFolder}"
+                      ToolTip="{Binding RescanFolderToolTip}" ToolTipService.ShowOnDisabled="True" />
             <Separator />
             <MenuItem Header="Set discipline…" Click="SetRowDiscipline_Click" IsEnabled="{Binding CanSelect}" />
+            <MenuItem Header="Assign to…" Click="AssignRow_Click" IsEnabled="{Binding CanAssign}"
+                      Visibility="{Binding ShowsAssignMenu, Converter={StaticResource Visible}}"
+                      ToolTip="{Binding AssignMenuToolTip}" ToolTipService.ShowOnDisabled="True" />
         </ContextMenu>
+
+        <!-- A row's icon buttons (Open Online's globe, Open folder's folder): Windows' own icon font, square, as tall as
+             Download beside them. -->
+        <Style x:Key="RowIconButton" TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
+            <Setter Property="FontFamily" Value="Segoe Fluent Icons, Segoe MDL2 Assets" />
+            <Setter Property="FontSize" Value="14" />
+            <Setter Property="Padding" Value="0" />
+            <Setter Property="Width" Value="30" />
+        </Style>
 
         <!-- A view at the top of the project list (My work, Overdue): looks like a project row, highlighted
              while it is the one showing (Tag bound to whether it is). -->
@@ -173,6 +196,16 @@
                 </DataTrigger>
             </Style.Triggers>
         </Style>
+        <!-- "Done in Workload Tracker" in the Assigned column: marked complete there, not returned in Helix or
+             Procore yet. Looks like the folder status pills. -->
+        <Style x:Key="DonePill" TargetType="Border">
+            <Setter Property="CornerRadius" Value="10" />
+            <Setter Property="Padding" Value="8,2" />
+            <Setter Property="HorizontalAlignment" Value="Left" />
+            <Setter Property="VerticalAlignment" Value="Center" />
+            <Setter Property="Background" Value="{DynamicResource WarningSoftBrush}" />
+            <Setter Property="TextElement.Foreground" Value="{DynamicResource WarningBrush}" />
+        </Style>
     </Window.Resources>
 
     <!-- The window's own title bar names the app, so there's no heading row: Sync all and Settings live in
@@ -190,6 +223,8 @@
             <DockPanel>
                 <Button DockPanel.Dock="Right" Content="✕" Style="{StaticResource LinkButton}" Click="DismissBanner_Click" Margin="8,0,0,0"
                         ToolTip="Hide this until a sign-in expires again" AutomationProperties.Name="Hide this message" />
+                <Button DockPanel.Dock="Right" Content="Connect Workload Tracker" Click="BannerWorkload_Click" Margin="8,0,0,0"
+                        Style="{StaticResource AccentButton}" Visibility="{Binding WorkloadTrackerNeedsConnect, Converter={StaticResource Visible}}" />
                 <ItemsControl DockPanel.Dock="Right" ItemsSource="{Binding Connections}" Focusable="False">
                     <ItemsControl.ItemsPanel>
                         <ItemsPanelTemplate>
@@ -304,16 +339,6 @@
                         <TextBlock Text="Find a project (Ctrl+F)" Foreground="{DynamicResource TextMuted}" Margin="11,0,0,0" VerticalAlignment="Center"
                                    IsHitTestVisible="False" Visibility="{Binding IsProjectSearchEmpty, Converter={StaticResource Visible}}" />
                     </Grid>
-                    <!-- What is syncing now, then how the sync ended (hides after a little while). -->
-                    <Border DockPanel.Dock="Top" Margin="4,0,4,8" Padding="8,6" CornerRadius="6" Background="{DynamicResource AccentSoftBrush}"
-                            Visibility="{Binding IsSyncProgressVisible, Converter={StaticResource Visible}}">
-                        <StackPanel>
-                            <TextBlock Text="{Binding SyncProgressText}" FontSize="11.5" TextWrapping="Wrap" />
-                            <ProgressBar Value="{Binding SyncProgressValue, Mode=OneWay}" Maximum="100" Height="3" Margin="0,5,0,0"
-                                         BorderThickness="0" Background="{DynamicResource LineBrush}" Foreground="{DynamicResource AccentBrush}"
-                                         Visibility="{Binding IsSyncProgressRunning, Converter={StaticResource Visible}}" />
-                        </StackPanel>
-                    </Border>
                     <!-- Views across every linked project: your open items, and everything overdue. -->
                     <StackPanel DockPanel.Dock="Top" Margin="0,0,0,2">
                         <TextBlock Text="VIEWS" Style="{StaticResource SectionTitle}" Margin="6,2,0,4" />
@@ -417,6 +442,8 @@
                             <!-- Procore projects can be left out of syncing (they stay in the list). -->
                             <ListBox.ContextMenu>
                                 <ContextMenu>
+                                    <MenuItem x:Name="ProjectSettingsMenu" Header="Project settings" Click="ProjectSettingsMenu_Click" FontWeight="SemiBold" />
+                                    <Separator x:Name="ProjectSettingsSeparator" />
                                     <MenuItem x:Name="FavoriteProjectMenu" Header="Add to favorites" Click="FavoriteProject_Click" />
                                     <MenuItem x:Name="UnfavoriteProjectMenu" Header="Remove from favorites" Click="UnfavoriteProject_Click" />
                                     <Separator />
@@ -579,10 +606,10 @@
                                                 <WrapPanel Margin="0,10,0,0">
                                                     <Button Content="{Binding IncludeUnlabeledText}" Click="IncludeUnlabeled_Click" Margin="0,0,8,4"
                                                             Visibility="{Binding CanIncludeUnlabeled, Converter={StaticResource Visible}}"
-                                                            ToolTip="Also count folders and items that say neither BB nor TFO as this part (Edit project → Base Build / Tenant Fit Out)" />
+                                                            ToolTip="Also count folders and items that say neither BB nor TFO as this part (Project settings → Base Build / Tenant Fit Out)" />
                                                     <Button Content="Create missing folders…" Click="CreateFolders_Click" Margin="0,0,8,4"
                                                             Visibility="{Binding CanCreateTypeFolders, Converter={StaticResource Visible}}" />
-                                                    <Button Content="Edit project…" Click="EditProject_Click" Margin="0,0,8,4" />
+                                                    <Button Content="Project settings" Click="EditProject_Click" Margin="0,0,8,4" />
                                                 </WrapPanel>
                                             </StackPanel>
                                         </Border>
@@ -593,8 +620,9 @@
                                 <Button Content="Cancel" Click="CancelRefresh_Click" Margin="8,0,0,0"
                                         ToolTip="Stops this sync (a background sync finishes by itself)"
                                         Visibility="{Binding CanCancelRefresh, Converter={StaticResource Visible}}" />
-                                <Button Content="{Binding EditButtonText}" Click="EditProject_Click" Margin="8,0,0,0"
-                                        Visibility="{Binding CanEditProject, Converter={StaticResource Visible}}" />
+                                <Button x:Name="ProjectSettingsButton" Content="Project settings" Click="ProjectSettingsButton_Click" Margin="8,0,0,0"
+                                        Visibility="{Binding CanEditProject, Converter={StaticResource Visible}}"
+                                        ToolTip="This project's folder, Helix or Procore project, part of the job and Workload Tracker project (also on right-click in the project list)" />
                                 <Button x:Name="ProjectMenuButton" Content="⋯" Click="ProjectMenu_Click" Margin="4,0,0,0" Padding="10,6"
                                         IsEnabled="{Binding HasProject}" AutomationProperties.Name="More project actions"
                                         ToolTip="Favorite, archive, or turn syncing on or off (also on right-click in the project list)" />
@@ -663,20 +691,6 @@
                             </Grid>
                         </Border>
 
-                        <TextBlock Text="{Binding RefreshMessage}" TextWrapping="Wrap" Margin="0,6,0,0"
-                                   Visibility="{Binding HasRefreshMessage, Converter={StaticResource Visible}}">
-                            <TextBlock.Style>
-                                <Style TargetType="TextBlock">
-                                    <Setter Property="Foreground" Value="{DynamicResource AccentBrush}" />
-                                    <Style.Triggers>
-                                        <DataTrigger Binding="{Binding RefreshMessageIsError}" Value="True">
-                                            <Setter Property="Foreground" Value="{DynamicResource DangerBrush}" />
-                                        </DataTrigger>
-                                    </Style.Triggers>
-                                </Style>
-                            </TextBlock.Style>
-                        </TextBlock>
-
                         <TextBlock Text="{Binding ProjectSubtitle}" Style="{StaticResource Muted}" Margin="0,4,0,0" FontSize="12"
                                    Visibility="{Binding HasProjectSubtitle, Converter={StaticResource Visible}}" />
                     </StackPanel>
@@ -684,7 +698,7 @@
 
                 <!-- Find an item, the type, then the filters, each saying what it is set to ("Open items", "Any due date"),
                      and View (grouping, sort and columns). On one line in a wide window; they wrap together otherwise. -->
-                <WrapPanel Grid.Row="1" Margin="0,10,0,4">
+                <WrapPanel x:Name="FilterBar" Grid.Row="1" Margin="0,10,0,4">
                     <!-- Find an item (Ctrl+E): as you type, only items whose number, title or folder name contains it. -->
                     <Grid Width="250" Margin="0,0,10,6">
                         <TextBox x:Name="ItemSearchBox" Text="{Binding ItemSearch, UpdateSourceTrigger=PropertyChanged, Delay=150}"
@@ -864,7 +878,10 @@
                     </StackPanel>
                 </WrapPanel>
 
-                <Grid Grid.Row="2">
+                <!-- Project settings: in place of the filters and item list while open (the header and project list stay). -->
+                <views:ProjectPage x:Name="ProjectView" Grid.Row="1" Grid.RowSpan="2" Visibility="Collapsed" />
+
+                <Grid x:Name="ItemsArea" Grid.Row="2">
                     <Grid.RowDefinitions>
                         <RowDefinition Height="*" />
                         <RowDefinition Height="Auto" />
@@ -908,6 +925,9 @@
                                                             <DataTrigger Binding="{Binding Name}" Value="Due today">
                                                                 <Setter Property="Foreground" Value="{DynamicResource WarningBrush}" />
                                                             </DataTrigger>
+                                                            <DataTrigger Binding="{Binding Name}" Value="Assigned to me">
+                                                                <Setter Property="Foreground" Value="{DynamicResource AccentBrush}" />
+                                                            </DataTrigger>
                                                         </Style.Triggers>
                                                     </Style>
                                                 </TextBlock.Style>
@@ -934,22 +954,25 @@
                                     </DataTemplate>
                                 </DataGridTemplateColumn.CellTemplate>
                             </DataGridTemplateColumn>
-                            <!-- Open Online (the item in the built-in Helix page, or a Procore item in your web browser),
-                                 Download, and ▾ for the rest (everything is also on right-click). Beside the box so they
-                                 never scroll out of sight. -->
-                            <DataGridTemplateColumn x:Name="ActionsColumn" Width="232" CanUserSort="False" CanUserResize="False">
+                            <!-- Open Online (globe: the item in the built-in Helix page, or a Procore item in your web
+                                 browser), Open folder (folder icon), Download, and ▾ for the rest (everything is also on
+                                 right-click). Beside the box so they never scroll out of sight. -->
+                            <DataGridTemplateColumn x:Name="ActionsColumn" Width="204" CanUserSort="False" CanUserResize="False">
                                 <DataGridTemplateColumn.CellTemplate>
                                     <DataTemplate>
                                         <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
-                                            <Button Content="Open Online" Click="OpenRow_Click" IsEnabled="{Binding HasItem}" Padding="10,2" FontSize="12.5"
+                                            <Button Style="{StaticResource RowIconButton}" Content="&#xE774;" Click="OpenRow_Click" IsEnabled="{Binding HasItem}"
                                                     ToolTip="{Binding OpenToolTip}" ToolTipService.ShowOnDisabled="True"
                                                     AutomationProperties.Name="{Binding Number, StringFormat=Open {0} online}" />
+                                            <Button Style="{StaticResource RowIconButton}" Content="&#xE8B7;" Click="OpenRowFolder_Click" IsEnabled="{Binding HasFolder}"
+                                                    Margin="4,0,0,0" ToolTip="{Binding OpenFolderToolTip}" ToolTipService.ShowOnDisabled="True"
+                                                    AutomationProperties.Name="{Binding Number, StringFormat=Open the folder of {0}}" />
                                             <Button Content="Download" Click="DownloadRow_Click" IsEnabled="{Binding CanDownload}" Padding="9,2"
                                                     FontSize="12.5" Margin="4,0,0,0"
                                                     ToolTip="{Binding DownloadToolTip}" ToolTipService.ShowOnDisabled="True"
                                                     AutomationProperties.Name="{Binding Number, StringFormat=Download {0}}" />
                                             <Button Content="▾" Click="RowMenu_Click" Padding="7,2" FontSize="12.5" Margin="4,0,0,0"
-                                                    ToolTip="Open its newest file or its folder, verify its folder, or set its discipline"
+                                                    ToolTip="Open its newest file or parent folder, verify or rescan its folder, or set its discipline"
                                                     AutomationProperties.Name="{Binding Number, StringFormat=More for {0}}" />
                                         </StackPanel>
                                     </DataTemplate>
@@ -960,9 +983,52 @@
                             <DataGridTextColumn x:Name="TypeColumn" Header="Type" Binding="{Binding TypeSingular}" Width="85"
                                                 IsReadOnly="True" SortMemberPath="TypeLabel" />
                             <DataGridTextColumn x:Name="NumberColumn" Header="Number" Binding="{Binding Number}" Width="110" IsReadOnly="True" SortMemberPath="Number" />
-                            <!-- The date and how far off it is: "Sep 7 · 26 days overdue". Right after the number, so it
-                                 stays in view in a narrow window. (Named for the column it replaced, so a choice to hide
-                                 it is kept.) -->
+                            <!-- The item's title, or (grey italic) the folder's name when there's no item. -->
+                            <DataGridTextColumn x:Name="TitleColumn" Header="Title" Binding="{Binding TitleText}" Width="300" IsReadOnly="True" SortMemberPath="Title">
+                                <DataGridTextColumn.ElementStyle>
+                                    <Style TargetType="TextBlock">
+                                        <Setter Property="ToolTip" Value="{Binding TitleToolTip}" />
+                                        <Setter Property="TextTrimming" Value="CharacterEllipsis" />
+                                        <Setter Property="VerticalAlignment" Value="Center" />
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding HasItem}" Value="False">
+                                                <Setter Property="FontStyle" Value="Italic" />
+                                                <Setter Property="Foreground" Value="{DynamicResource TextSecondary}" />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </DataGridTextColumn.ElementStyle>
+                            </DataGridTextColumn>
+                            <DataGridTextColumn x:Name="StatusColumn" Header="Item status" Binding="{Binding ProviderStatus}" Width="95" IsReadOnly="True" SortMemberPath="ProviderStatus" />
+                            <DataGridTextColumn x:Name="CourtColumn" Header="Ball in court" Binding="{Binding HolderText}" Width="180" IsReadOnly="True"
+                                                SortMemberPath="PersonSortKey">
+                                <DataGridTextColumn.ElementStyle>
+                                    <Style TargetType="TextBlock">
+                                        <Setter Property="ToolTip" Value="{Binding CourtToolTip}" />
+                                        <Setter Property="TextTrimming" Value="CharacterEllipsis" />
+                                        <Setter Property="VerticalAlignment" Value="Center" />
+                                    </Style>
+                                </DataGridTextColumn.ElementStyle>
+                            </DataGridTextColumn>
+                            <!-- Shown while a shown project is bound to a Workload Tracker project. An item someone marked
+                                 complete there that isn't returned in Helix or Procore yet gets a pill after the names. -->
+                            <DataGridTemplateColumn x:Name="AssignedColumn" Header="Assigned" Width="150" SortMemberPath="AssignedSortKey">
+                                <DataGridTemplateColumn.CellTemplate>
+                                    <DataTemplate>
+                                        <DockPanel VerticalAlignment="Center">
+                                            <Border DockPanel.Dock="Right" Style="{StaticResource DonePill}" Margin="6,0,0,0"
+                                                    ToolTip="{Binding DoneFlagToolTip}"
+                                                    Visibility="{Binding ShowsDoneFlag, Converter={StaticResource Visible}}">
+                                                <TextBlock Text="Done in Workload Tracker" FontSize="12" />
+                                            </Border>
+                                            <TextBlock Text="{Binding AssignedText}" ToolTip="{Binding AssignedToolTip}" TextTrimming="CharacterEllipsis"
+                                                       VerticalAlignment="Center" />
+                                        </DockPanel>
+                                    </DataTemplate>
+                                </DataGridTemplateColumn.CellTemplate>
+                            </DataGridTemplateColumn>
+                            <!-- The date and how far off it is: "Sep 7 · 26 days overdue". Right before Days in court, so the
+                                 two read together. (Named for the column it replaced, so a choice to hide it is kept.) -->
                             <DataGridTemplateColumn x:Name="DaysTillDueColumn" Header="Due" Width="160" SortMemberPath="DaysTillDue">
                                 <DataGridTemplateColumn.CellTemplate>
                                     <DataTemplate>
@@ -985,33 +1051,6 @@
                                     </DataTemplate>
                                 </DataGridTemplateColumn.CellTemplate>
                             </DataGridTemplateColumn>
-                            <!-- The item's title, or (grey italic) the folder's name when there's no item. -->
-                            <DataGridTextColumn x:Name="TitleColumn" Header="Title" Binding="{Binding TitleText}" Width="300" IsReadOnly="True" SortMemberPath="Title">
-                                <DataGridTextColumn.ElementStyle>
-                                    <Style TargetType="TextBlock">
-                                        <Setter Property="ToolTip" Value="{Binding TitleToolTip}" />
-                                        <Setter Property="TextTrimming" Value="CharacterEllipsis" />
-                                        <Setter Property="VerticalAlignment" Value="Center" />
-                                        <Style.Triggers>
-                                            <DataTrigger Binding="{Binding HasItem}" Value="False">
-                                                <Setter Property="FontStyle" Value="Italic" />
-                                                <Setter Property="Foreground" Value="{DynamicResource TextSecondary}" />
-                                            </DataTrigger>
-                                        </Style.Triggers>
-                                    </Style>
-                                </DataGridTextColumn.ElementStyle>
-                            </DataGridTextColumn>
-                            <DataGridTextColumn x:Name="StatusColumn" Header="Item status" Binding="{Binding ProviderStatus}" Width="95" IsReadOnly="True" SortMemberPath="ProviderStatus" />
-                            <DataGridTextColumn x:Name="CourtColumn" Header="Ball in court" Binding="{Binding HolderText}" Width="180" IsReadOnly="True"
-                                                SortMemberPath="PersonSortKey">
-                                <DataGridTextColumn.ElementStyle>
-                                    <Style TargetType="TextBlock">
-                                        <Setter Property="ToolTip" Value="{Binding CourtText}" />
-                                        <Setter Property="TextTrimming" Value="CharacterEllipsis" />
-                                        <Setter Property="VerticalAlignment" Value="Center" />
-                                    </Style>
-                                </DataGridTextColumn.ElementStyle>
-                            </DataGridTextColumn>
                             <DataGridTextColumn x:Name="DaysInCourtColumn" Header="Days in court" Binding="{Binding DaysInCourtText}" Width="95" IsReadOnly="True"
                                                 SortMemberPath="DaysInCourt" />
                             <DataGridTextColumn x:Name="FolderColumn" Header="Folder" Binding="{Binding FolderName}" Width="200" IsReadOnly="True" SortMemberPath="FolderName">
@@ -1098,12 +1137,15 @@
                                         ToolTip="Checks the shown folders that are ready to move to Returned" />
                                 <Button Content="Clear checks" Click="ClearTicks_Click" Margin="0,2,6,2"
                                         Visibility="{Binding HasChecks, Converter={StaticResource Visible}}" />
+                                <Button Content="{Binding AssignCheckedText}" Click="AssignChecked_Click" Margin="0,2,6,2"
+                                        Visibility="{Binding CanAssignChecked, Converter={StaticResource Visible}}"
+                                        ToolTip="Choose who on the Workload Tracker project's team works on the checked items" />
                                 <Button Content="{Binding SetDisciplineText}" Click="SetTickedDiscipline_Click" Margin="0,2,6,2"
                                         Visibility="{Binding CanSetDiscipline, Converter={StaticResource Visible}}"
                                         ToolTip="Set the discipline of the checked items. Items with no folder yet download into that discipline's folder." />
                                 <Button Content="{Binding VerifyCheckedText}" Click="VerifyChecked_Click" Margin="0,2,6,2"
                                         Visibility="{Binding CanDownloadChecked, Converter={StaticResource Visible}}"
-                                        ToolTip="Check that each checked Helix item's folder has every file Helix has for it; missing files can then be downloaded" />
+                                        ToolTip="Check that each checked item's folder has every file Helix or Procore has for it; missing files can then be downloaded" />
                                 <Button Content="{Binding MoveBackText}" Click="MoveBack_Click" Margin="0,2,6,2"
                                         Visibility="{Binding CanMoveBack, Converter={StaticResource Visible}}"
                                         ToolTip="Moves checked folders that are in Returned back to the active folder. A preview shows every move first." />
@@ -1113,7 +1155,7 @@
                             </WrapPanel>
                             <Button Grid.Column="1" Style="{StaticResource AccentButton}" Content="{Binding DownloadCheckedText}" Click="DownloadChecked_Click"
                                     Visibility="{Binding CanDownloadChecked, Converter={StaticResource Visible}}"
-                                    ToolTip="Download the checked Helix items: one window lists them all with their files and where they go"
+                                    ToolTip="Download the checked Helix and Procore items: one window lists them all with their files and where they go"
                                     VerticalAlignment="Center" Margin="8,0,0,0" />
                         </Grid>
                     </Border>
@@ -1121,15 +1163,39 @@
             </Grid>
         </Grid>
 
-        <!-- Footer: only while there is something to say. -->
-        <Border Grid.Row="2" Padding="20,6" BorderBrush="{DynamicResource LineBrush}" BorderThickness="0,1,0,0"
-                Background="{DynamicResource SurfaceBackground}" Visibility="{Binding HasFooter, Converter={StaticResource Visible}}">
-            <DockPanel>
-                <TextBlock DockPanel.Dock="Right" Text="Working…" Foreground="{DynamicResource AccentBrush}" Margin="0,0,16,0"
-                           Visibility="{Binding IsBusy, Converter={StaticResource Visible}}" />
-                <TextBlock Text="{Binding StatusMessage}" Foreground="{DynamicResource TextSecondary}" TextTrimming="CharacterEllipsis"
-                           ToolTip="{Binding StatusMessage}" />
-            </DockPanel>
+        <!-- Status bar: always there and one line high, so what it says can come and go without anything on the page
+             moving. Left: what the app is doing or just did (reading, syncing the shown project, a result, a problem).
+             Right: a sync of everything (Sync all, or in the background) and how far along it is, then how it ended. -->
+        <Border x:Name="StatusBar" Grid.Row="2" Height="28" Padding="20,0" BorderBrush="{DynamicResource LineBrush}" BorderThickness="0,1,0,0"
+                Background="{DynamicResource SurfaceBackground}">
+            <Grid VerticalAlignment="Center">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <TextBlock x:Name="StatusBarText" Text="{Binding StatusText}" FontSize="12" TextTrimming="CharacterEllipsis"
+                           ToolTip="{Binding StatusText}" ToolTipService.IsEnabled="{Binding HasStatusText}" AutomationProperties.Name="Status">
+                    <TextBlock.Style>
+                        <Style TargetType="TextBlock">
+                            <Setter Property="Foreground" Value="{DynamicResource TextSecondary}" />
+                            <Style.Triggers>
+                                <DataTrigger Binding="{Binding StatusIsError}" Value="True">
+                                    <Setter Property="Foreground" Value="{DynamicResource DangerBrush}" />
+                                </DataTrigger>
+                            </Style.Triggers>
+                        </Style>
+                    </TextBlock.Style>
+                </TextBlock>
+                <StackPanel x:Name="StatusBarSync" Grid.Column="1" Orientation="Horizontal" Margin="16,0,0,0"
+                            Visibility="{Binding IsSyncProgressVisible, Converter={StaticResource Visible}}">
+                    <TextBlock Text="{Binding SyncProgressText}" FontSize="12" MaxWidth="460" TextTrimming="CharacterEllipsis"
+                               Foreground="{DynamicResource TextSecondary}" VerticalAlignment="Center" ToolTip="{Binding SyncProgressText}" />
+                    <ProgressBar Value="{Binding SyncProgressValue, Mode=OneWay}" Maximum="100" Width="120" Height="3" Margin="10,0,0,0"
+                                 BorderThickness="0" Background="{DynamicResource LineBrush}" Foreground="{DynamicResource AccentBrush}"
+                                 VerticalAlignment="Center" AutomationProperties.Name="Sync progress"
+                                 Visibility="{Binding IsSyncProgressRunning, Converter={StaticResource Visible}}" />
+                </StackPanel>
+            </Grid>
         </Border>
     </Grid>
 </Window>

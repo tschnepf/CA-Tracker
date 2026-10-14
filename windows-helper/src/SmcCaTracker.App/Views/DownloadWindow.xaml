@@ -4,7 +4,7 @@
         xmlns:wv2="clr-namespace:Microsoft.Web.WebView2.Wpf;assembly=Microsoft.Web.WebView2.Wpf"
         xmlns:vm="clr-namespace:SmcCaTracker.App.ViewModels"
         Title="Download — CA Tracker"
-        Width="1000" Height="700" MinWidth="680" MinHeight="460"
+        Width="1200" Height="700" MinWidth="680" MinHeight="460"
         WindowStartupLocation="CenterOwner"
         Style="{StaticResource AppWindow}">
     <Window.Resources>
@@ -57,6 +57,7 @@
             <RowDefinition Height="Auto" />
             <RowDefinition x:Name="ListRow" Height="*" />
             <RowDefinition x:Name="BrowserRow" Height="1" />
+            <RowDefinition x:Name="ProcoreBrowserRow" Height="1" />
             <RowDefinition Height="Auto" />
         </Grid.RowDefinitions>
 
@@ -124,6 +125,45 @@
                                     </ToggleButton>
                                 </DockPanel>
 
+                                <!-- No discipline when the window opened: a warning under the heading (shown folded too) with Set
+                                     discipline. Once set it says what was set, in the same space, so nothing below it moves. -->
+                                <Border CornerRadius="6" BorderThickness="1" Padding="8,4" Margin="24,6,0,2"
+                                        Visibility="{Binding ShowsDiscipline, Converter={StaticResource Visible}}">
+                                    <Border.Style>
+                                        <Style TargetType="Border">
+                                            <Setter Property="Background" Value="{DynamicResource NeutralSoftBrush}" />
+                                            <Setter Property="BorderBrush" Value="Transparent" />
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding NeedsDiscipline}" Value="True">
+                                                    <Setter Property="Background" Value="{DynamicResource WarningSoftBrush}" />
+                                                    <Setter Property="BorderBrush" Value="{DynamicResource WarningBrush}" />
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </Border.Style>
+                                    <DockPanel>
+                                        <Button DockPanel.Dock="Right" Content="{Binding DisciplineButtonText}" Click="SetDiscipline_Click"
+                                                IsEnabled="{Binding CanSetDiscipline}" Margin="8,0,0,0" VerticalAlignment="Center"
+                                                ToolTip="Choose its discipline (the same as Set discipline… on its row)" />
+                                        <TextBlock DockPanel.Dock="Left" Width="20" FontSize="14" VerticalAlignment="Center">
+                                            <TextBlock.Style>
+                                                <Style TargetType="TextBlock">
+                                                    <Setter Property="Text" Value="✓" />
+                                                    <Setter Property="Foreground" Value="{DynamicResource SuccessBrush}" />
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding NeedsDiscipline}" Value="True">
+                                                            <Setter Property="Text" Value="⚠" />
+                                                            <Setter Property="Foreground" Value="{DynamicResource WarningBrush}" />
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </TextBlock.Style>
+                                        </TextBlock>
+                                        <!-- The runs are on one line: a line break between them would add a space. -->
+                                        <TextBlock VerticalAlignment="Center" TextTrimming="CharacterEllipsis"><Run Text="{Binding DisciplineHeadline, Mode=OneWay}" FontWeight="SemiBold" /><Run Text="   " /><Run Text="{Binding DisciplineNote, Mode=OneWay}" Foreground="{DynamicResource TextSecondary}" /></TextBlock>
+                                    </DockPanel>
+                                </Border>
+
                                 <TextBlock Text="{Binding Message}" TextWrapping="Wrap" Foreground="{DynamicResource WarningBrush}" Margin="24,2,0,2"
                                            Visibility="{Binding HasMessage, Converter={StaticResource Visible}}" />
 
@@ -165,11 +205,14 @@
                                     <ItemsControl ItemsSource="{Binding Files}" Focusable="False">
                                         <ItemsControl.ItemTemplate>
                                             <DataTemplate DataType="{x:Type vm:DownloadFileViewModel}">
+                                                <!-- Name, date, who uploaded it (name · company), status. The name and uploader
+                                                     share what's left; the uploader's column stops growing at 300. -->
                                                 <Grid Margin="0,2">
                                                     <Grid.ColumnDefinitions>
                                                         <ColumnDefinition Width="28" />
-                                                        <ColumnDefinition Width="*" />
+                                                        <ColumnDefinition Width="3*" />
                                                         <ColumnDefinition Width="170" />
+                                                        <ColumnDefinition Width="2*" MaxWidth="300" />
                                                         <ColumnDefinition Width="260" />
                                                     </Grid.ColumnDefinitions>
                                                     <CheckBox IsChecked="{Binding IsChecked, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
@@ -179,7 +222,10 @@
                                                                VerticalAlignment="Center" Margin="0,0,12,0" ToolTip="{Binding NameToolTip}" />
                                                     <TextBlock Grid.Column="2" Text="{Binding UploadedText}" Foreground="{DynamicResource TextSecondary}"
                                                                VerticalAlignment="Center" />
-                                                    <TextBlock Grid.Column="3" Text="{Binding StatusText}" Foreground="{DynamicResource TextSecondary}"
+                                                    <TextBlock Grid.Column="3" Text="{Binding UploaderText}" Foreground="{DynamicResource TextSecondary}"
+                                                               TextTrimming="CharacterEllipsis" VerticalAlignment="Center" Margin="0,0,12,0"
+                                                               ToolTip="{Binding UploaderToolTip}" />
+                                                    <TextBlock Grid.Column="4" Text="{Binding StatusText}" Foreground="{DynamicResource TextSecondary}"
                                                                TextTrimming="CharacterEllipsis" VerticalAlignment="Center" ToolTip="{Binding StatusText}" />
                                                 </Grid>
                                             </DataTemplate>
@@ -193,12 +239,14 @@
             </ItemsControl>
         </ScrollViewer>
 
-        <!-- Only shown when Helix asks you to sign in. Otherwise it keeps a 1-pixel row (so it starts and runs)
-             but is hidden: a browser is drawn over the window, so even that row showed a sliver of the page. -->
+        <!-- The Helix and Procore pages, each only shown when its site asks you to sign in. Otherwise each keeps a
+             1-pixel row (so it starts and runs) but is hidden: a browser is drawn over the window, so even that row
+             showed a sliver of the page. Each has its own row, so both can't cover each other. -->
         <wv2:WebView2 x:Name="Browser" Grid.Row="3" Visibility="Hidden" />
+        <wv2:WebView2 x:Name="ProcoreBrowser" Grid.Row="4" Visibility="Hidden" />
 
         <!-- Buttons are declared in the order Tab visits them; the main one is last, on the right. -->
-        <DockPanel Grid.Row="4" Margin="0,12,0,0">
+        <DockPanel Grid.Row="5" Margin="0,12,0,0">
             <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
                 <Button x:Name="StopButton" Content="Stop" Click="Stop_Click" Margin="0,0,8,0" Visibility="Collapsed"
                         ToolTip="Stop after the file being saved" />

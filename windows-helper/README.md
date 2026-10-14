@@ -28,15 +28,16 @@ No Chrome extension or browser add-in is involved.
   reads each tracked project through Helix's own data service — no windows. The first read of a
   project in a session reads everything; later reads ask Helix only for items changed since, so a
   sync of many projects takes seconds. Every 12 hours a project is read in full again so items
-  deleted in Helix drop out. Tracked projects sync every 15 minutes (Settings → Background sync).
+  deleted in Helix drop out. On weekdays, tracked projects sync every hour from 7 am to 5 pm and every
+  three hours at other times while the app is open; nothing syncs by itself on Saturdays and Sundays
+  (Settings → Background sync).
 - **The list redraws once** per change, not once per row.
 - **A timing log** (Settings → Open the log folder) records how long each step took and marks any
   slow one, so a sluggish step can be found instead of guessed at.
 
 ## The database
 
-`tracker.db` is a SQLite database with plain, portable tables, following the same conventions as the
-company server's PostgreSQL tables (text ids, ISO dates, no SQLite-only types):
+`tracker.db` is a SQLite database with plain, portable tables (text ids, ISO dates, no SQLite-only types):
 
 | Table | What |
 |---|---|
@@ -46,7 +47,10 @@ company server's PostgreSQL tables (text ids, ISO dates, no SQLite-only types):
 | `folder_scans`, `folder_entries`, `folder_containers` | The CA folder index |
 | `accounts`, `preferences` | Sign-ins shown in Connections; settings and the last view |
 | `sync_runs` | Each Helix/Procore read: full or changes only, items, changes, errors |
-| `change_log` | Every change to a project (with its discipline choices) or item, until the company server has it. Without an access token nothing is sent, so it is trimmed: emptied if this PC never shared, otherwise down to the newest change of each project or item |
+| `wt_outbox` | While connected to Workload Tracker: for each Helix/Procore project, which items changed or went away since the last send (one row per project, so it stays small). Empty when not connected |
+| `wt_assignments` | While connected: who is assigned to which item, as read back from Workload Tracker, plus changes made here not sent yet. Emptied when disconnecting |
+| `wt_completions` | While connected: items people marked complete in Workload Tracker (one row per person and item revision), read back with the assignments. Emptied when disconnecting |
+| `wt_item_facts` | While connected: per item, the discipline and folder status Workload Tracker last accepted, so an item whose discipline or folder changes is sent again. Emptied when disconnecting |
 
 On first start, the JSON files of earlier versions (`settings.json`, `snapshots\`, `catalog.json`,
 `accounts.json`, `view.json`) are imported and moved to `imported-json\` as a backup.
@@ -58,12 +62,21 @@ On first start, the JSON files of earlier versions (`settings.json`, `snapshots\
   with the .NET runtime included, Start-menu shortcut, and a check for the WebView2 Runtime.
 - **Company settings:** put `company\ca-tracker-company.json` (see `company\README.md`) next to the app —
   the installer ships it — to set folder names, the company's disciplines, the sync
-  interval, the update location and the company server for everyone, and lock what people
-  shouldn't change.
-- **Company server (optional):** see [`central/`](../central/README.md). With it, everyone shares what
-  they read from Helix and Procore and each project's discipline choices, and the company gets one
-  database of every RFI and Submittal and whose court it is in (PostgreSQL, ready for the workload
-  tracker). Each person enters their access token in Settings → Connections → Company server.
+  interval and the update location for everyone, and lock what people shouldn't change.
+- **Workload Tracker (optional):** each person enters the tracker's address in Settings → Connections →
+  Workload Tracker and presses **Connect…**; they sign in to the tracker in the window that opens and
+  press **Connect CA Tracker** on its Profile page. CA Tracker then sends what it reads every minute
+  while it is open. **Project settings** (the header button, or right-click a project in the list) shows
+  a project's settings in place of its item list, with the project list beside it so several projects can
+  be set up in turn; changes save as they are made. Its **Workload Tracker** section: **Choose…** binds the project to an existing,
+  running tracker project (its items are then filed there), and **Team in Workload Tracker** links each
+  person on that project's team to who they are in Helix or Procore (matching names are suggested and
+  linked only when confirmed). After that, **Assign to…** (an
+  item's right-click or ▾ menu, or the action bar for checked items) assigns people on that project's
+  team, and **My work** lists items assigned to you first. **Settings → People** links the people seen
+  in Helix and Procore to Workload Tracker people (names that match the project's team are suggested and
+  linked only when confirmed), so the items in their court show on their My Work. See
+  [`contract/README.md`](contract/README.md) for the contract.
 - **Updates:** publish each new installer with its `latest.json` to the update location; every CA
   Tracker offers **Update to <version>** in the title bar and installs it quietly.
 - **Problems:** the log (Settings → Open the log folder) records timings, errors and crashes.
@@ -78,6 +91,14 @@ powershell -ExecutionPolicy Bypass -File windows-helper\build.ps1
 
 This runs the tests and publishes `SmcCaTracker.exe` into `windows-helper\dist`. Use `-SelfContained` to build a copy for PCs without .NET 10 installed.
 Close the app before rebuilding, because Windows locks a running exe.
+
+To try a build without touching your real data, run it with its own data folder; it can stay open
+beside the installed app. A newer build upgrades the database it opens, and older versions can't use
+an upgraded one.
+
+```powershell
+windows-helper\dist\SmcCaTracker.exe --data-folder C:\Temp\ca-tracker-test
+```
 
 ## First run
 
@@ -116,8 +137,10 @@ The list on the left has two sections:
 - **No CA folder yet**: every Helix or Procore project CA Tracker has seen (from signing in to Helix,
   from looking through your Procore companies, and from syncs) that isn't tracked yet. Procore
   ones are synced in the background like tracked ones, so their items show without a CA folder; the
-  subtitle names the company hosting each one. Select one and choose **Choose CA folder…** to start
-  tracking it; it moves up into the first section, already linked.
+  subtitle names the company hosting each one. Select one and open **Project settings** to set it up:
+  the first change there (its Workload Tracker project, its company, its part of the job, or its CA
+  folder) makes it a tracked project, already linked. It moves up into the first section once its CA
+  folder is chosen, which can come later.
 
 **Find a project** (Ctrl+F) above the list narrows it by name or hosting company; Esc clears it.
 
@@ -158,8 +181,9 @@ many items they act on; the count beside them says when some checked items are h
 - **Column widths** fit the longest text in each column (every row, not just those on screen), so
   titles and names show in full. If the window is too narrow, only Title, Ball in court, Folder and the
   other long-text columns shorten (hover for the full text); anything still too wide scrolls sideways.
-  The check box and each row's **Folder**, **Open Online**, **Download** and **Verify** links stay in place (the same
-  actions, and Set discipline, are on right-click).
+  The check box and each row's buttons stay in place: **Open Online** (globe), **Open folder** (folder),
+  **Download** and **▾** (the same actions, and Set discipline, are on right-click). **Due** sits right before
+  **Days in court**.
 
 ## Items: filter and sort
 
@@ -189,7 +213,7 @@ updating so the new fields are read.
 
 ## Opening an item
 
-**Open Online** on a row (or double-clicking a row that has no folder yet) opens that exact RFI or
+**Open Online** (the globe button) on a row (or double-clicking a row that has no folder yet) opens that exact RFI or
 Submittal; double-clicking a row with a folder opens the folder. Helix items open in the **item panel** beside the
 list (drag the bar between them to resize): Helix has no web address for a single item, so the panel
 opens the project's RFI or Submittal list in CA Tracker's browser (already signed in) and then the item
@@ -204,6 +228,35 @@ re-reads the project once more, so changes you made to other items in the panel 
 panel closes at once and that re-read finishes behind it.
 Procore items update at the next background sync.
 
+## Links from Workload Tracker
+
+The buttons in Workload Tracker's CA item lists (Download, Open folder, Open newest file, Verify folder,
+Rescan folder, Set discipline, Show in CA Tracker) are links that open the item in CA Tracker on your PC:
+
+```
+smc-ca-tracker://item?provider=<helix|procore>&host=<site host>&project=<Helix/Procore project id>
+    &type=<rfi|submittal>&id=<item id>&number=<item number, URL-encoded>
+    &action=<details|open|folder|newest|download|verify|discipline|rescan>
+```
+
+- **Registration:** the installer registers `smc-ca-tracker://` for your Windows user
+  (`HKCU\Software\Classes\smc-ca-tracker`, removed on uninstall). CA Tracker registers it again at start
+  when it is missing or names a copy that is gone; a copy run with `--data-folder` never does.
+- **One CA Tracker:** when CA Tracker is already open, the new start hands it the link over a named pipe
+  only your Windows user can open, then closes; the open window comes forward (starting it again from the
+  Start menu just brings it forward). A `--data-folder` copy has its own pipe and never receives links.
+- **What happens:** CA Tracker leaves Settings or Project settings (saving or asking as usual), shows the
+  project linked to that Helix or Procore project (of a Base Build / Tenant Fit Out pair, the one whose part
+  includes the item) with every item and no search, selects the item and runs the button: the item
+  details, Open in Helix/Procore, its folder, its newest file, the download or verify window, Set
+  discipline, or Rescan folder (the status bar says what it found). Nothing changes a folder or a setting
+  without the usual window. When the project or item isn't on
+  this PC, the status bar along the bottom of the window says so ("CA Tracker doesn't have RFI 000303 on
+  this PC yet. Sync the project, then try again.").
+- **Safety:** a link is only read. Anything that isn't exactly this form — another scheme or host, a
+  provider, type or action not in the lists, ids other than 1–64 letters, digits and `. _ : -`, a host that
+  isn't a plain name, an item number over 64 characters or with control characters — is ignored.
+
 ## Test cases from real projects
 
 When CA Tracker gets whose court an item is in wrong, **Settings → General → Troubleshooting →
@@ -215,12 +268,15 @@ CA Tracker works out for each item under `expected`; correct the wrong ones and 
 
 ## Downloading an RFI or Submittal
 
-**Download** on an item's row (Helix items) opens the download window for that item; **Download…** at
-the bottom of the list opens it for every checked item at once. Each item is a section with where its
-files go, a status (`3 new files`, `New folder · 6 files`, `Up to date`, `Saved 3 files`…) and its
-Details PDF and current attachments, with each file's name and upload date. The items are read from
-Helix one after another in the background (one hidden Helix page serves them all); you can check and
-uncheck files while the rest are read, and an item with nothing new stays folded away. Its box checks
+**Download** on an item's row (Helix and Procore items) opens the download window for that item;
+**Download…** at the bottom of the list opens it for every checked item at once. Each item is a section
+with where its files go, a status (`3 new files`, `New folder · 6 files`, `Up to date`, `Saved 3 files`…)
+and its files, each with its name, date and who uploaded it with their company (`Jane Doe · Acme
+Electric`): for Helix the Details PDF and current attachments; for Procore an RFI's question and answer
+attachments, or a Submittal's own attachments and each response's.
+The items are read one after another in the background (one hidden Helix page and one hidden Procore
+page serve them all); you can check and uncheck files while the rest are read, and an item with nothing
+new stays folded away. Its box checks
 or unchecks all of its files; **New files only**, **Check all** and **Uncheck all** apply to every item.
 Each item's files go into a folder named `<number> - <name>` (e.g. `P000210 - Overhead Coiling Doors`),
 with a leading project name or code taken off the name:
@@ -233,22 +289,45 @@ with a leading project name or code taken off the name:
 - Otherwise a new folder is made in the project's RFI or Submittal folder.
 - **Change…** picks somewhere else (needed for projects without a CA folder).
 
+An item with no discipline (none set and none detected from its title or folder) has a yellow **No
+discipline set** line under its heading, shown even while the item is folded away. A discipline is
+optional, but it picks the discipline folder a new folder goes in. **Set discipline…** on that line is
+the row's own Set discipline; once saved, the line says what was set (`Discipline: Plbg  The new folder
+goes in Submittals\Plbg.`) in the same space, and the item's new folder moves to that discipline's
+folder. A folder that exists, or one picked with **Change…**, stays where it is. Its project must be
+shown in the main window.
+
 Nothing is written until you select **Download**, which saves every checked file of every item, item by
 item, with a progress bar (an item still being read is downloaded with its new files when its turn
 comes). **Stop** finishes the file being saved and stops. A file that fails doesn't stop the rest: it
 stays checked, so **Download** tries it again, and the window ends with what was saved where.
 
 **Verify** on a row (or **Verify folders…** at the bottom for the checked items) opens the same window to
-check that each item's folder has every file Helix has for it — attachments and the Details PDF, a file
+check that each item's folder has every file Helix or Procore has for it — attachments and Helix's Details PDF, a file
 saved with a date in front or as a copy counting as there. Each item says `All 7 files in folder`,
 `3 of 7 missing` or `No folder yet`, the missing files start checked (whatever their kind), and the
 window sums up how many folders are complete; **Download** then gets just what is missing.
 
+**Rescan folder** (a row's right-click or ▾ menu) lists that project's RFI or Submittal folder again
+straight away, for a folder you just made, renamed or moved in Explorer. The status bar then says where
+the item's folder is, or that it still has none. CA Tracker also rechecks the folders by itself when you
+come back to its window and every few minutes.
+
 For a folder that already exists, only PDFs not in it yet start checked (items added since); files
 already in the folder start unchecked and are never replaced; a checked duplicate is saved as
 `name (2).pdf`. PDFs get their upload date in front of the name (`2026-08-03 Review markup.pdf`), and
-the Details PDF is created by Helix's own export. Each saved file is added to `journal.jsonl`. Procore
-downloads aren't supported yet.
+the Details PDF is created by Helix's own export. Procore has no upload date or Details PDF: a Procore
+file is dated by what it came with (the question, the answer, the response or the submittal), and two
+files of the same name under different ids are both listed (the second saves as `name (2).pdf`). Procore
+files are read through Procore's REST service with your sign-in in the built-in browser, read-only; on
+a 401 the page shows Procore's sign-in. Each saved file is added to `journal.jsonl`.
+
+Who uploaded a file: Helix names each attachment's uploader and their company. Procore names who
+posted each file (a response's reviewer, an RFI's asker or answerer, whoever distributed the submittal)
+and the project's directory gives their company, one extra read per item. Procore doesn't record who
+attached a Submittal's own files, so they show the person who created the submittal; the tooltip says
+so and who it was received from. If Procore's directory can't be read, the names still show without
+companies.
 
 ## Settings
 
@@ -263,11 +342,17 @@ downloads aren't supported yet.
   Sign-in needed, Not connected), when it last synced, how many projects it has (and how many are
   archived or set to not sync), a progress bar while it syncs, and **Sign in** / **Sync now** buttons;
   **Sign out of Helix and Procore** (saved passwords kept) and **Sign out and forget saved
-  passwords**; and the optional **Company server**: its address (unless the company settings set it) and your
-  access token. Once connected, CA Tracker shares every couple of minutes while it is open: what you
-  read from Helix and Procore and your projects' discipline choices go to everyone tracking the same
-  projects, and theirs come to you. Your projects' names and CA folder locations are sent too (the
-  company database lists them), but someone else's never replace yours.
+  passwords**; and the optional **Workload Tracker**: its address, **Connect…** (signs in to the tracker
+  in a window and receives a token that only reaches the CA Tracker endpoints, stored encrypted for your
+  Windows user), **Send now** and **Disconnect…** (revokes this PC's connection). Once connected, what
+  you read from Helix and Procore is sent every minute while CA Tracker is open: items of projects set
+  up in the app, counts only for the others. Each item also carries its discipline (and whether it was
+  detected or set by hand) and its folder status, with its folder's full path as this PC sees it (Workload
+  Tracker offers it to copy into Explorer); a discipline set by hand or a folder that moves is sent at the
+  next send. The files stay on this PC. A project bound to a Workload Tracker project (Project settings) shows an **Assigned**
+  column; assignments made here show at once and are sent with the next send, and others' are read back
+  every five minutes. An item someone marked complete in Workload Tracker that isn't returned in Helix or
+  Procore yet shows **Done in Workload Tracker** beside the names (and in the item details).
 
 **← Back to projects** (or **← Projects**) returns to the project list.
 
@@ -278,10 +363,12 @@ Helix then Procore, except projects set to not sync; with nothing signed in it o
 **▾** syncs one site or opens Connections. For Procore it first looks through every company you belong
 to for new projects. A project that can't be read is marked and the rest carry on; while it runs the
 button reads **Stop syncing**, which finishes the current project and skips the rest. Progress shows
-above the project list and on each Connections card. A connection's last sync is the most recent read
+on the right of the status bar along the bottom of the window and on each Connections card. A connection's last sync is the most recent read
 of any of its projects. While the app is open, tracked Helix projects and every Procore project
-(except those set to not sync) also sync by themselves every 15 minutes, and your Procore companies
-are looked through again for new projects every 6 hours (Settings → Background sync).
+(except those set to not sync) also sync by themselves on weekdays, every hour from 7 am to 5 pm and
+every three hours at other times, and your Procore companies are looked through again for new
+projects every 6 hours. Nothing syncs by itself on Saturdays and Sundays; **Sync all** still works
+(Settings → Background sync).
 
 ## Syncing one project
 
@@ -295,8 +382,19 @@ project it also reads the project:
 - **Procore:** in the background too, reading **every** RFI and Submittal (not just the rows a list
   shows), with your Procore sign-in: a hidden Procore page asks Procore's own REST service
   for the lists, as Procore's web pages do. It sees exactly what you can see in Procore — across every
-  company you belong to — and nothing has to be installed in any company's Procore account. A tool
-  you can't see on a project (say, Submittals) is left as it was rather than emptied. If Procore
+  company you belong to — and nothing has to be installed in any company's Procore account. The
+  Procore sign-in lasts when CA Tracker closes: Procore's own sign-in ends when a browser closes, so
+  after each successful read CA Tracker keeps it in the built-in browser's profile for 14 days (Procore
+  still decides when it ends; then you are asked to sign in again). A tool
+  you can't see on a project (say, Submittals) is left as it was rather than emptied. A project is
+  read in full the first time and once a week; other syncs ask only for items changed since the last
+  read, and every 12 hours they also ask how many RFIs and Submittals Procore has (one row each). When
+  a count differs from the saved list (something was removed), the project is read in full at once.
+  These times are kept in the sync history, so restarting the app doesn't start over. If Procore
+  answers "too many requests" (429) or "come back later" (503), or says its rate limit is nearly used
+  up, CA Tracker asks it nothing more (syncs and downloads) until the time Procore gave, or for 30
+  minutes when it doesn't say; the status bar says until when. The log notes Procore's rate-limit
+  headroom after each sync. If Procore
   refuses the page way for your account, the sync falls back to reading the RFIs and Submittals lists
   in the CA Tracker browser window, as before; those reads only see the rows Procore's lists show.
 **Settings → Connections → Sign out of Helix and Procore** ends the sign-in (saved passwords stay).
@@ -361,7 +459,7 @@ by the newest revision (shown as `03 30 00-1 Rev 2`), and older revisions aren't
 ## Base Build and Tenant Fit Out
 
 A job split into Base Build (BB) and Tenant Fit Out (TFO) is set up as two projects, for example
-"CMH04 BB" and "CMH04 TFO". Each has its own sync, timestamps and list. In **Edit project → Base
+"CMH04 BB" and "CMH04 TFO". Each has its own sync, timestamps and list. In **Project settings → Base
 Build / Tenant Fit Out**, choose the part, then pick how the two are separated:
 
 - **Separate Helix/Procore projects or separate CA folders:** connect or choose each project's own.
@@ -386,7 +484,8 @@ are recognised too. Items with no folder yet are detected from their title. Dete
 in italics.
 
 Use **Set** in the Discipline column, or check folders and choose **Set discipline…**, to pick one by
-hand, mark a folder as having none, or go back to detecting it. Choices are saved in the tracker per
+hand, mark a folder as having none, or go back to detecting it (the download window asks for one too
+when an item has none). Choices are saved in the tracker per
 folder name, so they follow a folder into `~Returned`. Folders are never renamed. The **Discipline**
 filter above the list shows one discipline at a time.
 
@@ -398,11 +497,20 @@ for a Base Build project). If the Submittal or RFI folder is split by discipline
 that one yet, a new one (e.g. `Mech`) is suggested; the download window shows the full path before
 anything is created. The choice stays with the item after its folder exists.
 
+**Open folder** (the folder button on a row, or right-click) opens the item's folder in Explorer; it is off,
+with a tooltip saying why, for an item with no folder yet.
+
+**Open parent folder** (a row's ▾ menu, or right-click right after Open folder) opens the folder the
+item's folder is in, or for an item with no folder yet, the folder **Download** will make it in (its
+discipline folder when the project has them). A discipline folder that Download would make isn't there
+yet, so the RFI or Submittal folder opens instead and the status bar says so. It is off, with a tooltip
+saying why, for a project with no CA folder.
+
 ## What "returned" means
 
 By default an item is returned when **no one from the selected company holds it**, including when
 it is closed. The company defaults to the one on your Helix login and can be changed per project in
-**Edit project**.
+**Project settings**.
 "Holds" uses Helix's review order: whoever the item is with now (In court) or next (Coming up). Settings can also:
 
 - count items where your company only has a later step (coming up) as returned

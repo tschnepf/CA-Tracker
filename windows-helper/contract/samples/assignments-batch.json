@@ -1,0 +1,31 @@
+{
+  "assignments": [
+    {
+      "trackerProjectId": 101,
+      "providerProject": {"provider": "procore", "host": "app.procore.com", "projectId": "project-1"},
+      "itemType": "rfi",
+      "number": "BB-014",
+      "personId": 7,
+      "active": true,
+      "assignedAt": "2026-10-07T14:10:00Z"
+    },
+    {
+      "trackerProjectId": 101,
+      "providerProject": {"provider": "procore", "host": "app.procore.com", "projectId": "project-1"},
+      "itemType": "submittal",
+      "number": "03 30 00-1",
+      "personId": 7,
+      "active": true,
+      "assignedAt": "2026-10-07T14:10:00Z"
+    },
+    {
+      "trackerProjectId": 103,
+      "providerProject": {"provider": "helix", "host": "project.helixteam.com", "projectId": "project-2"},
+      "itemType": "rfi",
+      "number": "RFI-0042",
+      "personId": 12,
+      "active": false,
+      "assignedAt": "2026-10-07T14:11:30Z"
+    }
+  ]
+}

@@ -6,6 +6,7 @@ using SmcCaTracker.Core.Models;
 using SmcCaTracker.Core.Operations;
 using SmcCaTracker.Core.Refresh;
 using SmcCaTracker.Core.Storage;
+using SmcCaTracker.Core.WorkloadTracker;
 
 namespace SmcCaTracker.App.ViewModels;
 
@@ -46,7 +47,8 @@ public sealed class ProjectViewModel : ObservableObject
 
     /// <summary>
     /// A Helix or Procore project you can open that isn't set up in the tracker yet. It is listed
-    /// under "No CA folder yet" and is never saved until you choose its CA folder.
+    /// under "No CA folder yet" and is never saved: the first change in its Project settings saves a
+    /// tracker project linked to it in its place.
     /// </summary>
     public static ProjectViewModel ForProviderProject(CatalogProject source)
     {
@@ -224,8 +226,9 @@ public sealed class ProjectViewModel : ObservableObject
         }
     }
 
-    private string CompanyPart =>
-        IsPlaceholder && !string.IsNullOrWhiteSpace(project.CompanyName) ? $" · {project.CompanyName}" : "";
+    /// <summary>The subtitle's start, source first: "Helix · BB", or "Procore · Ryan Companies" for a project with no CA folder yet.</summary>
+    private string SourcePart => string.Join(" · ", new[] { ProviderLabel, IsPlaceholder ? project.CompanyName?.Trim() ?? "" : "", PhaseText }
+        .Where(text => text.Length > 0));
 
     public RefreshRequest? ActiveRefresh
     {
@@ -319,51 +322,51 @@ public sealed class ProjectViewModel : ObservableObject
     {
         get
         {
-            var part = PhaseText.Length > 0 ? $"{PhaseText} · " : "";
             if (project.Connection is null)
             {
-                return $"{part}Not linked to Helix or Procore";
+                return PhaseText.Length > 0 ? $"Not linked to Helix or Procore · {PhaseText}" : "Not linked to Helix or Procore";
             }
 
+            var source = SourcePart;
             if (IsArchived)
             {
-                return $"{part}{(project.Connection is null ? "" : ProviderLabel + CompanyPart + " · ")}archived";
+                return $"{source} · archived";
             }
 
             if (IsRefreshing)
             {
-                return $"{part}{ProviderLabel}{CompanyPart} · syncing now…";
+                return $"{source} · syncing now…";
             }
 
             if (isQueued)
             {
-                return $"{part}{ProviderLabel}{CompanyPart} · waiting to sync…";
+                return $"{source} · waiting to sync…";
             }
 
             if (JustSynced && !LastReadFailed && snapshot is not null)
             {
-                return $"{part}{ProviderLabel}{CompanyPart} · synced just now ({snapshot.Items.Count} items)";
+                return $"{source} · synced just now ({snapshot.Items.Count} items)";
             }
 
             if (IsSyncSkipped)
             {
-                return $"{part}{ProviderLabel}{CompanyPart} · sync turned off";
+                return $"{source} · sync turned off";
             }
 
             if (LastReadFailed)
             {
-                return $"{part}{ProviderLabel}{CompanyPart} · ⚠ last sync failed {Formatting.When(lastRun!.StartedAt)}";
+                return $"{source} · ⚠ last sync failed {Formatting.When(lastRun!.StartedAt)}";
             }
 
             if (IsPlaceholder && snapshot is null)
             {
-                return $"{ProviderLabel}{CompanyPart} · waiting for the first sync";
+                return $"{source} · waiting for the first sync";
             }
 
             // When it was synced is in the tooltip (and the pill above the list); this says what's coming up.
             return snapshot is null
-                ? $"{part}{ProviderLabel} · not synced yet"
-                : $"{part}{ProviderLabel}{CompanyPart}{(nextDue.Length > 0 ? $" · {nextDue}" : "")}";
+                ? $"{source} · not synced yet"
+                : $"{source}{(nextDue.Length > 0 ? $" · {nextDue}" : "")}";
         }
     }
 
@@ -510,8 +513,17 @@ public sealed class RowViewModel : ObservableObject
     public IReadOnlyList<SnapshotHolder> Holders { get; }
     public IReadOnlyList<string> HolderNames { get; }
 
-    /// <summary>Who has it: names, or the court summary when the site doesn't name anyone.</summary>
-    public string HolderText => HolderNames.Count > 0 ? string.Join(", ", HolderNames) : Row.Item is null ? "" : Row.Item.Closed ? "Closed" : CourtText;
+    /// <summary>
+    /// Who has it: names, or the court summary when Helix doesn't name anyone. Procore's Ball In Court is
+    /// shown as Procore has it, so an item nobody holds there (a Draft submittal) is blank.
+    /// </summary>
+    public string HolderText => HolderNames.Count > 0 ? string.Join(", ", HolderNames)
+        : Row.Item is null ? ""
+        : Row.Item.Closed ? "Closed"
+        : IsProcore ? ""
+        : CourtText;
+
+    private bool IsProcore => string.Equals(Comparison.Snapshot?.Provider, Providers.Procore, StringComparison.OrdinalIgnoreCase);
 
     /// <summary>Sorts people A–Z, with items that have nobody named last.</summary>
     public string PersonSortKey => HolderNames.Count > 0 ? HolderNames[0] : "\uffff";
@@ -558,6 +570,9 @@ public sealed class RowViewModel : ObservableObject
         : $"{Title}\nFolder: {LocationText}\\{Row.Folder.Name}\nDouble-click the row (or press Enter) to open the folder.";
     public string ProviderStatus => Row.Item?.Status ?? "";
     public string CourtText { get; }
+
+    /// <summary>Hover text for who has it: whose court it is, or none when that can't be told.</summary>
+    public string? CourtToolTip => CourtText.Length > 0 ? CourtText : null;
     public string FolderName => Row.Folder?.Name ?? "—";
     public string LocationText { get; }
     public string Detail => Row.Detail;
@@ -584,12 +599,15 @@ public sealed class RowViewModel : ObservableObject
     /// <summary>Identifies the row across list rebuilds: its project, type, and folder or item.</summary>
     public string Key => $"{Project.Id}|{Row.ItemType}|{Row.Folder?.FullPath ?? "item:" + Row.Item?.ItemId}";
 
+    /// <summary>Identifies the row's item across list rebuilds, also once its folder is found, moved or renamed (null for a folder with no item).</summary>
+    public string? ItemKey => Row.Item is { } item ? $"{Project.Id}|{Row.ItemType}|item:{item.ItemId}" : null;
+
     /// <summary>The details pane's first line: "RFI 000252 · Aligned CMH03 · Helix".</summary>
     public string DetailsCrumb => string.Join(" · ", new[] { HasItem ? $"{TypeSingular} {Number}" : $"{TypeSingular} folder", ProjectName, Project.ProviderLabel }
         .Where(part => part.Length > 0));
 
     /// <summary>Who has it now and for how long, for the details pane.</summary>
-    public string WithText => HolderNames.Count == 0 ? (Row.Item is null ? "—" : HolderText)
+    public string WithText => HolderNames.Count == 0 ? (HolderText.Length > 0 ? HolderText : "—")
         : DaysInCourt is null ? string.Join(", ", HolderNames)
         : $"{string.Join(", ", HolderNames)} · {DaysInCourtText}";
 
@@ -608,21 +626,40 @@ public sealed class RowViewModel : ObservableObject
     public bool HasFolderNote => Row.Status is not (RowStatus.Open or RowStatus.NoFolder);
 
     /// <summary>Hover text for the row's Open Online: where the item opens (a folder with no item has nothing to open online).</summary>
-    public string OpenToolTip => CanDownload
-        ? "Open it in Helix, in the panel on the right"
-        : HasItem ? $"Open it in {Project.ProviderLabel} (in your web browser)"
-        : "No Helix or Procore item for this folder. ▾ → Open folder opens the folder.";
+    public string OpenToolTip => !HasItem
+        ? "No Helix or Procore item for this folder. The folder button beside this one opens the folder."
+        : string.Equals(Project.Project.Connection?.Provider, Providers.Helix, StringComparison.OrdinalIgnoreCase)
+            ? "Open it in Helix, in the panel on the right"
+            : $"Open it in {Project.ProviderLabel} (in your web browser)";
+
+    /// <summary>Hover text for the row's Open folder: where its folder is, or why there is none to open.</summary>
+    public string OpenFolderToolTip => Row.Folder is { } folder ? $"Open its folder: {folder.FullPath}"
+        : CanOpenParentFolder ? "No folder for it yet. Download makes one; ▾ → Open parent folder opens where it will go."
+        : "No folder for it yet, and this project has no CA folder. Choose one in Project settings.";
 
     /// <summary>"Open in Helix" / "Open in Procore" in the row's menu.</summary>
     public string OpenOnlineText => Project.ProviderLabel.Length > 0 ? $"Open in {Project.ProviderLabel}" : "Open online";
 
-    /// <summary>Downloads work for Helix items only.</summary>
-    public bool CanDownload => Row.Item is not null
-        && string.Equals(Project.Project.Connection?.Provider, Providers.Helix, StringComparison.OrdinalIgnoreCase);
+    /// <summary>Its files can be downloaded (and its newest file opened, its folder verified): a Helix or Procore item.</summary>
+    public bool CanDownload => Row.Item is not null && Project.Project.Connection is not null;
 
     public string DownloadToolTip => CanDownload
         ? "Choose files to download into a \"number - name\" folder"
-        : Row.Item is null ? "No Helix or Procore item for this folder" : "Downloads work for Helix items only";
+        : "No Helix or Procore item for this folder";
+
+    /// <summary>Its RFI or Submittal folder can be listed again now (Rescan folder): its project has a CA folder.</summary>
+    public bool CanRescanFolder => Project.HasCaFolder && !Project.IsPlaceholder;
+
+    public string RescanFolderToolTip => CanRescanFolder
+        ? $"List the {TypeLabel} folder again now, e.g. after making, renaming or moving a folder in Explorer"
+        : "This project has no CA folder yet. Choose one in Project settings.";
+
+    /// <summary>Open parent folder can say where its folder is or goes: it has one, or its project has a CA folder.</summary>
+    public bool CanOpenParentFolder => HasFolder || (HasItem && Project.HasCaFolder && !Project.IsPlaceholder);
+
+    public string OpenParentFolderToolTip => HasFolder ? "Open the folder its folder is in"
+        : CanOpenParentFolder ? "Open the folder Download makes its folder in (its discipline folder when the project has them)"
+        : "This project has no CA folder yet. Choose one in Project settings.";
 
     /// <summary>Hover text for the whole row: what double-clicking does.</summary>
     public string RowToolTip => HasFolder ? "Double-click to open this folder" : HasItem ? "Double-click to open this item" : "";
@@ -632,6 +669,140 @@ public sealed class RowViewModel : ObservableObject
         && (uri.Scheme == Uri.UriSchemeHttps || uri.Scheme == Uri.UriSchemeHttp);
 
     public string ToolTipText => string.IsNullOrEmpty(Detail) ? StatusText : $"{StatusText}. {Detail}";
+
+    // ---- Workload Tracker assignments (decision D4) ------------------------------------------
+
+    public const string AssignedToMeHeading = "Assigned to me";
+
+    /// <summary>The item as Workload Tracker names it, when its project is bound; null when it can't be assigned.</summary>
+    public WorkloadItemRef? AssignRef { get; private set; }
+
+    /// <summary>Who is assigned to the item in Workload Tracker, names in order.</summary>
+    public IReadOnlyList<WorkloadAssignment> Assignees { get; private set; } = [];
+
+    /// <summary>Assigned to you (the Workload Tracker person you're connected as) and not done.</summary>
+    public bool IsAssignedToMe { get; private set; }
+
+    public bool CanAssign => AssignRef is not null;
+
+    /// <summary>Connected to Workload Tracker: the row's menus offer Assign to… (enabled once the project is bound).</summary>
+    public bool ShowsAssignMenu { get; private set; }
+
+    public string AssignMenuToolTip => CanAssign
+        ? "Choose who on the project's team in Workload Tracker works on this item"
+        : HasItem ? "Bind this project to a Workload Tracker project first (Project settings)" : "Only Helix and Procore items can be assigned";
+
+    /// <summary>The Assigned column: names, with people who have left marked so the item can be reassigned.</summary>
+    public string AssignedText => string.Join(", ", Assignees.Select(row => row.PersonActive ? row.PersonName : $"{row.PersonName} (left)"));
+
+    public string AssignedSortKey => Assignees.Count > 0 ? Assignees[0].PersonName : "\uffff";
+
+    /// <summary>Hover text for the Assigned column: who assigned each person and when, and what isn't sent yet.</summary>
+    public string? AssignedToolTip => Assignees.Count == 0
+        ? CanAssign ? "Nobody is assigned. Right-click → Assign to… to assign someone." : null
+        : string.Join("\n", Assignees.Select(row =>
+        {
+            var by = row.AssignedByName is { Length: > 0 } name ? $" by {name}" : "";
+            var note = row.Pending ? " (not sent yet)"
+                : !row.PersonActive ? " · has left: reassign it"
+                : row.CompletedAt is not null ? " · done" : "";
+            return $"{row.PersonName}: assigned{by} {row.AssignedAt.ToLocalTime():MMM d}{note}";
+        }));
+
+    /// <summary>Set by the list: My work shows items assigned to you first, under their own heading.</summary>
+    public bool ListAssignedFirst { get; set; }
+
+    /// <summary>The heading the list groups this row under when grouped by when it's due.</summary>
+    public string Heading => ListAssignedFirst && IsAssignedToMe ? AssignedToMeHeading : UrgencyText;
+
+    /// <summary>The order of <see cref="Heading"/>: "Assigned to me" first, then by when it's due.</summary>
+    public int HeadingOrder => ListAssignedFirst && IsAssignedToMe ? -1 : (int)Urgency;
+
+    /// <summary>The details pane's Assigned line: shown once the item can be assigned (or someone is).</summary>
+    public bool ShowsAssignedDetails => CanAssign || Assignees.Count > 0;
+
+    public string AssignedDetailsText => Assignees.Count == 0 ? "Nobody yet" : AssignedText;
+
+    // ---- Marked complete in Workload Tracker -------------------------------------------------
+
+    /// <summary>The pill after the names on items marked complete in Workload Tracker and not returned yet.</summary>
+    public const string DoneFlagText = "Done in Workload Tracker";
+
+    /// <summary>Who marked this revision of the item complete in Workload Tracker, names in order.</summary>
+    public IReadOnlyList<WorkloadCompletion> Completions { get; private set; } = [];
+
+    public bool HasCompletions => Completions.Count > 0;
+
+    /// <summary>Marked complete in Workload Tracker, but still open in Helix or Procore and not returned: flagged.</summary>
+    public bool ShowsDoneFlag => WorkloadCompletion.AwaitsReturn(Row, Completions);
+
+    /// <summary>Hover text for the pill: who marked it and when, and that it still needs returning.</summary>
+    public string? DoneFlagToolTip => ShowsDoneFlag
+        ? $"Marked complete in Workload Tracker by {MarkedByText} on {LastMarkedText}. Not returned in {ProviderName} yet."
+        : null;
+
+    /// <summary>The details pane's Workload Tracker line: "Marked complete by Pat Lead on Oct 7".</summary>
+    public string CompletedText => HasCompletions ? $"Marked complete by {MarkedByText} on {LastMarkedText}" : "";
+
+    private string MarkedByText => string.Join(", ", Completions.Select(mark => mark.PersonName));
+
+    private string LastMarkedText => HasCompletions ? $"{Completions.Max(mark => mark.MarkedAt).ToLocalTime():MMM d}" : "";
+
+    private string ProviderName => Project.ProviderLabel.Length > 0 ? Project.ProviderLabel : "Helix or Procore";
+
+    public void SetAssignments(WorkloadItemRef? reference, IReadOnlyList<WorkloadAssignment> assignees, int? me, bool paired,
+        IReadOnlyList<WorkloadCompletion> completions)
+    {
+        var mine = me is { } person && assignees.Any(row => row.PersonId == person && row.CompletedAt is null);
+        if (reference == AssignRef && mine == IsAssignedToMe && paired == ShowsAssignMenu
+            && assignees.SequenceEqual(Assignees, AssignmentComparer.Instance)
+            && completions.SequenceEqual(Completions, CompletionComparer.Instance))
+        {
+            return;
+        }
+
+        ShowsAssignMenu = paired;
+        AssignRef = reference;
+        Assignees = assignees;
+        IsAssignedToMe = mine;
+        Completions = completions;
+        foreach (var name in new[]
+                 {
+                     nameof(AssignRef), nameof(Assignees), nameof(IsAssignedToMe), nameof(CanAssign), nameof(AssignedText),
+                     nameof(ShowsAssignMenu), nameof(AssignMenuToolTip),
+                     nameof(AssignedSortKey), nameof(AssignedToolTip), nameof(Heading), nameof(HeadingOrder),
+                     nameof(ShowsAssignedDetails), nameof(AssignedDetailsText),
+                     nameof(Completions), nameof(HasCompletions), nameof(ShowsDoneFlag), nameof(DoneFlagToolTip), nameof(CompletedText)
+                 })
+        {
+            OnPropertyChanged(name);
+        }
+    }
+
+    /// <summary>Two assignment lists show the same thing.</summary>
+    private sealed class AssignmentComparer : IEqualityComparer<WorkloadAssignment>
+    {
+        public static readonly AssignmentComparer Instance = new();
+
+        public bool Equals(WorkloadAssignment? x, WorkloadAssignment? y) =>
+            x is not null && y is not null && x.Key == y.Key && x.Active == y.Active && x.Pending == y.Pending
+            && x.PersonName == y.PersonName && x.PersonActive == y.PersonActive && x.CompletedAt == y.CompletedAt
+            && x.AssignedAt == y.AssignedAt && x.AssignedByName == y.AssignedByName;
+
+        public int GetHashCode(WorkloadAssignment obj) => obj.Key.GetHashCode(StringComparison.Ordinal);
+    }
+
+    /// <summary>Two lists of "marked complete" marks show the same thing.</summary>
+    private sealed class CompletionComparer : IEqualityComparer<WorkloadCompletion>
+    {
+        public static readonly CompletionComparer Instance = new();
+
+        public bool Equals(WorkloadCompletion? x, WorkloadCompletion? y) =>
+            x is not null && y is not null && x.Key == y.Key && x.PersonName == y.PersonName
+            && x.MarkedAt == y.MarkedAt && x.MarkedByName == y.MarkedByName && x.Revision == y.Revision;
+
+        public int GetHashCode(WorkloadCompletion obj) => obj.Key.GetHashCode(StringComparison.Ordinal);
+    }
 }
 
 public sealed class OperationRowViewModel

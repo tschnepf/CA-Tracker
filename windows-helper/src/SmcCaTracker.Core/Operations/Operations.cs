@@ -86,7 +86,9 @@ public static class OperationPlanner
                 Title = $"Move {folder.Name} to {Display(scan.TypeFolderPath, destinationParent)}",
                 Warning = row.Item is null
                     ? "This folder was not matched to a provider item."
-                    : row.IsReturned ? null : $"The provider still shows this as: {CourtEvaluator.Describe(row.Court, comparison.Company)}.",
+                    : row.IsReturned ? null
+                    : CourtEvaluator.Describe(row.Court, comparison.Company) is { Length: > 0 } court ? $"The provider still shows this as: {court}."
+                    : "The provider still shows this as open.",
                 BlockedReason = problem
             });
         }

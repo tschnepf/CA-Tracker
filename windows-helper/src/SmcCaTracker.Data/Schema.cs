@@ -7,7 +7,7 @@ namespace SmcCaTracker.Data;
 /// </summary>
 internal static class Schema
 {
-    public const int CurrentVersion = 2;
+    public const int CurrentVersion = 5;
 
     private static readonly string[][] Versions =
     {
@@ -220,6 +220,98 @@ internal static class Schema
         new[]
         {
             "ALTER TABLE items ADD COLUMN revision TEXT NULL;"
+        },
+
+        // Version 3: Workload Tracker. People's provider ids and emails; the outbox of what scans changed,
+        // one row per provider project (merged, so it stays small); the retired company server's change log goes.
+        new[]
+        {
+            "ALTER TABLE item_holders ADD COLUMN provider_user_id TEXT NULL;",
+            "ALTER TABLE item_holders ADD COLUMN email TEXT NULL;",
+            "ALTER TABLE provider_snapshots ADD COLUMN user_provider_id TEXT NULL;",
+            "ALTER TABLE provider_snapshots ADD COLUMN user_email TEXT NULL;",
+            "ALTER TABLE accounts ADD COLUMN provider_user_id TEXT NULL;",
+            "ALTER TABLE accounts ADD COLUMN email TEXT NULL;",
+            """
+            CREATE TABLE IF NOT EXISTS wt_outbox (
+                provider TEXT NOT NULL,
+                project_id TEXT NOT NULL,
+                account TEXT NOT NULL,
+                full_set INTEGER NOT NULL,
+                changed TEXT NOT NULL,
+                removed TEXT NOT NULL,
+                verified TEXT NOT NULL,
+                version BIGINT NOT NULL,
+                updated_at TEXT NOT NULL,
+                attempts INTEGER NOT NULL,
+                next_attempt_at TEXT NULL,
+                last_error TEXT NULL,
+                PRIMARY KEY (provider, project_id)
+            );
+            """,
+            "DROP INDEX IF EXISTS change_log_unsynced;",
+            "DROP TABLE IF EXISTS change_log;",
+            "DELETE FROM preferences WHERE pref_key = 'central';",
+            "DELETE FROM schema_info WHERE meta_key IN ('central_cursor', 'central_client_id', 'central_server', 'central_send_everything');"
+        },
+
+        // Version 4: Workload Tracker item assignments, as read back from the tracker plus changes made
+        // here that are still to be sent (pending). Keyed like the tracker: project, item lineage, person.
+        new[]
+        {
+            """
+            CREATE TABLE IF NOT EXISTS wt_assignments (
+                tracker_project_id INTEGER NOT NULL,
+                provider TEXT NOT NULL,
+                host TEXT NOT NULL,
+                provider_project_id TEXT NOT NULL,
+                item_type TEXT NOT NULL,
+                number TEXT NOT NULL,
+                person_id INTEGER NOT NULL,
+                person_name TEXT NOT NULL,
+                person_active INTEGER NOT NULL,
+                active INTEGER NOT NULL,
+                assigned_at TEXT NOT NULL,
+                assigned_by_name TEXT NULL,
+                completed_at TEXT NULL,
+                pending INTEGER NOT NULL,
+                PRIMARY KEY (tracker_project_id, provider, provider_project_id, item_type, number, person_id)
+            );
+            """
+        },
+
+        // Version 5: Workload Tracker. Items people marked complete there (read back with the assignments;
+        // a mark belongs to one revision of an item), and per item the facts last sent about it (discipline
+        // and folder status), so an item whose facts change on their own is sent again.
+        new[]
+        {
+            """
+            CREATE TABLE IF NOT EXISTS wt_completions (
+                tracker_project_id INTEGER NOT NULL,
+                provider TEXT NOT NULL,
+                host TEXT NOT NULL,
+                provider_project_id TEXT NOT NULL,
+                item_type TEXT NOT NULL,
+                provider_item_id TEXT NOT NULL,
+                number TEXT NOT NULL,
+                revision TEXT NULL,
+                person_id INTEGER NOT NULL,
+                person_name TEXT NOT NULL,
+                marked_by_name TEXT NULL,
+                marked_at TEXT NOT NULL,
+                PRIMARY KEY (tracker_project_id, provider, provider_project_id, item_type, provider_item_id, person_id)
+            );
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS wt_item_facts (
+                provider TEXT NOT NULL,
+                project_id TEXT NOT NULL,
+                item_type TEXT NOT NULL,
+                item_id TEXT NOT NULL,
+                fingerprint TEXT NOT NULL,
+                PRIMARY KEY (provider, project_id, item_type, item_id)
+            );
+            """
         }
     };
 

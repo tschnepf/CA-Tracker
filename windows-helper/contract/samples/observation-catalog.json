@@ -1,0 +1,48 @@
+{
+  "schemaVersion": "1.0",
+  "appVersion": "3.4.0",
+  "clientId": "6f1c2a8e-3b7d-4c55-9a0e-1d2f3a4b5c6d",
+  "observationId": "9a8b7c6d-5e4f-4a3b-8c2d-1e0f9a8b7c6d",
+  "part": 1,
+  "totalParts": 1,
+  "observationKind": "catalog",
+  "providerProject": {
+    "provider": "procore",
+    "host": "app.procore.com",
+    "accountId": "company-1",
+    "projectId": "project-3",
+    "name": "Sample warehouse",
+    "company": "Company A"
+  },
+  "bindings": [],
+  "scannedAt": "2026-10-07T14:06:00Z",
+  "coverage": [
+    {
+      "itemType": "rfi",
+      "scannedAt": "2026-10-07T14:06:00Z",
+      "detailsComplete": true,
+      "presenceVerified": true,
+      "fullSet": false,
+      "itemCount": 412,
+      "openCount": 3
+    },
+    {
+      "itemType": "submittal",
+      "scannedAt": "2026-10-07T14:06:00Z",
+      "detailsComplete": true,
+      "presenceVerified": true,
+      "fullSet": false,
+      "itemCount": 1290,
+      "openCount": 0
+    }
+  ],
+  "collector": {
+    "providerUserId": "user-1",
+    "email": "person-1@example.invalid",
+    "name": "Person 1",
+    "company": "Company B",
+    "companyId": "company-2"
+  },
+  "items": [],
+  "removed": []
+}

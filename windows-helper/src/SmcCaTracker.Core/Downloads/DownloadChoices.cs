@@ -1,6 +1,6 @@
 namespace SmcCaTracker.Core.Downloads;
 
-/// <summary>A file Helix offers for an item: its name there, the name it is saved as, and whether it is the Details PDF.</summary>
+/// <summary>A file Helix or Procore offers for an item: its name there, the name it is saved as, and whether it is the Details PDF.</summary>
 public sealed record DownloadFileFacts(string Name, string TargetName, bool IsReport);
 
 /// <summary>What the download window starts a file as: whether it is already saved, checked, and the note shown.</summary>
@@ -43,13 +43,14 @@ public static class DownloadChoices
 
     /// <summary>
     /// The item's status before downloading: "New folder · 6 files", "3 new files", or "Up to date" when
-    /// nothing starts checked (with how many other files are new, if any).
+    /// nothing starts checked (with how many other files are new, if any). <paramref name="source"/> is
+    /// where the files are ("Helix", "Procore").
     /// </summary>
-    public static string Summary(IReadOnlyList<DownloadFileChoice> choices, bool folderExists)
+    public static string Summary(IReadOnlyList<DownloadFileChoice> choices, bool folderExists, string source = "Helix")
     {
         if (choices.Count == 0)
         {
-            return "No files in Helix";
+            return $"No files in {source}";
         }
 
         if (!folderExists)
@@ -68,8 +69,8 @@ public static class DownloadChoices
     }
 
     /// <summary>
-    /// For checking an item's folder against Helix: every file Helix has that isn't in the folder (any kind,
-    /// the Details PDF too) starts checked, so Download gets exactly what is missing.
+    /// For checking an item's folder against Helix or Procore: every file it has that isn't in the folder (any
+    /// kind, Helix's Details PDF too) starts checked, so Download gets exactly what is missing.
     /// </summary>
     public static IReadOnlyList<DownloadFileChoice> ChooseMissing(
         IReadOnlyList<DownloadFileFacts> files,
@@ -85,11 +86,11 @@ public static class DownloadChoices
     }
 
     /// <summary>The item's status when checking its folder: "All 7 files in folder", "3 of 7 missing", "No folder yet".</summary>
-    public static string MissingSummary(IReadOnlyList<DownloadFileChoice> choices, bool folderExists)
+    public static string MissingSummary(IReadOnlyList<DownloadFileChoice> choices, bool folderExists, string source = "Helix")
     {
         if (choices.Count == 0)
         {
-            return "No files in Helix";
+            return $"No files in {source}";
         }
 
         if (!folderExists)

@@ -3,6 +3,7 @@ using System.ComponentModel;
 using System.Globalization;
 using System.IO;
 using SmcCaTracker.App.Services;
+using SmcCaTracker.Core.Comparison;
 using SmcCaTracker.Core.Downloads;
 using SmcCaTracker.Core.Models;
 using SmcCaTracker.Core.Operations;
@@ -10,13 +11,22 @@ using SmcCaTracker.Core.Operations;
 namespace SmcCaTracker.App.ViewModels;
 
 /// <summary>What to download and where it would go by default.</summary>
+/// <param name="Provider">Where the item is: <see cref="Providers.Helix"/> or <see cref="Providers.Procore"/>.</param>
 /// <param name="ExistingFolder">The item's matched folder, if it already has one.</param>
 /// <param name="ParentFolder">Where a new "&lt;number&gt; - &lt;name&gt;" folder goes (the project's RFI or Submittal folder).</param>
 /// <param name="MoveBackTo">
 /// For an item back with you while its folder is in Returned (a new round): where that folder goes when it moves
 /// back out of Returned. Its new files go in a new R folder (see <see cref="NewRound"/>).
 /// </param>
+/// <param name="AccountId">Procore: the project's company, which Procore needs to answer for it.</param>
+/// <param name="Host">Procore: the server the project is on ("app.procore.com", "us02.procore.com").</param>
+/// <param name="Discipline">The item's discipline ("Electrical"), set by hand or detected; null when it has none.</param>
+/// <param name="DisciplineSource">
+/// Where that came from. <see cref="Core.Comparison.DisciplineSource.None"/>: none was set or detected, so the window asks
+/// for one. Set by hand to none is <see cref="Core.Comparison.DisciplineSource.Manual"/> with no discipline.
+/// </param>
 public sealed record DownloadRequest(
+    string Provider,
     string ItemType,
     string ItemId,
     string ProjectId,
@@ -25,7 +35,15 @@ public sealed record DownloadRequest(
     string ProjectName,
     string? ExistingFolder,
     string? ParentFolder,
-    string? MoveBackTo = null);
+    string? MoveBackTo = null,
+    string? AccountId = null,
+    string? Host = null,
+    string? Discipline = null,
+    DisciplineSource DisciplineSource = DisciplineSource.None)
+{
+    /// <summary>"Helix" or "Procore", for what the windows say.</summary>
+    public string ProviderLabel => Providers.Label(Provider);
+}
 
 /// <summary>One file offered for download.</summary>
 public sealed class DownloadFileViewModel : ObservableObject
@@ -34,25 +52,39 @@ public sealed class DownloadFileViewModel : ObservableObject
     private bool canChange = true;
     private string statusText = "";
 
-    public DownloadFileViewModel(string key, string name, DateTimeOffset? uploadedAt, string targetName, bool isReport)
+    public DownloadFileViewModel(string key, string name, DateTimeOffset? uploadedAt, string targetName, bool isReport,
+        ItemUploader? uploadedBy = null)
     {
         Key = key;
         Name = name;
         UploadedAt = uploadedAt;
         TargetName = targetName;
         IsReport = isReport;
+        UploadedBy = uploadedBy;
     }
 
-    /// <summary>"report" or the Helix attachment id.</summary>
+    /// <summary>"report" or the attachment's id in Helix or Procore.</summary>
     public string Key { get; }
     public string Name { get; }
     public DateTimeOffset? UploadedAt { get; }
     public bool IsReport { get; }
     public string TargetName { get; }
-    public string UploadedText => IsReport ? "Created by Helix now" : UploadedAt?.ToLocalTime().ToString("MMM d, yyyy h:mm tt") ?? "";
+    /// <summary>Who uploaded it and their company, when Helix or Procore says.</summary>
+    public ItemUploader? UploadedBy { get; }
+    /// <summary>When it was uploaded; a day alone for Procore's dates that have no time (a response's returned date).</summary>
+    public string UploadedText => IsReport ? "Created by Helix now"
+        : UploadedAt?.ToLocalTime() is not { } local ? ""
+        : local.TimeOfDay == TimeSpan.Zero ? local.ToString("MMM d, yyyy")
+        : local.ToString("MMM d, yyyy h:mm tt");
+    /// <summary>"Jane Doe · Acme Electric"; empty when no one is named (the Details PDF).</summary>
+    public string UploaderText => UploadedBy?.Text ?? "";
+    /// <summary>The whole name and company, or how sure that is (a Procore submittal's own files show its creator).</summary>
+    public string? UploaderToolTip => UploadedBy is null ? null
+        : UploadedBy.Note is { } note ? $"{UploadedBy.Text}\n{note}"
+        : UploadedBy.Text;
     public string NameToolTip => $"Saved as {TargetName}";
 
-    /// <summary>Short-lived download link from Helix (attachments only).</summary>
+    /// <summary>Short-lived download link from Helix or Procore (attachments only).</summary>
     public string? Url { get; set; }
 
     /// <summary>Whether it starts checked ("New files only" goes back to this).</summary>
@@ -103,7 +135,7 @@ public enum DownloadChip
 public sealed class DownloadItemViewModel : ObservableObject
 {
     private DownloadItemState state = DownloadItemState.Waiting;
-    private string statusText = "Waiting to read from Helix";
+    private string statusText;
     private DownloadChip chip = DownloadChip.Neutral;
     private string message = "";
     private bool isExpanded;
@@ -129,9 +161,11 @@ public sealed class DownloadItemViewModel : ObservableObject
     {
         Request = request;
         Verifying = verifying;
+        statusText = $"Waiting to read from {request.ProviderLabel}";
         FolderName = DownloadNaming.FolderName(request.Number, request.Title, request.ProjectName);
         Revision = DownloadNaming.Revision(request.Title, request.Number);
         Heading = $"{(request.ItemType == ItemTypes.Submittal ? "Submittal" : "RFI")} {request.Number} · {request.Title}";
+        ShowsDiscipline = request.DisciplineSource == DisciplineSource.None;
         itemFolder = request.ExistingFolder;
         if (IsNewRound)
         {
@@ -147,15 +181,64 @@ public sealed class DownloadItemViewModel : ObservableObject
             : string.IsNullOrWhiteSpace(request.ParentFolder) ? null : WithRevision(Path.Combine(request.ParentFolder, FolderName));
     }
 
-    public DownloadRequest Request { get; }
+    /// <summary>The item and where its files go by default (its discipline and the parent folder follow Set discipline).</summary>
+    public DownloadRequest Request { get; private set; }
 
-    /// <summary>Checking the item's folder against Helix: every missing file starts checked (not just new PDFs).</summary>
+    // ---- Discipline ----------------------------------------------------------------------------
+
+    /// <summary>
+    /// The item had no discipline when the window opened (none set by hand and none detected), so a line under its
+    /// heading asks for one. Optional, but it picks the discipline folder a new folder goes in. The line stays for
+    /// the window's life and says what was set, so nothing below it moves.
+    /// </summary>
+    public bool ShowsDiscipline { get; }
+
+    /// <summary>Still no discipline: the line is a warning with Set discipline.</summary>
+    public bool NeedsDiscipline => Request.DisciplineSource == DisciplineSource.None;
+
+    public string DisciplineHeadline => NeedsDiscipline ? "No discipline set"
+        : $"Discipline: {Request.Discipline ?? "None"}{(Request.DisciplineSource == DisciplineSource.Detected ? " (auto)" : "")}";
+
+    public string DisciplineNote => NeedsDiscipline
+        ? itemFolder is null && !folderChosen
+            ? "Optional, but it picks the discipline folder the new folder goes in."
+            : "Optional. CA Tracker and Workload Tracker sort items by discipline."
+        : itemFolder is null && !folderChosen && !HasSaved && Request.ParentFolder is { } parent
+            ? $"The new folder goes in {ShortPath(parent)}."
+            : "Saved for this item.";
+
+    public string DisciplineButtonText => NeedsDiscipline ? "Set discipline…" : "Change discipline…";
+
+    /// <summary>Not while its files are being saved (where they go could change).</summary>
+    public bool CanSetDiscipline => State != DownloadItemState.Downloading;
+
+    /// <summary>
+    /// The discipline was set (Set discipline): the item as it is now. A new folder not saved into yet follows it to
+    /// its discipline folder; a folder that exists, or one chosen with Change, stays where it is.
+    /// </summary>
+    public void ApplyDiscipline(DownloadRequest now)
+    {
+        var parentChanged = !string.Equals(now.ParentFolder, Request.ParentFolder, StringComparison.OrdinalIgnoreCase);
+        Request = Request with { Discipline = now.Discipline, DisciplineSource = now.DisciplineSource, ParentFolder = now.ParentFolder };
+        if (parentChanged && itemFolder is null && !folderChosen && !HasSaved && State != DownloadItemState.Downloading)
+        {
+            Destination = string.IsNullOrWhiteSpace(Request.ParentFolder) ? null : WithRevision(Path.Combine(Request.ParentFolder, FolderName));
+            ApplyChoices(resetChecks: false);
+        }
+
+        foreach (var name in new[] { nameof(NeedsDiscipline), nameof(DisciplineHeadline), nameof(DisciplineNote), nameof(DisciplineButtonText) })
+        {
+            OnPropertyChanged(name);
+        }
+    }
+
+    /// <summary>Checking the item's folder against Helix or Procore: every missing file starts checked (not just new PDFs).</summary>
     public bool Verifying { get; }
 
-    /// <summary>Files Helix has that aren't in the folder (as last compared).</summary>
+    /// <summary>Files Helix or Procore has that aren't in the folder (as last compared).</summary>
     public int MissingCount { get; private set; }
 
-    /// <summary>The folder exists and has every file Helix has for the item.</summary>
+    /// <summary>The folder exists and has every file Helix or Procore has for the item.</summary>
     public bool IsComplete { get; private set; }
 
     public string FolderName { get; }
@@ -177,11 +260,12 @@ public sealed class DownloadItemViewModel : ObservableObject
             {
                 OnPropertyChanged(nameof(CanRetry));
                 OnPropertyChanged(nameof(CanChangeFolder));
+                OnPropertyChanged(nameof(CanSetDiscipline));
             }
         }
     }
 
-    /// <summary>The status chip: "3 new files", "Up to date", "Reading from Helix…", "Saved 3 files"…</summary>
+    /// <summary>The status chip: "3 new files", "Up to date", "Reading from Procore…", "Saved 3 files"…</summary>
     public string StatusText
     {
         get => statusText;
@@ -228,6 +312,7 @@ public sealed class DownloadItemViewModel : ObservableObject
             {
                 OnPropertyChanged(nameof(DestinationText));
                 OnPropertyChanged(nameof(DestinationNote));
+                OnPropertyChanged(nameof(DisciplineNote));
             }
         }
     }
@@ -384,7 +469,13 @@ public sealed class DownloadItemViewModel : ObservableObject
     public bool HasSaved
     {
         get => hasSaved;
-        private set => Set(ref hasSaved, value);
+        private set
+        {
+            if (Set(ref hasSaved, value))
+            {
+                OnPropertyChanged(nameof(DisciplineNote));
+            }
+        }
     }
 
     public int CheckedCount => Files.Count(file => file.IsChecked);
@@ -429,12 +520,12 @@ public sealed class DownloadItemViewModel : ObservableObject
 
         Message = "";
         State = DownloadItemState.Reading;
-        SetChip("Reading from Helix…", DownloadChip.Neutral);
+        SetChip($"Reading from {Request.ProviderLabel}…", DownloadChip.Neutral);
         OnPropertyChanged(nameof(CanChangeFiles));
     }
 
-    /// <summary>Lists the files Helix offers and checks the new ones (see <see cref="DownloadChoices"/>).</summary>
-    public void Load(HelixItemFiles files)
+    /// <summary>Lists the files Helix or Procore offers and checks the new ones (see <see cref="DownloadChoices"/>).</summary>
+    public void Load(ItemFiles files)
     {
         foreach (var file in Files)
         {
@@ -453,7 +544,8 @@ public sealed class DownloadItemViewModel : ObservableObject
         foreach (var attachment in files.Attachments)
         {
             Files.Add(new DownloadFileViewModel(attachment.Id, attachment.Filename, attachment.UploadedAt,
-                DownloadNaming.AttachmentFileName(attachment.Filename, attachment.UploadedAt?.ToLocalTime()), isReport: false)
+                DownloadNaming.AttachmentFileName(attachment.Filename, attachment.UploadedAt?.ToLocalTime()), isReport: false,
+                attachment.UploadedBy)
             {
                 Url = attachment.Url
             });
@@ -473,7 +565,7 @@ public sealed class DownloadItemViewModel : ObservableObject
     }
 
     /// <summary>New download links (they expire after a few minutes) for the files already listed.</summary>
-    public void RefreshLinks(HelixItemFiles files)
+    public void RefreshLinks(ItemFiles files)
     {
         var fresh = files.Attachments.ToDictionary(attachment => attachment.Id);
         foreach (var file in Files.Where(file => !file.IsReport))
@@ -523,11 +615,12 @@ public sealed class DownloadItemViewModel : ObservableObject
         updatingChecks = false;
         if (State == DownloadItemState.Ready && Verifying)
         {
-            SetChip(DownloadChoices.MissingSummary(choices, folderExists), IsComplete ? DownloadChip.Success : DownloadChip.Warning);
+            SetChip(DownloadChoices.MissingSummary(choices, folderExists, Request.ProviderLabel), IsComplete ? DownloadChip.Success : DownloadChip.Warning);
         }
         else if (State == DownloadItemState.Ready)
         {
-            SetChip(DownloadChoices.Summary(choices, folderExists), choices.Any(choice => choice.Checked) || !folderExists ? DownloadChip.Accent : DownloadChip.Neutral);
+            SetChip(DownloadChoices.Summary(choices, folderExists, Request.ProviderLabel),
+                choices.Any(choice => choice.Checked) || !folderExists ? DownloadChip.Accent : DownloadChip.Neutral);
         }
 
         ChecksChanged();

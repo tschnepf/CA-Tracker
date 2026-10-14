@@ -88,12 +88,18 @@ public partial class MainWindow : Window
                 case nameof(MainViewModel.SelectedProjects):
                     SyncProjectList();
                     UpdateColumns();
+                    if (editingProject)
+                    {
+                        _ = FollowSelectionAsync();
+                    }
+
                     break;
                 case nameof(MainViewModel.SortColumn):
                 case nameof(MainViewModel.SortDescending):
                     UpdateSortArrows();
                     break;
                 case nameof(MainViewModel.PersonFilterText):
+                case nameof(MainViewModel.ShowsAssignments):
                     UpdateColumns();
                     break;
                 case nameof(MainViewModel.ShowItemDetails):
@@ -106,6 +112,14 @@ public partial class MainWindow : Window
             }
         };
         SettingsView.BackRequested += (_, _) => ShowProjects();
+        ProjectView.SaveRequested += SaveProjectAsync;
+        ProjectView.CloseRequested += (_, _) => ShowItemList();
+        ProjectView.RemoveRequested += (_, projectId) =>
+        {
+            ShowItemList();
+            viewModel.RemoveProject(projectId);
+        };
+        Closing += MainWindow_Closing;
         SettingsView.SaveRequested += async edited =>
         {
             // Apply only what General settings edits, onto the current settings, so projects
@@ -297,6 +311,8 @@ public partial class MainWindow : Window
 
         static Visibility Show(bool value) => value ? Visibility.Visible : Visibility.Collapsed;
         var count = selected.Count;
+        ProjectSettingsMenu.Visibility = Show(count == 1);
+        ProjectSettingsSeparator.Visibility = Show(count == 1);
         ArchiveProjectMenu.Header = count > 1 ? $"Archive these {count} projects (hide and stop syncing)" : "Archive (hide and stop syncing)";
         UnarchiveProjectMenu.Header = count > 1 ? $"Unarchive these {count} projects" : "Unarchive";
         FavoriteProjectMenu.Header = count > 1 ? $"Add these {count} to favorites" : "Add to favorites";
@@ -410,15 +426,21 @@ public partial class MainWindow : Window
             CourtColumn.Visibility = Visibility.Collapsed;
         }
 
+        if (!viewModel.ShowsAssignments)
+        {
+            AssignedColumn.Visibility = Visibility.Collapsed;
+        }
+
         ScheduleColumnFit();
     }
 
     /// <summary>Columns you can turn off, with the name they are remembered by and their menu label.</summary>
     private IEnumerable<(DataGridColumn Column, string Name, string Label)> OptionalColumns() => new (DataGridColumn, string, string)[]
     {
-        (DaysTillDueColumn, nameof(DaysTillDueColumn), "Due"),
         (StatusColumn, nameof(StatusColumn), "Item status"),
         (CourtColumn, nameof(CourtColumn), "Ball in court"),
+        (AssignedColumn, nameof(AssignedColumn), "Assigned"),
+        (DaysTillDueColumn, nameof(DaysTillDueColumn), "Due"),
         (DaysInCourtColumn, nameof(DaysInCourtColumn), "Days in court"),
         (FolderColumn, nameof(FolderColumn), "Folder"),
         (DisciplineColumn, nameof(DisciplineColumn), "Discipline"),
@@ -548,7 +570,8 @@ public partial class MainWindow : Window
 
         if (viewModel.GroupBy is GroupModes.Urgency)
         {
-            view.GroupDescriptions.Add(new PropertyGroupDescription(nameof(RowViewModel.UrgencyText)));
+            // When it's due; in My work, "Assigned to me" comes first.
+            view.GroupDescriptions.Add(new PropertyGroupDescription(nameof(RowViewModel.Heading)));
         }
 
         if (viewModel.GroupBy is GroupModes.Project or GroupModes.ProjectAndType)
@@ -664,16 +687,42 @@ public partial class MainWindow : Window
         await ChooseDisciplineAsync(rows, $"{rows.Count} checked item{(rows.Count == 1 ? "" : "s")}");
     }
 
-    private async Task ChooseDisciplineAsync(IReadOnlyList<RowViewModel> rows, string subject)
+    /// <summary>Asks for the rows' discipline (over <paramref name="owner"/>, else this window) and saves it. False when cancelled.</summary>
+    private async Task<bool> ChooseDisciplineAsync(IReadOnlyList<RowViewModel> rows, string subject, Window? owner = null)
     {
         var current = rows.Count == 1 && rows[0].Row.DisciplineSource == DisciplineSource.Manual
             ? rows[0].Row.Discipline?.Code ?? Disciplines.NoneCode
             : null;
-        var window = new DisciplineWindow(subject, current) { Owner = this };
-        if (window.ShowDialog() == true)
+        var window = new DisciplineWindow(subject, current) { Owner = owner ?? this };
+        if (window.ShowDialog() != true)
         {
-            await viewModel.SetDisciplineAsync(rows, window.Result);
+            return false;
         }
+
+        await viewModel.SetDisciplineAsync(rows, window.Result);
+        return true;
+    }
+
+    /// <summary>
+    /// A download window's Set discipline, for an item it lists: the row's Set discipline, then the item as it is now
+    /// (where a new folder goes follows the discipline). The item's row is needed, so its project must be shown.
+    /// </summary>
+    private async Task<DownloadRequest?> ChooseDownloadDisciplineAsync(DownloadRequest request, Window owner)
+    {
+        if (viewModel.RowForDownload(request) is not { CanSelect: true } row)
+        {
+            MessageBox.Show(owner, "Its project isn't shown in CA Tracker now. Show its project, then set the discipline on its row.",
+                "CA Tracker", MessageBoxButton.OK, MessageBoxImage.Information);
+            return null;
+        }
+
+        if (!await ChooseDisciplineAsync(new[] { row }, row.Row.Folder?.Name ?? $"{row.Number} - {row.Title}", owner))
+        {
+            return null;
+        }
+
+        // The list was compared again: the item's row is a new one.
+        return viewModel.RowForDownload(request) is { } now ? viewModel.DownloadRequestFor(now) : null;
     }
 
     private DateTime personPopupClosedAt;
@@ -780,9 +829,9 @@ public partial class MainWindow : Window
 
     // ---- Watchlists ------------------------------------------------------------------------------
 
-    private void ShowWatchlist_Click(object sender, RoutedEventArgs e)
+    private async void ShowWatchlist_Click(object sender, RoutedEventArgs e)
     {
-        if (sender is FrameworkElement { DataContext: WatchlistItemViewModel item })
+        if (sender is FrameworkElement { DataContext: WatchlistItemViewModel item } && await LeaveSettingsForListAsync())
         {
             viewModel.ShowWatchlist(item.Watchlist);
             ShowFilterChoices();
@@ -870,15 +919,25 @@ public partial class MainWindow : Window
     }
 
     /// <summary>My work: your open items in every linked project. The filter boxes follow.</summary>
-    private void ShowMyWork_Click(object sender, RoutedEventArgs e)
+    private async void ShowMyWork_Click(object sender, RoutedEventArgs e)
     {
+        if (!await LeaveSettingsForListAsync())
+        {
+            return;
+        }
+
         viewModel.ShowMyWork();
         ShowFilterChoices();
     }
 
     /// <summary>Overdue, all projects: every overdue item in every linked project.</summary>
-    private void ShowAllOverdue_Click(object sender, RoutedEventArgs e)
+    private async void ShowAllOverdue_Click(object sender, RoutedEventArgs e)
     {
+        if (!await LeaveSettingsForListAsync())
+        {
+            return;
+        }
+
         viewModel.ShowAllOverdue();
         ShowFilterChoices();
     }
@@ -934,19 +993,15 @@ public partial class MainWindow : Window
         view.LiveSortingProperties.Add(nameof(ProjectViewModel.Name));
     }
 
-    private async void NewProject_Click(object sender, RoutedEventArgs e) => await CreateProjectAsync(null);
+    private async void NewProject_Click(object sender, RoutedEventArgs e) => await CreateProjectAsync();
 
     /// <summary>
-    /// Creates a tracker project from a chosen CA folder. With <paramref name="fromProvider"/> (a Helix or
-    /// Procore project listed under "No CA folder yet") the new project is already connected to it.
+    /// Creates a tracker project from a chosen CA folder. (A Helix or Procore project listed under "No CA
+    /// folder yet" is set up in its Project settings instead.)
     /// </summary>
-    private async Task CreateProjectAsync(ProjectViewModel? fromProvider)
+    private async Task CreateProjectAsync()
     {
-        var dialog = new OpenFolderDialog
-        {
-            Title = fromProvider is null ? "Choose the new project's CA folder" : $"Choose the CA folder for {fromProvider.Name}",
-            Multiselect = false
-        };
+        var dialog = new OpenFolderDialog { Title = "Choose the new project's CA folder", Multiselect = false };
         // Start beside the projects already tracked (e.g. the client folder that holds the selected one).
         if (NearProjects() is { } start)
         {
@@ -959,36 +1014,10 @@ public partial class MainWindow : Window
         }
 
         // Creating a project only records it in the tracker's settings; nothing in the folder changes.
-        var draft = new TrackerProject
-        {
-            Name = fromProvider?.Name ?? TrackerProject.SuggestName(dialog.FolderName),
-            CaFolder = dialog.FolderName,
-            Connection = fromProvider is null ? null : viewModel.CloneProject(fromProvider.Project).Connection
-        };
-        var phase = (fromProvider is null ? null : Phases.Detect(fromProvider.Name)) ?? Phases.SuggestFromPath(dialog.FolderName);
+        var draft = new TrackerProject { Name = TrackerProject.SuggestName(dialog.FolderName), CaFolder = dialog.FolderName };
+        var phase = Phases.SuggestFromPath(dialog.FolderName);
         var existing = viewModel.Settings.Projects.FirstOrDefault(project =>
             string.Equals(Path.TrimEndingDirectorySeparator(project.CaFolder), Path.TrimEndingDirectorySeparator(dialog.FolderName), StringComparison.OrdinalIgnoreCase));
-        if (existing is not null && fromProvider is not null && existing.Connection is null)
-        {
-            // The folder is already tracked but not connected: connect it rather than splitting it.
-            var connect = MessageBox.Show(
-                this,
-                $"That CA folder already belongs to \"{existing.Name}\", which isn't linked to Helix or Procore.\n\nLink \"{existing.Name}\" to {fromProvider.ConnectionText}?",
-                "CA folder already used",
-                MessageBoxButton.YesNo,
-                MessageBoxImage.Question,
-                MessageBoxResult.Yes);
-            if (connect == MessageBoxResult.Yes)
-            {
-                var updated = viewModel.CloneProject(existing);
-                updated.Connection = viewModel.CloneProject(fromProvider.Project).Connection;
-                await viewModel.UpdateProjectAsync(updated);
-                viewModel.SelectedProject = viewModel.Projects.FirstOrDefault(project => project.Id == updated.Id);
-            }
-
-            return;
-        }
-
         if (existing is not null)
         {
             var answer = MessageBox.Show(
@@ -1011,12 +1040,9 @@ public partial class MainWindow : Window
                 _ => ProjectPhase.TenantFitOut
             };
             draft.Scope.FilterFolders = true;
-            if (fromProvider is null)
-            {
-                // Same Helix/Procore project for both parts: keep only this part's items.
-                draft.Connection = existing.Connection is null ? null : viewModel.CloneProject(existing).Connection;
-                draft.Scope.FilterItems = existing.Connection is not null;
-            }
+            // Same Helix/Procore project for both parts: keep only this part's items.
+            draft.Connection = existing.Connection is null ? null : viewModel.CloneProject(existing).Connection;
+            draft.Scope.FilterItems = existing.Connection is not null;
         }
 
         draft.Scope.Phase = phase;
@@ -1024,11 +1050,11 @@ public partial class MainWindow : Window
         {
             draft.Name = $"{draft.Name} {Phases.Short(phase)}";
         }
-        var window = new ProjectWindow(draft, isNew: true, viewModel) { Owner = this };
-        if (window.ShowDialog() == true && window.Result is not null)
+        viewModel.AddProject(draft);
+        await viewModel.CompareAsync();
+        if (!editingProject)
         {
-            viewModel.AddProject(window.Result);
-            await viewModel.CompareAsync();
+            ShowProjectSettings();
         }
     }
 
@@ -1058,33 +1084,173 @@ public partial class MainWindow : Window
         return null;
     }
 
-    private async void EditProject_Click(object sender, RoutedEventArgs e)
+    private void EditProject_Click(object sender, RoutedEventArgs e)
     {
         SetupPopup.IsOpen = false;
-        if (viewModel.SelectedProject is null)
+        ShowProjectSettings();
+    }
+
+    // ---- Project settings (in place of the item list) ----------------------------------------------
+
+    private bool editingProject;
+    private bool following;
+
+    /// <summary>The header's Project settings: opens the selected project's settings, or goes back to its items.</summary>
+    private async void ProjectSettingsButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (editingProject)
+        {
+            if (await ProjectView.LeaveAsync())
+            {
+                ShowItemList();
+            }
+        }
+        else
+        {
+            ShowProjectSettings();
+        }
+    }
+
+    /// <summary>Project settings from the project list's right-click menu (or ⋯).</summary>
+    private void ProjectSettingsMenu_Click(object sender, RoutedEventArgs e)
+    {
+        if (ProjectsInSelection() is [var chosen])
+        {
+            viewModel.SelectedProject = chosen;
+            ShowProjectSettings();
+        }
+    }
+
+    /// <summary>Shows the selected project's settings where its item list was; the project list stays.</summary>
+    private void ShowProjectSettings()
+    {
+        if (viewModel.SelectedProject is not { } selected)
         {
             return;
         }
 
-        if (viewModel.SelectedProject.IsPlaceholder)
+        if (selected.IsPlaceholder)
         {
-            await CreateProjectAsync(viewModel.SelectedProject);
+            ProjectView.OpenPlaceholder(selected, viewModel);
+        }
+        else
+        {
+            ProjectView.Open(selected.Project, viewModel);
+        }
+
+        editingProject = true;
+        FilterBar.Visibility = Visibility.Collapsed;
+        ItemsArea.Visibility = Visibility.Collapsed;
+        ProjectView.Visibility = Visibility.Visible;
+        ProjectSettingsButton.SetResourceReference(StyleProperty, "AccentButton");
+        ShowProjects();
+    }
+
+    /// <summary>Back to the item list (the settings were saved as they changed).</summary>
+    private void ShowItemList()
+    {
+        editingProject = false;
+        ProjectView.Visibility = Visibility.Collapsed;
+        FilterBar.Visibility = Visibility.Visible;
+        ItemsArea.Visibility = Visibility.Visible;
+        ProjectSettingsButton.SetResourceReference(StyleProperty, typeof(Button));
+    }
+
+    /// <summary>
+    /// Another project was clicked while settings are open: the change in progress is saved, then that
+    /// project's settings show. Several projects at once (or a view) go back to the item list.
+    /// </summary>
+    private async Task FollowSelectionAsync()
+    {
+        if (following)
+        {
             return;
         }
 
-        var window = new ProjectWindow(viewModel.CloneProject(viewModel.SelectedProject.Project), isNew: false, viewModel) { Owner = this };
-        if (window.ShowDialog() != true)
+        following = true;
+        try
+        {
+            var target = viewModel.SelectedProject;
+            if (ProjectView.Shows(target?.Id) && !viewModel.IsMultiProject)
+            {
+                return;
+            }
+
+            if (!await ProjectView.LeaveAsync())
+            {
+                // A change that can't be saved yet: stay on it.
+                viewModel.SelectedProject = viewModel.Projects.FirstOrDefault(project => ProjectView.Shows(project.Id)) ?? viewModel.SelectedProject;
+                return;
+            }
+
+            if (target is null || viewModel.IsMultiProject)
+            {
+                ShowItemList();
+            }
+            else
+            {
+                ShowProjectSettings();
+            }
+        }
+        finally
+        {
+            following = false;
+        }
+
+        // Another project was clicked while that one was being saved: follow it too.
+        if (editingProject && !viewModel.IsMultiProject && viewModel.SelectedProject is { } now && !ProjectView.Shows(now.Id))
+        {
+            await FollowSelectionAsync();
+        }
+    }
+
+    /// <summary>Before showing a view (My work, Overdue, a watchlist): saves and closes project settings. False to stay.</summary>
+    private async Task<bool> LeaveSettingsForListAsync()
+    {
+        if (!editingProject)
+        {
+            return true;
+        }
+
+        if (!await ProjectView.LeaveAsync())
+        {
+            return false;
+        }
+
+        ShowItemList();
+        return true;
+    }
+
+    /// <summary>A project page change: updates the project, then binds it in Workload Tracker when that changed.</summary>
+    private async Task SaveProjectAsync(ProjectSaved saved)
+    {
+        await viewModel.UpdateProjectAsync(saved.Project);
+        viewModel.ApplyWorkloadBinding(saved.Project.Id, saved.BindingChanged, saved.Binding, saved.CoverageChanged);
+
+        // A Helix/Procore project set up here and unlinked in the same change stays listed as it was:
+        // select the project just saved, whose settings these are. (Still linked, the selection moved already.)
+        if (viewModel.SelectedProject is { IsPlaceholder: true } selected && ProjectView.Shows(selected.Id)
+            && viewModel.Projects.FirstOrDefault(project => project.Id == saved.Project.Id) is { } setUp)
+        {
+            viewModel.SelectedProject = setUp;
+        }
+    }
+
+    private bool closingConfirmed;
+
+    /// <summary>A change in progress on the project page is saved before the window closes.</summary>
+    private async void MainWindow_Closing(object? sender, System.ComponentModel.CancelEventArgs e)
+    {
+        if (closingConfirmed || !editingProject || !ProjectView.IsDirty)
         {
             return;
         }
 
-        if (window.RemoveRequested)
+        e.Cancel = true;
+        if (await ProjectView.LeaveAsync())
         {
-            viewModel.RemoveProject(viewModel.SelectedProject.Id);
-        }
-        else if (window.Result is not null)
-        {
-            await viewModel.UpdateProjectAsync(window.Result);
+            closingConfirmed = true;
+            Close();
         }
     }
 
@@ -1221,7 +1387,7 @@ public partial class MainWindow : Window
         }
 
         var answer = MessageBox.Show(this,
-            $"Also include folders and items that mention neither BB nor TFO in \"{project.Name}\"?\n\nNothing in the folders changes. You can turn this off again in Edit project → Base Build / Tenant Fit Out.",
+            $"Also include folders and items that mention neither BB nor TFO in \"{project.Name}\"?\n\nNothing in the folders changes. You can turn this off again in Project settings → Base Build / Tenant Fit Out.",
             "Include them", MessageBoxButton.YesNo, MessageBoxImage.Question, MessageBoxResult.Yes);
         if (answer == MessageBoxResult.Yes)
         {
@@ -1281,6 +1447,28 @@ public partial class MainWindow : Window
         }
     }
 
+    /// <summary>A row's Open parent folder (see <see cref="MainViewModel.ParentFolderToOpen"/>).</summary>
+    private void OpenRowParentFolder_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not FrameworkElement { DataContext: RowViewModel { CanOpenParentFolder: true } row })
+        {
+            return;
+        }
+
+        var (folder, note) = viewModel.ParentFolderToOpen(row);
+        if (folder is null)
+        {
+            ShowInfo(note ?? "That folder can't be found.");
+            return;
+        }
+
+        OpenInExplorer(folder);
+        if (note is not null)
+        {
+            viewModel.StatusMessage = note;
+        }
+    }
+
     private DownloadWindow? batchWindow;
 
     /// <summary>
@@ -1290,8 +1478,8 @@ public partial class MainWindow : Window
     private void DownloadChecked_Click(object sender, RoutedEventArgs e) => OpenCheckedItems(verify: false);
 
     /// <summary>
-    /// Checks the checked items' folders against Helix in the same window: each says whether its folder has
-    /// every file Helix has for it, with the missing ones checked so Download gets them.
+    /// Checks the checked items' folders against Helix or Procore in the same window: each says whether its folder
+    /// has every file the site has for it, with the missing ones checked so Download gets them.
     /// </summary>
     private void VerifyChecked_Click(object sender, RoutedEventArgs e) => OpenCheckedItems(verify: true);
 
@@ -1311,19 +1499,13 @@ public partial class MainWindow : Window
         }
 
         var requests = rows.Select(viewModel.DownloadRequestFor).OfType<DownloadRequest>()
-            .GroupBy(request => $"{request.ProjectId}|{request.ItemType}|{request.ItemId}")
+            .GroupBy(request => $"{request.Provider}|{request.ProjectId}|{request.ItemType}|{request.ItemId}")
             .Select(group => group.First())
             .ToList();
-        var notHelix = rows.Count - requests.Count;
         if (requests.Count == 0)
         {
-            ShowInfo("Downloading is available for Helix items. Procore isn't supported yet.");
+            ShowInfo("The checked items' projects aren't connected to Helix or Procore, so there is nothing to download.");
             return;
-        }
-
-        if (notHelix > 0)
-        {
-            ShowInfo($"{notHelix} checked item{(notHelix == 1 ? " is" : "s are")} from Procore and will be skipped (Procore downloads aren't supported yet).");
         }
 
         batchWindow = ShowDownloadWindow(requests, verify);
@@ -1332,7 +1514,7 @@ public partial class MainWindow : Window
 
     private DownloadWindow ShowDownloadWindow(IReadOnlyList<DownloadRequest> requests, bool verify = false)
     {
-        var window = new DownloadWindow(requests, viewModel.Paths, verify) { Owner = this };
+        var window = new DownloadWindow(requests, viewModel.Paths, verify) { Owner = this, DisciplineChooser = ChooseDownloadDisciplineAsync };
         window.Downloaded += async (_, _) => await viewModel.RecheckFoldersAsync();
         downloadWindowsOpen++;
         window.Closed += (_, _) => downloadWindowsOpen--;
@@ -1350,14 +1532,14 @@ public partial class MainWindow : Window
         var request = viewModel.DownloadRequestFor(row);
         if (request is null)
         {
-            ShowInfo("Downloading is available for Helix items. Procore isn't supported yet.");
+            ShowInfo("This row has no Helix or Procore item to download.");
             return;
         }
 
         ShowDownloadWindow(new[] { request });
     }
 
-    /// <summary>A row's Verify: does its folder have every file Helix has for the item?</summary>
+    /// <summary>A row's Verify: does its folder have every file Helix or Procore has for the item?</summary>
     private void VerifyRow_Click(object sender, RoutedEventArgs e)
     {
         if (sender is not FrameworkElement { DataContext: RowViewModel row })
@@ -1368,11 +1550,20 @@ public partial class MainWindow : Window
         var request = viewModel.DownloadRequestFor(row);
         if (request is null)
         {
-            ShowInfo("Verifying folders is available for Helix items. Procore isn't supported yet.");
+            ShowInfo("This row has no Helix or Procore item to check its folder against.");
             return;
         }
 
         ShowDownloadWindow(new[] { request }, verify: true);
+    }
+
+    /// <summary>A row's Rescan folder: lists its RFI or Submittal folder again now, e.g. after a folder was made in Explorer.</summary>
+    private async void RescanRowFolder_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is FrameworkElement { DataContext: RowViewModel row })
+        {
+            await viewModel.RescanFolderAsync(row);
+        }
     }
 
     /// <summary>A row's Open Online: the item in the built-in Helix page, or a Procore item in your web browser.</summary>
@@ -1405,7 +1596,7 @@ public partial class MainWindow : Window
     }
 
     /// <summary>
-    /// Opens the newest file Helix has for a row's item: the copy in its folder when it's there, otherwise a copy
+    /// Opens the newest file Helix or Procore has for a row's item: the copy in its folder when it's there, otherwise a copy
     /// from Helix kept in the app's folder (the CA folder isn't changed). An item with no files opens in Helix.
     /// </summary>
     private void OpenNewestFile(RowViewModel row)
@@ -1419,7 +1610,7 @@ public partial class MainWindow : Window
         window.FileOpened += message => viewModel.StatusMessage = message;
         window.NoFiles += async () =>
         {
-            viewModel.StatusMessage = $"{row.TypeSingular} {row.Number} has no attachments in Helix, so it opens there instead.";
+            viewModel.StatusMessage = $"{row.TypeSingular} {row.Number} has no attachments in {request.ProviderLabel}, so it opens there instead.";
             await OpenItemAsync(row);
         };
         // It uses the built-in browser's sign-in, like the Download window.
@@ -1476,8 +1667,10 @@ public partial class MainWindow : Window
     private GridLength helixPanelWidth = new(0.9, GridUnitType.Star);
     private GridLength detailsPanelWidth = new(360);
 
-    // The selected row, by key, so the details follow it when the list is rebuilt (a sync, a folder change).
+    // The selected row, by key, so the details follow it when the list is rebuilt (a sync, a folder change);
+    // by its item too, for when its folder was found, moved or renamed (a new key).
     private string? selectedRowKey;
+    private string? selectedItemKey;
 
     /// <summary>Shows the Helix page beside the list, or when it closes, the details (if on) or nothing.</summary>
     private void ShowItemPanel(bool show) =>
@@ -1529,6 +1722,7 @@ public partial class MainWindow : Window
             if (SelectedRow() is { } row)
             {
                 selectedRowKey = row.Key;
+                selectedItemKey = row.ItemKey;
                 if (panelMode == PanelMode.Details)
                 {
                     DetailsPanel.Show(row);
@@ -1585,7 +1779,8 @@ public partial class MainWindow : Window
             return;
         }
 
-        var again = selectedRowKey is null ? null : viewModel.Rows.FirstOrDefault(row => row.Key == selectedRowKey);
+        var again = (selectedRowKey is null ? null : viewModel.Rows.FirstOrDefault(row => row.Key == selectedRowKey))
+            ?? (selectedItemKey is null ? null : viewModel.Rows.FirstOrDefault(row => row.ItemKey == selectedItemKey));
         if (again is not null)
         {
             ItemsGrid.SelectedItem = again;
@@ -1613,11 +1808,14 @@ public partial class MainWindow : Window
     /// <summary>A row's "Show details": select it and show its details (closing the Helix page if it is open).</summary>
     private async void ShowRowDetails_Click(object sender, RoutedEventArgs e)
     {
-        if (sender is not FrameworkElement { DataContext: RowViewModel row })
+        if (sender is FrameworkElement { DataContext: RowViewModel row })
         {
-            return;
+            await ShowDetailsAsync(row);
         }
+    }
 
+    private async Task ShowDetailsAsync(RowViewModel row)
+    {
         ItemsGrid.SelectedItem = row;
         viewModel.ShowItemDetails = true;
         if (panelMode == PanelMode.Helix)
@@ -1779,9 +1977,14 @@ public partial class MainWindow : Window
         ShowInfo($"The update couldn't start: {problem}");
     }
 
-    /// <summary>Shows the Settings page in place of the project list.</summary>
-    private void ShowSettings(SettingsSection section)
+    /// <summary>Shows the Settings page in place of the project list (or of the project page, once it may be left).</summary>
+    private async void ShowSettings(SettingsSection section)
     {
+        if (editingProject && !await ProjectView.LeaveAsync())
+        {
+            return;
+        }
+
         viewModel.RefreshAccounts();
         if (SettingsView.Visibility != Visibility.Visible)
         {
@@ -1834,6 +2037,9 @@ public partial class MainWindow : Window
     private void OpenConnections_Click(object sender, RoutedEventArgs e) => ShowSettings(SettingsSection.Connections);
 
     private void DismissBanner_Click(object sender, RoutedEventArgs e) => viewModel.DismissSignInBanner();
+
+    /// <summary>Workload Tracker refused the token: Connect is in Settings, Connections.</summary>
+    private void BannerWorkload_Click(object sender, RoutedEventArgs e) => ShowSettings(SettingsSection.Connections);
 
     private void BannerSignIn_Click(object sender, RoutedEventArgs e)
     {

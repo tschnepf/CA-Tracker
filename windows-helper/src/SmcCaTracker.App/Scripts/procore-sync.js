@@ -7,19 +7,62 @@
 
   // Read-only. Runs inside a signed-in Procore page and asks Procore's REST service (same site, same
   // sign-in as Procore's own web pages) for:
-  //   - the companies you belong to and every project you can see in each (discover), and
-  //   - every RFI and Submittal of one project (readProject).
+  //   - the companies you belong to and every project you can see in each (discover),
+  //   - every RFI and Submittal of one project (readProject), and
+  //   - the files of one RFI or Submittal, for downloading (readItemFiles).
   // No API app has to be installed in any company: it only sees what you can already see.
 
   const PAGE_SIZE = 100;
   const MAX_PAGES = 1000;
   // Pages asked for at the same time once Procore has said how many rows a list has.
-  const PARALLEL_PAGES = 6;
+  const PARALLEL_PAGES = 3;
 
-  function httpError(message, status) {
+  function httpError(message, status, retryAfter) {
     const error = new Error(message);
     error.status = Number(status || 0);
+    if (retryAfter !== undefined && retryAfter !== null) error.retryAfter = retryAfter;
     return error;
+  }
+
+  // Procore asking to slow down (429, too many requests) or to come back later (503).
+  function isSlowDown(error) {
+    return Boolean(error) && (error.status === 429 || error.status === 503);
+  }
+
+  function header(response, name) {
+    return response && response.headers && typeof response.headers.get === "function" ? response.headers.get(name) : null;
+  }
+
+  function wholeNumber(value) {
+    const text = String(value === null || value === undefined ? "" : value).trim();
+    return /^\d+$/.test(text) ? Number(text) : null;
+  }
+
+  // Seconds Procore asks to wait: its Retry-After (seconds or a date), else until its rate limit
+  // resets (X-Rate-Limit-Reset, in Unix seconds). Null when it doesn't say.
+  function retryAfterSeconds(response, nowMs) {
+    const retry = String(header(response, "Retry-After") || "").trim();
+    if (wholeNumber(retry) !== null) return wholeNumber(retry);
+    const at = retry ? Date.parse(retry) : NaN;
+    if (!Number.isNaN(at)) return Math.max(0, Math.round((at - nowMs) / 1000));
+    const reset = wholeNumber(header(response, "X-Rate-Limit-Reset"));
+    return reset === null ? null : Math.max(0, reset - Math.floor(nowMs / 1000));
+  }
+
+  // Wraps fetch to keep the lowest rate-limit headroom Procore states during one read
+  // ({ limit, remaining, reset } from its X-Rate-Limit-* headers), or null when it states none.
+  function metered(fetchImpl) {
+    const meter = { rateLimit: null };
+    const fetch = async (path, init) => {
+      const response = await fetchImpl(path, init);
+      const limit = wholeNumber(header(response, "X-Rate-Limit-Limit"));
+      const remaining = wholeNumber(header(response, "X-Rate-Limit-Remaining"));
+      if (limit !== null && remaining !== null && (!meter.rateLimit || remaining < meter.rateLimit.remaining)) {
+        meter.rateLimit = { limit, remaining, reset: wholeNumber(header(response, "X-Rate-Limit-Reset")) };
+      }
+      return response;
+    };
+    return { fetch, meter };
   }
 
   function withPage(path, page) {
@@ -37,7 +80,9 @@
     if (companyId) headers["Procore-Company-Id"] = String(companyId);
     const response = await fetchImpl(path, { credentials: "include", headers });
     if (!response.ok) {
-      throw httpError(`Procore answered ${response.status} for ${path.split("?")[0]}`, response.status);
+      const status = Number(response.status || 0);
+      throw httpError(`Procore answered ${status} for ${path.split("?")[0]}`, status,
+        status === 429 || status === 503 ? retryAfterSeconds(response, Date.now()) : undefined);
     }
     const type = response.headers && typeof response.headers.get === "function"
       ? String(response.headers.get("content-type") || "")
@@ -139,9 +184,16 @@
     let user = null;
     try {
       const me = await getJson(fetchImpl, "/rest/v1.0/me", null);
-      user = me && typeof me === "object" ? { fullName: text(me.name || me.login) || null } : null;
+      user = me && typeof me === "object"
+        ? {
+            fullName: text(me.name || me.login) || null,
+            // Procore's user id and login (an email) say who this is on every project.
+            id: text(me.id) || null,
+            email: text(me.login).includes("@") ? text(me.login) : null
+          }
+        : null;
     } catch (error) {
-      if (error && (error.status === 401 || error.status === 406)) throw error;
+      if (error && (error.status === 401 || error.status === 406 || isSlowDown(error))) throw error;
     }
 
     const companies = (await list(fetchImpl, "/rest/v1.0/companies", null))
@@ -174,7 +226,8 @@
       try {
         projects = await list(fetchImpl, `/rest/v1.0/projects?company_id=${encodeURIComponent(companyId)}`, companyId);
       } catch (error) {
-        if (error && error.status === 401) throw error;
+        // Signed out, or Procore asked to slow down: the other companies would only be refused too.
+        if (error && (error.status === 401 || isSlowDown(error))) throw error;
         entry.error = String(error && error.message || error);
         entry.status = Number(error && error.status || 0);
         continue;
@@ -226,12 +279,16 @@
   /**
    * Reads every RFI and Submittal of one project. A tool you can't see on that project (403/404)
    * counts as empty and is named in `unavailable`, so one project's permissions don't stop the rest.
-   * Resolves to { rfis, submittals, unavailable: ["rfis"|"submittals"] }. Rejects with `status` when
-   * neither list can be read (401: signed out; 403/404: no access to the project).
+   * With `request.withTotals`, also asks each list for one row to learn how many items Procore has in
+   * all (its "Total" header), so items removed in Procore can be noticed without reading everything.
+   * Resolves to { rfis, submittals, unavailable: ["rfis"|"submittals"], changesOnly, totals: { rfis,
+   * submittals } (null each when not asked or not sent), rateLimit: { limit, remaining, reset } | null }.
+   * Rejects with `status` when neither list can be read (401: signed out; 403/404: no access to the
+   * project) and with `status` and `retryAfter` (seconds, when Procore says) on 429/503.
    */
   async function readProject(win, request, options) {
     const opts = options || {};
-    const fetchImpl = opts.fetch || win.fetch.bind(win);
+    const { fetch: fetchImpl, meter } = metered(opts.fetch || win.fetch.bind(win));
     const base = `/rest/v1.0/projects/${encodeURIComponent(String(request.projectId))}`;
     const unavailable = [];
     const failures = [];
@@ -280,8 +337,139 @@
         ? "Procore couldn't find this project (it may have been removed or you no longer have access)."
         : "You don't have access to this project's RFIs or Submittals in Procore.", status);
     }
-    return { rfis, submittals, unavailable, changesOnly };
+    const totals = { rfis: null, submittals: null };
+    if (request.withTotals) {
+      for (const name of ["rfis", "submittals"]) {
+        if (unavailable.indexOf(name) !== -1) continue;
+        try {
+          totals[name] = (await getPage(fetchImpl, `${base}/${name}?page=1&per_page=1`, request.companyId)).total;
+        } catch (error) {
+          if (!error || (error.status !== 403 && error.status !== 404)) throw error;
+        }
+      }
+    }
+    return { rfis, submittals, unavailable, changesOnly, totals, rateLimit: meter.rateLimit };
   }
 
-  return Object.freeze({ discover, listCompanyProjects, projectsFromPage, readProject, isActive, projectName, withPage });
+  /**
+   * Lists the files of one RFI or Submittal, with their download links (Procore's file store; they work
+   * without the sign-in for a while). An RFI's files are on its question and on each answer; a Submittal's
+   * on the submittal itself, on each response, and on its distributions (which repeat the responses'
+   * files under the same ids, so each file is listed once). Procore gives no upload date, so each file
+   * carries the date of what it came with: the question, the answer, the response or the submittal.
+   * Each file also says who posted it and their company (`uploadedBy`, see uploaderOf).
+   * Resolves to { attachments: [{ id, filename, uploadedAt, url, uploadedBy }] }. Rejects with `status`
+   * (401: signed out; 403: no access; 404: not found).
+   */
+  async function readItemFiles(win, request, options) {
+    const opts = options || {};
+    const fetchImpl = opts.fetch || win.fetch.bind(win);
+    const project = encodeURIComponent(String(request.projectId));
+    const item = encodeURIComponent(String(request.itemId));
+    const attachments = [];
+    const seen = new Set();
+    const add = (files, date, by) => {
+      for (const file of Array.isArray(files) ? files : []) {
+        const id = text(file && file.id);
+        const url = text(file && file.url);
+        if (!id || !url || seen.has(id)) continue;
+        seen.add(id);
+        attachments.push({ id, filename: text(file.filename || file.name) || "Attachment", uploadedAt: text(date) || null, url, by });
+      }
+    };
+
+    let submittal = null;
+    if (request.itemType === "submittal") {
+      submittal = await getJson(fetchImpl, `/rest/v1.1/projects/${project}/submittals/${item}`, request.companyId);
+      add(submittal.attachments, submittal.created_at || submittal.received_date, procorePerson(submittal.created_by, "creator"));
+      for (const response of Array.isArray(submittal.approvers) ? submittal.approvers : []) {
+        add(response && response.attachments, response && (response.returned_date || response.sent_date), procorePerson(response && response.user));
+      }
+      for (const distribution of Array.isArray(submittal.distributed_submittals) ? submittal.distributed_submittals : []) {
+        add(distribution && distribution.final_attachments, distribution && distribution.sent_at || submittal.distributed_at,
+          procorePerson(distribution && distribution.distributed_by));
+      }
+    } else {
+      const rfi = await getJson(fetchImpl, `/rest/v1.0/projects/${project}/rfis/${item}`, request.companyId);
+      for (const question of Array.isArray(rfi.questions) ? rfi.questions : []) {
+        add(question && question.attachments, question && question.question_date, askerOf(question, rfi));
+        for (const answer of Array.isArray(question && question.answers) ? question.answers : []) {
+          add(answer && answer.attachments, answer && answer.answer_date, namedPerson(answer && answer.created_by, answer && answer.created_by_id));
+        }
+      }
+    }
+
+    const receivedFrom = submittal ? procorePerson(submittal.received_from) : null;
+    await addCompanies(fetchImpl, project, request.companyId, attachments.map((entry) => entry.by).concat(receivedFrom));
+    return {
+      attachments: attachments.map((entry) => ({
+        id: entry.id,
+        filename: entry.filename,
+        uploadedAt: entry.uploadedAt,
+        url: entry.url,
+        uploadedBy: uploaderOf(entry.by, receivedFrom)
+      }))
+    };
+  }
+
+  // Who posted a file. Procore names the person (the submittal's creator, a responder, whoever distributed
+  // it; an RFI's asker or answerer) as a user ({ id, name, login, vendor? }) or, for an RFI's answers, as
+  // "Name (Company)" with their id. `role` "creator": they created the submittal, and Procore doesn't
+  // record who attached the submittal's own files.
+  function procorePerson(user, role) {
+    if (!user || typeof user !== "object") return null;
+    const name = text(user.name) || text(user.login);
+    if (!name) return null;
+    return { userId: text(user.id) || null, name, company: text(user.vendor && user.vendor.name) || null, role: role || null };
+  }
+
+  function namedPerson(value, id) {
+    const named = /^(.+?)\s*\(([^()]+)\)$/.exec(text(value));
+    const name = named ? text(named[1]) : text(value);
+    if (!name) return null;
+    return { userId: text(id) || null, name, company: named ? text(named[2]) : null, role: null };
+  }
+
+  // An RFI's question names its asker only by name; the RFI's creator (who asks the first question) has
+  // an id and often a company.
+  function askerOf(question, rfi) {
+    const asker = namedPerson(question && question.created_by, null);
+    const creator = procorePerson(rfi && rfi.created_by);
+    return asker && creator && asker.name.toLowerCase() === creator.name.toLowerCase() ? creator : asker;
+  }
+
+  // Procore rarely says whose company a person is with; the project's directory does. One read for
+  // everyone still missing one, and optional: if the directory can't be read the names still show.
+  async function addCompanies(fetchImpl, project, companyId, people) {
+    const missing = people.filter((person) => person && person.userId && !person.company);
+    const ids = Array.from(new Set(missing.map((person) => person.userId))).slice(0, 100);
+    if (!ids.length) return;
+    try {
+      const filter = ids.map((id) => `filters[id][]=${encodeURIComponent(id)}`).join("&");
+      const users = await getJson(fetchImpl, `/rest/v1.0/projects/${project}/users?per_page=100&${filter}`, companyId);
+      const companies = new Map((Array.isArray(users) ? users : [])
+        .filter((user) => user && user.vendor && text(user.vendor.name))
+        .map((user) => [text(user.id), text(user.vendor.name)]));
+      for (const person of missing) {
+        person.company = companies.get(person.userId) || null;
+      }
+    } catch (_error) {
+      // Names without companies.
+    }
+  }
+
+  // { name, company, note } for the window: the note says how sure that is, when it isn't certain.
+  function uploaderOf(person, receivedFrom) {
+    if (!person) return null;
+    let note = null;
+    if (person.role === "creator") {
+      const from = receivedFrom && receivedFrom.name.toLowerCase() !== person.name.toLowerCase()
+        ? ` It was received from ${receivedFrom.name}${receivedFrom.company ? ` (${receivedFrom.company})` : ""}.`
+        : "";
+      note = `${person.name} created the submittal. Procore doesn't record who attached its own files.${from}`;
+    }
+    return { name: person.name, company: person.company || null, note };
+  }
+
+  return Object.freeze({ discover, listCompanyProjects, projectsFromPage, readProject, readItemFiles, isActive, projectName, withPage });
 });

@@ -22,13 +22,12 @@ public sealed class CompanySettings
     /// <summary>The company's disciplines (replaces Electrical, Fire, ICT, Mechanical, Plbg, Security).</summary>
     public List<DisciplineDefinition>? Disciplines { get; set; }
 
-    public int? SyncIntervalMinutes { get; set; }
+    /// <summary>Minutes between background syncs from 7 am to 5 pm, and at other times.</summary>
+    public int? SyncWorkHoursMinutes { get; set; }
+    public int? SyncOffHoursMinutes { get; set; }
 
     /// <summary>Where new versions are published: a folder (e.g. \\server\apps\ca-tracker) or an https address holding latest.json.</summary>
     public string? UpdateFeed { get; set; }
-
-    /// <summary>The company's CA Tracker server, when there is one (shared projects, items and folder links).</summary>
-    public string? CentralServer { get; set; }
 
     /// <summary>Settings people can't change: "folders", "disciplines", "sync".</summary>
     public List<string> Locked { get; set; } = new();
@@ -121,11 +120,20 @@ public static class CompanySettingsLoader
             }
         }
 
-        if (company.SyncIntervalMinutes is { } minutes
-            && (company.IsLocked("sync") || settings.Sync.IntervalMinutes == new SyncSettings().IntervalMinutes)
-            && settings.Sync.IntervalMinutes != Math.Clamp(minutes, 5, 240))
+        var defaults = new SyncSettings();
+        if (company.SyncWorkHoursMinutes is { } work
+            && (company.IsLocked("sync") || settings.Sync.WorkHoursIntervalMinutes == defaults.WorkHoursIntervalMinutes)
+            && settings.Sync.WorkHoursIntervalMinutes != Math.Clamp(work, SyncSettings.WorkHoursMinimum, SyncSettings.WorkHoursMaximum))
         {
-            settings.Sync.IntervalMinutes = Math.Clamp(minutes, 5, 240);
+            settings.Sync.WorkHoursIntervalMinutes = Math.Clamp(work, SyncSettings.WorkHoursMinimum, SyncSettings.WorkHoursMaximum);
+            changed = true;
+        }
+
+        if (company.SyncOffHoursMinutes is { } off
+            && (company.IsLocked("sync") || settings.Sync.OffHoursIntervalMinutes == defaults.OffHoursIntervalMinutes)
+            && settings.Sync.OffHoursIntervalMinutes != Math.Clamp(off, SyncSettings.OffHoursMinimum, SyncSettings.OffHoursMaximum))
+        {
+            settings.Sync.OffHoursIntervalMinutes = Math.Clamp(off, SyncSettings.OffHoursMinimum, SyncSettings.OffHoursMaximum);
             changed = true;
         }
 

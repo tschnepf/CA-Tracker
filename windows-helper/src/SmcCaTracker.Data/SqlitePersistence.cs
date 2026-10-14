@@ -4,22 +4,23 @@ using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Microsoft.Data.Sqlite;
-using SmcCaTracker.Core.Central;
 using SmcCaTracker.Core.Comparison;
 using SmcCaTracker.Core.Data;
 using SmcCaTracker.Core.Matching;
 using SmcCaTracker.Core.Models;
 using SmcCaTracker.Core.Refresh;
 using SmcCaTracker.Core.Storage;
+using SmcCaTracker.Core.WorkloadTracker;
 
 namespace SmcCaTracker.Data;
 
 /// <summary>
 /// The app's local database (%LOCALAPPDATA%\SMC-CA-Tracker\tracker.db, SQLite). The tables are plain
 /// and portable — text ids, ISO-8601 text dates, integer flags, no SQLite-only types — so the same
-/// shape can live in a central database (e.g. PostgreSQL) later. Every change to a project, discipline
-/// choice or Helix/Procore item is also written to <c>change_log</c>, ready to be sent to that central
-/// database. Not thread-safe: <see cref="TrackerStore"/> calls it from one thread at a time.
+/// shape can live in a central database (e.g. PostgreSQL) later. While the app is paired with Workload
+/// Tracker, <c>wt_outbox</c> keeps what each project's scans changed until it is sent, <c>wt_assignments</c> and
+/// <c>wt_completions</c> what was read back, and <c>wt_item_facts</c> the facts last sent per item. Not thread-safe:
+/// <see cref="TrackerStore"/> calls it from one thread at a time.
 /// </summary>
 public sealed class SqlitePersistence : ITrackerPersistence
 {
@@ -27,9 +28,6 @@ public sealed class SqlitePersistence : ITrackerPersistence
 
     /// <summary>The transaction of a <see cref="RunBatch"/>, which every save inside it joins.</summary>
     private SqliteTransaction? ambient;
-
-    /// <summary>True while saving changes from the central server, which aren't logged again.</summary>
-    private bool fromServer;
 
     public SqlitePersistence(string path)
     {
@@ -156,20 +154,6 @@ public sealed class SqlitePersistence : ITrackerPersistence
         }
     }
 
-    public void RunFromServer(Action work)
-    {
-        var outer = fromServer;
-        fromServer = true;
-        try
-        {
-            RunBatch(work);
-        }
-        finally
-        {
-            fromServer = outer;
-        }
-    }
-
     private static long Flag(bool value) => value ? 1 : 0;
 
     // Stored in UTC so text order is time order (and portable).
@@ -189,7 +173,7 @@ public sealed class SqlitePersistence : ITrackerPersistence
     private static string Json<T>(T value) => JsonSerializer.Serialize(value, TrackerJson.Options);
 
     /// <summary>
-    /// An item as stored, for its content hash and the change log: dates in UTC, as the database keeps
+    /// An item as stored, for its content hash: dates in UTC, as the database keeps
     /// them, so an item read back from the database hashes the same as when it was saved (Helix gives
     /// local times such as -07:00, which would otherwise log every item again on each save).
     /// </summary>
@@ -230,19 +214,6 @@ public sealed class SqlitePersistence : ITrackerPersistence
         }
     }
 
-    private void LogChange(SqliteTransaction transaction, string entity, string key, string operation, string? payload, string now)
-    {
-        if (fromServer)
-        {
-            return;
-        }
-
-        Execute(
-            "INSERT INTO change_log (entity, entity_key, operation, changed_at, payload) VALUES ($entity, $key, $operation, $at, $payload);",
-            transaction,
-            ("$entity", entity), ("$key", key), ("$operation", operation), ("$at", now), ("$payload", payload));
-    }
-
     // ---- Meta and preferences -----------------------------------------------------------------
 
     public string? GetMeta(string key)
@@ -280,7 +251,11 @@ public sealed class SqlitePersistence : ITrackerPersistence
         Catalog = LoadCatalog(),
         Accounts = LoadAccounts(),
         View = FromJson<ViewState>(GetPreference("view")) ?? new ViewState(),
-        RecentSyncRuns = LoadSyncRuns(200)
+        RecentSyncRuns = LoadSyncRuns(200),
+        Outbox = LoadOutbox(),
+        Assignments = LoadAssignments(),
+        Completions = LoadCompletions(),
+        SentFacts = LoadSentFacts()
     };
 
     private TrackerSettings LoadSettings()
@@ -293,7 +268,7 @@ public sealed class SqlitePersistence : ITrackerPersistence
             Browser = FromJson<BrowserSettings>(GetPreference("browser")) ?? new BrowserSettings(),
             Sync = FromJson<SyncSettings>(GetPreference("sync")) ?? new SyncSettings(),
             Procore = FromJson<SmcCaTracker.Core.Procore.ProcoreSettings>(GetPreference("procore")) ?? new SmcCaTracker.Core.Procore.ProcoreSettings(),
-            Central = FromJson<CentralSettings>(GetPreference("central")) ?? new CentralSettings()
+            WorkloadTracker = FromJson<WorkloadTrackerSettings>(GetPreference("workloadTracker")) ?? new WorkloadTrackerSettings()
         };
 
         var byId = new Dictionary<string, TrackerProject>(StringComparer.Ordinal);
@@ -376,7 +351,7 @@ public sealed class SqlitePersistence : ITrackerPersistence
 
         using (var command = Command(
                    "SELECT provider, project_id, schema_version, account_id, project_name, project_url, complete, scanned_at, " +
-                   "user_full_name, user_company_id, user_company FROM provider_snapshots;",
+                   "user_full_name, user_company_id, user_company, user_provider_id, user_email FROM provider_snapshots;",
                    null))
         using (var reader = command.ExecuteReader())
         {
@@ -396,7 +371,9 @@ public sealed class SqlitePersistence : ITrackerPersistence
                     {
                         FullName = reader.GetString(8),
                         CompanyId = Text(reader, 9),
-                        Company = Text(reader, 10)
+                        Company = Text(reader, 10),
+                        ProviderUserId = Text(reader, 11),
+                        Email = Text(reader, 12)
                     }
                 };
                 byKey[Key(snapshot.Provider, snapshot.ProjectId)] = snapshot;
@@ -463,7 +440,8 @@ public sealed class SqlitePersistence : ITrackerPersistence
         }
 
         using (var command = Command(
-                   "SELECT provider, project_id, item_type, item_id, name, company_id, company, state, since FROM item_holders ORDER BY ordinal;",
+                   "SELECT provider, project_id, item_type, item_id, name, company_id, company, state, since, provider_user_id, email " +
+                   "FROM item_holders ORDER BY ordinal;",
                    null))
         using (var reader = command.ExecuteReader())
         {
@@ -478,7 +456,9 @@ public sealed class SqlitePersistence : ITrackerPersistence
                         CompanyId = Text(reader, 5),
                         Company = Text(reader, 6),
                         State = reader.GetString(7),
-                        Since = ParseDate(Text(reader, 8))
+                        Since = ParseDate(Text(reader, 8)),
+                        ProviderUserId = Text(reader, 9),
+                        Email = Text(reader, 10)
                     });
                 }
             }
@@ -593,7 +573,7 @@ public sealed class SqlitePersistence : ITrackerPersistence
     private List<ProviderAccount> LoadAccounts()
     {
         var accounts = new List<ProviderAccount>();
-        using var command = Command("SELECT provider, user_name, company, signed_in_at, needs_sign_in FROM accounts;", null);
+        using var command = Command("SELECT provider, user_name, company, signed_in_at, needs_sign_in, provider_user_id, email FROM accounts;", null);
         using var reader = command.ExecuteReader();
         while (reader.Read())
         {
@@ -603,19 +583,28 @@ public sealed class SqlitePersistence : ITrackerPersistence
                 UserName = Text(reader, 1),
                 Company = Text(reader, 2),
                 SignedInAt = ParseDate(reader.GetString(3)) ?? DateTimeOffset.MinValue,
-                NeedsSignIn = reader.GetInt64(4) != 0
+                NeedsSignIn = reader.GetInt64(4) != 0,
+                ProviderUserId = Text(reader, 5),
+                Email = Text(reader, 6)
             });
         }
 
         return accounts;
     }
 
+    // The sync runs worth keeping: the latest $limit of all, plus each project's latest complete run of
+    // each mode (a Procore project's last full read and last count check decide how its next read goes).
+    private const string KeptSyncRuns =
+        "WITH ranked AS (SELECT id, status, ROW_NUMBER() OVER (ORDER BY started_at DESC) AS recent, " +
+        "ROW_NUMBER() OVER (PARTITION BY provider, project_id, run_mode, status ORDER BY started_at DESC) AS latest " +
+        "FROM sync_runs) SELECT id FROM ranked WHERE recent <= $limit OR (latest = 1 AND status = 'complete')";
+
     private List<SyncRun> LoadSyncRuns(int limit)
     {
         var runs = new List<SyncRun>();
         using var command = Command(
             "SELECT id, provider, project_id, run_mode, started_at, finished_at, status, item_count, changed_count, error " +
-            "FROM sync_runs ORDER BY started_at DESC LIMIT $limit;",
+            $"FROM sync_runs WHERE id IN ({KeptSyncRuns}) ORDER BY started_at DESC;",
             null,
             ("$limit", limit));
         using var reader = command.ExecuteReader();
@@ -653,7 +642,7 @@ public sealed class SqlitePersistence : ITrackerPersistence
         SetPreference("browser", Json(settings.Browser), transaction);
         SetPreference("sync", Json(settings.Sync), transaction);
         SetPreference("procore", Json(settings.Procore), transaction);
-        SetPreference("central", Json(settings.Central), transaction);
+        SetPreference("workloadTracker", Json(settings.WorkloadTracker), transaction);
 
         var stored = new Dictionary<string, (string Hash, bool Deleted)>(StringComparer.Ordinal);
         using (var command = Command("SELECT id, content_hash, deleted_at FROM projects;", transaction))
@@ -717,7 +706,6 @@ public sealed class SqlitePersistence : ITrackerPersistence
                     ("$project", project.Id), ("$type", itemType), ("$kind", kind), ("$target", target), ("$discipline", code), ("$now", now));
             }
 
-            LogChange(transaction, "project", project.Id, previous.Hash is null || previous.Deleted ? "insert" : "update", payload, now);
         }
 
         var kept = settings.Projects.Select(project => project.Id).ToHashSet(StringComparer.Ordinal);
@@ -733,7 +721,6 @@ public sealed class SqlitePersistence : ITrackerPersistence
             Execute("DELETE FROM folder_entries WHERE project_id = $id;", transaction, ("$id", id));
             Execute("DELETE FROM folder_containers WHERE project_id = $id;", transaction, ("$id", id));
             Execute("DELETE FROM folder_scans WHERE project_id = $id;", transaction, ("$id", id));
-            LogChange(transaction, "project", id, "delete", null, now);
         }
 
         scope.Commit();
@@ -760,8 +747,9 @@ public sealed class SqlitePersistence : ITrackerPersistence
         var transaction = scope.Transaction;
         Execute(
             "INSERT INTO provider_snapshots (provider, project_id, schema_version, account_id, project_name, project_url, complete, scanned_at, " +
-            "user_full_name, user_company_id, user_company) VALUES ($provider, $project, $version, $account, $name, $url, $complete, $scanned, " +
-            "$user, $companyId, $company) ON CONFLICT (provider, project_id) DO UPDATE SET schema_version = excluded.schema_version, " +
+            "user_full_name, user_company_id, user_company, user_provider_id, user_email) VALUES ($provider, $project, $version, $account, $name, " +
+            "$url, $complete, $scanned, $user, $companyId, $company, $userId, $userEmail) ON CONFLICT (provider, project_id) DO UPDATE SET " +
+            "schema_version = excluded.schema_version, user_provider_id = excluded.user_provider_id, user_email = excluded.user_email, " +
             "account_id = excluded.account_id, project_name = excluded.project_name, project_url = excluded.project_url, " +
             "complete = excluded.complete, scanned_at = excluded.scanned_at, user_full_name = excluded.user_full_name, " +
             "user_company_id = excluded.user_company_id, user_company = excluded.user_company;",
@@ -769,7 +757,8 @@ public sealed class SqlitePersistence : ITrackerPersistence
             ("$provider", snapshot.Provider), ("$project", snapshot.ProjectId), ("$version", snapshot.SchemaVersion),
             ("$account", snapshot.AccountId), ("$name", snapshot.ProjectName ?? ""), ("$url", snapshot.ProjectUrl),
             ("$complete", Flag(snapshot.Complete)), ("$scanned", Iso(snapshot.ScannedAt)),
-            ("$user", snapshot.User?.FullName ?? ""), ("$companyId", snapshot.User?.CompanyId), ("$company", snapshot.User?.Company));
+            ("$user", snapshot.User?.FullName ?? ""), ("$companyId", snapshot.User?.CompanyId), ("$company", snapshot.User?.Company),
+            ("$userId", snapshot.User?.ProviderUserId), ("$userEmail", snapshot.User?.Email));
 
         Execute("DELETE FROM snapshot_coverage WHERE provider = $provider AND project_id = $project;", transaction,
             ("$provider", snapshot.Provider), ("$project", snapshot.ProjectId));
@@ -812,11 +801,12 @@ public sealed class SqlitePersistence : ITrackerPersistence
             "DELETE FROM item_holders WHERE provider = $provider AND project_id = $project AND item_type = $type AND item_id = $id;",
             transaction, ("$provider", null), ("$project", null), ("$type", null), ("$id", null));
         using var insertHolder = Command(
-            "INSERT INTO item_holders (provider, project_id, item_type, item_id, ordinal, name, company_id, company, state, since) " +
-            "VALUES ($provider, $project, $type, $id, $ordinal, $name, $companyId, $company, $state, $since);",
+            "INSERT INTO item_holders (provider, project_id, item_type, item_id, ordinal, name, company_id, company, state, since, " +
+            "provider_user_id, email) VALUES ($provider, $project, $type, $id, $ordinal, $name, $companyId, $company, $state, $since, " +
+            "$userId, $email);",
             transaction,
             ("$provider", null), ("$project", null), ("$type", null), ("$id", null), ("$ordinal", null), ("$name", null),
-            ("$companyId", null), ("$company", null), ("$state", null), ("$since", null));
+            ("$companyId", null), ("$company", null), ("$state", null), ("$since", null), ("$userId", null), ("$email", null));
 
         var seen = new HashSet<string>(StringComparer.Ordinal);
         foreach (var item in snapshot.Items)
@@ -848,11 +838,11 @@ public sealed class SqlitePersistence : ITrackerPersistence
                 var holder = item.Holders[ordinal];
                 Set(insertHolder, ("$provider", snapshot.Provider), ("$project", snapshot.ProjectId), ("$type", item.ItemType),
                     ("$id", item.ItemId), ("$ordinal", ordinal), ("$name", holder.Name ?? ""), ("$companyId", holder.CompanyId),
-                    ("$company", holder.Company), ("$state", holder.State ?? ""), ("$since", Iso(holder.Since)));
+                    ("$company", holder.Company), ("$state", holder.State ?? ""), ("$since", Iso(holder.Since)),
+                    ("$userId", holder.ProviderUserId), ("$email", holder.Email));
                 insertHolder.ExecuteNonQuery();
             }
 
-            LogChange(transaction, "item", $"{snapshot.Provider}|{snapshot.ProjectId}|{key}", previousHash is null ? "insert" : "update", payload, now);
         }
 
         foreach (var key in stored.Keys.Where(key => !seen.Contains(key)).ToList())
@@ -866,7 +856,6 @@ public sealed class SqlitePersistence : ITrackerPersistence
             };
             Execute("DELETE FROM item_holders WHERE provider = $provider AND project_id = $project AND item_type = $type AND item_id = $id;", transaction, parameters);
             Execute("DELETE FROM items WHERE provider = $provider AND project_id = $project AND item_type = $type AND item_id = $id;", transaction, parameters);
-            LogChange(transaction, "item", $"{snapshot.Provider}|{snapshot.ProjectId}|{key}", "delete", null, now);
         }
 
         scope.Commit();
@@ -960,12 +949,15 @@ public sealed class SqlitePersistence : ITrackerPersistence
         foreach (var account in accounts)
         {
             Execute(
-                "INSERT INTO accounts (provider, user_name, company, signed_in_at, needs_sign_in) VALUES ($provider, $user, $company, $at, $needs) " +
+                "INSERT INTO accounts (provider, user_name, company, signed_in_at, needs_sign_in, provider_user_id, email) " +
+                "VALUES ($provider, $user, $company, $at, $needs, $userId, $email) " +
                 "ON CONFLICT (provider) DO UPDATE SET user_name = excluded.user_name, company = excluded.company, " +
-                "signed_in_at = excluded.signed_in_at, needs_sign_in = excluded.needs_sign_in;",
+                "signed_in_at = excluded.signed_in_at, needs_sign_in = excluded.needs_sign_in, " +
+                "provider_user_id = excluded.provider_user_id, email = excluded.email;",
                 transaction,
                 ("$provider", account.Provider.ToLowerInvariant()), ("$user", account.UserName), ("$company", account.Company),
-                ("$at", Iso(account.SignedInAt)), ("$needs", Flag(account.NeedsSignIn)));
+                ("$at", Iso(account.SignedInAt)), ("$needs", Flag(account.NeedsSignIn)),
+                ("$userId", account.ProviderUserId), ("$email", account.Email));
         }
 
         scope.Commit();
@@ -992,107 +984,244 @@ public sealed class SqlitePersistence : ITrackerPersistence
             ("$id", run.Id), ("$provider", run.Provider), ("$project", run.ProjectId), ("$mode", run.Mode), ("$started", Iso(run.StartedAt)),
             ("$finished", Iso(run.FinishedAt)), ("$status", run.Status), ("$items", run.ItemCount), ("$changed", run.ChangedCount),
             ("$error", run.Error));
-        Execute("DELETE FROM sync_runs WHERE id NOT IN (SELECT id FROM sync_runs ORDER BY started_at DESC LIMIT 2000);", transaction);
+        Execute($"DELETE FROM sync_runs WHERE id NOT IN ({KeptSyncRuns});", transaction, ("$limit", 2000));
         scope.Commit();
     }
 
-    public IReadOnlyList<ChangeRecord> PendingChanges(int limit)
+    // ---- Workload Tracker outbox -------------------------------------------------------------
+
+    private List<OutboxEntry> LoadOutbox()
     {
-        var changes = new List<ChangeRecord>();
+        var entries = new List<OutboxEntry>();
         using var command = Command(
-            "SELECT seq, entity, entity_key, operation, changed_at, payload FROM change_log WHERE synced_at IS NULL ORDER BY seq LIMIT $limit;",
-            null,
-            ("$limit", limit));
+            "SELECT provider, project_id, account, full_set, changed, removed, verified, version, updated_at, attempts, next_attempt_at, " +
+            "last_error FROM wt_outbox;",
+            null);
         using var reader = command.ExecuteReader();
         while (reader.Read())
         {
-            changes.Add(new ChangeRecord(
-                reader.GetInt64(0),
-                reader.GetString(1),
-                reader.GetString(2),
-                reader.GetString(3),
-                ParseDate(reader.GetString(4)) ?? DateTimeOffset.MinValue,
-                Text(reader, 5)));
+            entries.Add(new OutboxEntry
+            {
+                Provider = reader.GetString(0),
+                ProjectId = reader.GetString(1),
+                Account = reader.GetString(2),
+                FullSet = reader.GetInt64(3) != 0,
+                Changed = new HashSet<string>(FromJson<List<string>>(reader.GetString(4)) ?? new List<string>(), StringComparer.Ordinal),
+                Removed = new HashSet<string>(FromJson<List<string>>(reader.GetString(5)) ?? new List<string>(), StringComparer.Ordinal),
+                Verified = new HashSet<string>(FromJson<List<string>>(reader.GetString(6)) ?? new List<string>(), StringComparer.OrdinalIgnoreCase),
+                Version = reader.GetInt64(7),
+                UpdatedAt = ParseDate(reader.GetString(8)) ?? DateTimeOffset.MinValue,
+                Attempts = (int)reader.GetInt64(9),
+                NextAttemptAt = ParseDate(Text(reader, 10)),
+                LastError = Text(reader, 11)
+            });
         }
 
-        return changes;
+        return entries;
     }
 
-    public void MarkChangesSent(long throughSeq)
+    public void SaveOutboxEntry(OutboxEntry entry)
     {
         using var scope = new WriteScope(this);
-        var transaction = scope.Transaction;
-        Execute("UPDATE change_log SET synced_at = $now WHERE synced_at IS NULL AND seq <= $seq;", transaction,
-            ("$now", Iso(DateTimeOffset.Now)), ("$seq", throughSeq));
-        // Sent changes older than 30 days aren't needed again.
-        Execute("DELETE FROM change_log WHERE synced_at IS NOT NULL AND synced_at < $old;", transaction,
-            ("$old", Iso(DateTimeOffset.Now.AddDays(-30))));
+        Execute(
+            "INSERT INTO wt_outbox (provider, project_id, account, full_set, changed, removed, verified, version, updated_at, attempts, " +
+            "next_attempt_at, last_error) VALUES ($provider, $project, $account, $full, $changed, $removed, $verified, $version, $updated, " +
+            "$attempts, $next, $error) ON CONFLICT (provider, project_id) DO UPDATE SET account = excluded.account, " +
+            "full_set = excluded.full_set, changed = excluded.changed, removed = excluded.removed, verified = excluded.verified, " +
+            "version = excluded.version, updated_at = excluded.updated_at, attempts = excluded.attempts, " +
+            "next_attempt_at = excluded.next_attempt_at, last_error = excluded.last_error;",
+            scope.Transaction,
+            ("$provider", entry.Provider.ToLowerInvariant()), ("$project", entry.ProjectId), ("$account", entry.Account),
+            ("$full", Flag(entry.FullSet)), ("$changed", Json(entry.Changed.Order(StringComparer.Ordinal).ToList())),
+            ("$removed", Json(entry.Removed.Order(StringComparer.Ordinal).ToList())),
+            ("$verified", Json(entry.Verified.Order(StringComparer.OrdinalIgnoreCase).ToList())), ("$version", entry.Version),
+            ("$updated", Iso(entry.UpdatedAt)), ("$attempts", entry.Attempts), ("$next", Iso(entry.NextAttemptAt)), ("$error", entry.LastError));
         scope.Commit();
     }
 
-    public IReadOnlySet<string> PendingKeys()
+    public void DeleteOutboxEntry(string provider, string projectId)
     {
-        var keys = new HashSet<string>(StringComparer.Ordinal);
-        using var command = Command("SELECT DISTINCT entity, entity_key FROM change_log WHERE synced_at IS NULL;", null);
+        using var scope = new WriteScope(this);
+        Execute("DELETE FROM wt_outbox WHERE provider = $provider AND project_id = $project;", scope.Transaction,
+            ("$provider", provider.ToLowerInvariant()), ("$project", projectId));
+        scope.Commit();
+    }
+
+    public void ClearOutbox()
+    {
+        using var scope = new WriteScope(this);
+        Execute("DELETE FROM wt_outbox;", scope.Transaction);
+        scope.Commit();
+    }
+
+    // ---- Workload Tracker item assignments ---------------------------------------------------
+
+    private List<WorkloadAssignment> LoadAssignments()
+    {
+        var rows = new List<WorkloadAssignment>();
+        using var command = Command(
+            "SELECT tracker_project_id, provider, host, provider_project_id, item_type, number, person_id, person_name, person_active, " +
+            "active, assigned_at, assigned_by_name, completed_at, pending FROM wt_assignments;",
+            null);
         using var reader = command.ExecuteReader();
         while (reader.Read())
         {
-            keys.Add($"{reader.GetString(0)}|{reader.GetString(1)}");
+            rows.Add(new WorkloadAssignment
+            {
+                TrackerProjectId = (int)reader.GetInt64(0),
+                Provider = reader.GetString(1),
+                Host = reader.GetString(2),
+                ProviderProjectId = reader.GetString(3),
+                ItemType = reader.GetString(4),
+                Number = reader.GetString(5),
+                PersonId = (int)reader.GetInt64(6),
+                PersonName = reader.GetString(7),
+                PersonActive = reader.GetInt64(8) != 0,
+                Active = reader.GetInt64(9) != 0,
+                AssignedAt = ParseDate(reader.GetString(10)) ?? DateTimeOffset.MinValue,
+                AssignedByName = Text(reader, 11),
+                CompletedAt = ParseDate(Text(reader, 12)),
+                Pending = reader.GetInt64(13) != 0
+            });
         }
 
-        return keys;
+        return rows;
     }
 
-    public void PruneChangeLog(bool sharing)
+    public void ReplaceAssignments(int trackerProjectId, IReadOnlyList<WorkloadAssignment> assignments)
     {
-        if (sharing)
-        {
-            return;
-        }
-
-        var everShared = !string.IsNullOrEmpty(GetMeta(CentralSync.ServerKey));
         using var scope = new WriteScope(this);
-        var transaction = scope.Transaction;
-        if (!everShared)
+        Execute("DELETE FROM wt_assignments WHERE tracker_project_id = $project;", scope.Transaction, ("$project", trackerProjectId));
+        foreach (var row in assignments)
         {
-            // Never shared: the first share sends everything as it is then, so nothing waiting is needed.
-            Execute("DELETE FROM change_log WHERE synced_at IS NULL;", transaction);
-        }
-        else
-        {
-            // Shared before, not now: only the newest change of each project or item would be sent.
             Execute(
-                "DELETE FROM change_log WHERE synced_at IS NULL AND seq NOT IN " +
-                "(SELECT MAX(seq) FROM change_log WHERE synced_at IS NULL GROUP BY entity, entity_key);",
-                transaction);
+                "INSERT OR REPLACE INTO wt_assignments (tracker_project_id, provider, host, provider_project_id, item_type, number, person_id, " +
+                "person_name, person_active, active, assigned_at, assigned_by_name, completed_at, pending) VALUES ($project, $provider, $host, " +
+                "$providerProject, $type, $number, $person, $name, $personActive, $active, $assigned, $by, $completed, $pending);",
+                scope.Transaction,
+                ("$project", trackerProjectId), ("$provider", row.Provider.ToLowerInvariant()), ("$host", row.Host),
+                ("$providerProject", row.ProviderProjectId), ("$type", row.ItemType.ToLowerInvariant()), ("$number", row.Number),
+                ("$person", row.PersonId), ("$name", row.PersonName), ("$personActive", Flag(row.PersonActive)), ("$active", Flag(row.Active)),
+                ("$assigned", Iso(row.AssignedAt)), ("$by", row.AssignedByName), ("$completed", Iso(row.CompletedAt)), ("$pending", Flag(row.Pending)));
         }
 
         scope.Commit();
     }
 
-    public void QueueEverything()
+    public void ClearAssignments()
     {
-        RunBatch(() =>
-        {
-            var transaction = ambient!;
-            var now = Iso(DateTimeOffset.Now);
-            // Everything that is here goes again below; removals are kept waiting, as nothing else sends them.
-            Execute("UPDATE change_log SET synced_at = $now WHERE synced_at IS NULL AND operation <> 'delete';", transaction, ("$now", now));
-            foreach (var project in LoadSettings().Projects)
-            {
-                LogChange(transaction, "project", project.Id, "update", Json(project), now);
-            }
+        using var scope = new WriteScope(this);
+        Execute("DELETE FROM wt_assignments;", scope.Transaction);
+        scope.Commit();
+    }
 
-            foreach (var snapshot in LoadSnapshots())
+    // ---- Workload Tracker "marked complete" marks ---------------------------------------------
+
+    private List<WorkloadCompletion> LoadCompletions()
+    {
+        var rows = new List<WorkloadCompletion>();
+        using var command = Command(
+            "SELECT tracker_project_id, provider, host, provider_project_id, item_type, provider_item_id, number, revision, person_id, " +
+            "person_name, marked_by_name, marked_at FROM wt_completions;",
+            null);
+        using var reader = command.ExecuteReader();
+        while (reader.Read())
+        {
+            rows.Add(new WorkloadCompletion
             {
-                foreach (var item in snapshot.Items)
-                {
-                    // Dated when the item was read, not now: a newer read elsewhere must win over it.
-                    var readAt = Iso(snapshot.CoverageFor(item.ItemType)?.ScannedAt ?? snapshot.ScannedAt);
-                    LogChange(transaction, "item", $"{snapshot.Provider}|{snapshot.ProjectId}|{item.ItemType}|{item.ItemId}", "update", ItemJson(item), readAt);
-                }
-            }
-        });
+                TrackerProjectId = (int)reader.GetInt64(0),
+                Provider = reader.GetString(1),
+                Host = reader.GetString(2),
+                ProviderProjectId = reader.GetString(3),
+                ItemType = reader.GetString(4),
+                ProviderItemId = reader.GetString(5),
+                Number = reader.GetString(6),
+                Revision = Text(reader, 7),
+                PersonId = (int)reader.GetInt64(8),
+                PersonName = reader.GetString(9),
+                MarkedByName = Text(reader, 10),
+                MarkedAt = ParseDate(reader.GetString(11)) ?? DateTimeOffset.MinValue
+            });
+        }
+
+        return rows;
+    }
+
+    public void ReplaceCompletions(int trackerProjectId, IReadOnlyList<WorkloadCompletion> completions)
+    {
+        using var scope = new WriteScope(this);
+        Execute("DELETE FROM wt_completions WHERE tracker_project_id = $project;", scope.Transaction, ("$project", trackerProjectId));
+        foreach (var row in completions)
+        {
+            Execute(
+                "INSERT OR REPLACE INTO wt_completions (tracker_project_id, provider, host, provider_project_id, item_type, provider_item_id, " +
+                "number, revision, person_id, person_name, marked_by_name, marked_at) VALUES ($project, $provider, $host, $providerProject, " +
+                "$type, $item, $number, $revision, $person, $name, $by, $marked);",
+                scope.Transaction,
+                ("$project", trackerProjectId), ("$provider", row.Provider.ToLowerInvariant()), ("$host", row.Host),
+                ("$providerProject", row.ProviderProjectId), ("$type", row.ItemType.ToLowerInvariant()), ("$item", row.ProviderItemId),
+                ("$number", row.Number), ("$revision", row.Revision), ("$person", row.PersonId), ("$name", row.PersonName),
+                ("$by", row.MarkedByName), ("$marked", Iso(row.MarkedAt)));
+        }
+
+        scope.Commit();
+    }
+
+    public void ClearCompletions()
+    {
+        using var scope = new WriteScope(this);
+        Execute("DELETE FROM wt_completions;", scope.Transaction);
+        scope.Commit();
+    }
+
+    // ---- Workload Tracker: facts sent about items ---------------------------------------------
+
+    private List<SentItemFacts> LoadSentFacts()
+    {
+        var rows = new List<SentItemFacts>();
+        using var command = Command("SELECT provider, project_id, item_type, item_id, fingerprint FROM wt_item_facts;", null);
+        using var reader = command.ExecuteReader();
+        while (reader.Read())
+        {
+            rows.Add(new SentItemFacts(reader.GetString(0), reader.GetString(1), OutboxEntry.ItemKey(reader.GetString(2), reader.GetString(3)),
+                reader.GetString(4)));
+        }
+
+        return rows;
+    }
+
+    public void SaveSentFacts(string provider, string projectId, IReadOnlyList<(string ItemKey, string Fingerprint)> sent, IReadOnlyList<string> forgotten)
+    {
+        using var scope = new WriteScope(this);
+        using var upsert = Command(
+            "INSERT INTO wt_item_facts (provider, project_id, item_type, item_id, fingerprint) VALUES ($provider, $project, $type, $id, $print) " +
+            "ON CONFLICT (provider, project_id, item_type, item_id) DO UPDATE SET fingerprint = excluded.fingerprint;",
+            scope.Transaction, ("$provider", provider.ToLowerInvariant()), ("$project", projectId), ("$type", null), ("$id", null), ("$print", null));
+        foreach (var (key, fingerprint) in sent)
+        {
+            var (itemType, itemId) = OutboxEntry.SplitKey(key);
+            Set(upsert, ("$type", itemType), ("$id", itemId), ("$print", fingerprint));
+            upsert.ExecuteNonQuery();
+        }
+
+        using var delete = Command(
+            "DELETE FROM wt_item_facts WHERE provider = $provider AND project_id = $project AND item_type = $type AND item_id = $id;",
+            scope.Transaction, ("$provider", provider.ToLowerInvariant()), ("$project", projectId), ("$type", null), ("$id", null));
+        foreach (var key in forgotten)
+        {
+            var (itemType, itemId) = OutboxEntry.SplitKey(key);
+            Set(delete, ("$type", itemType), ("$id", itemId));
+            delete.ExecuteNonQuery();
+        }
+
+        scope.Commit();
+    }
+
+    public void ClearSentFacts()
+    {
+        using var scope = new WriteScope(this);
+        Execute("DELETE FROM wt_item_facts;", scope.Transaction);
+        scope.Commit();
     }
 
     public void Dispose()

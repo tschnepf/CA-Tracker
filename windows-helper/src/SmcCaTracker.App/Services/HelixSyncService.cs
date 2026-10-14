@@ -536,7 +536,9 @@ public sealed class HelixSyncService : IDisposable
         {
             var name = user.TryGetProperty("fullName", out var fullName) && fullName.ValueKind == JsonValueKind.String ? fullName.GetString() : null;
             var company = user.TryGetProperty("company", out var companyElement) && companyElement.ValueKind == JsonValueKind.String ? companyElement.GetString() : null;
-            store.RecordAccount(Providers.Helix, name, company, DateTimeOffset.Now);
+            var contactId = user.TryGetProperty("contactId", out var contactElement) && contactElement.ValueKind == JsonValueKind.String ? contactElement.GetString() : null;
+            var email = user.TryGetProperty("email", out var emailElement) && emailElement.ValueKind == JsonValueKind.String ? emailElement.GetString() : null;
+            store.RecordAccount(Providers.Helix, name, company, DateTimeOffset.Now, contactId, email);
         }
     }
 

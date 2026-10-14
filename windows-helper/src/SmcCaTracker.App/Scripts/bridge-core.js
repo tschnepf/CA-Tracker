@@ -109,6 +109,8 @@
     "idProject",
     "filename",
     "description",
+    "nameEditor",
+    "refDirectoryCreator",
     "isActive",
     "isCurrent",
     "_kmd"
@@ -253,9 +255,17 @@
         companyId: getIdentityCompanyId(directoryInfo) ? String(getIdentityCompanyId(directoryInfo)) : null,
         company: directoryInfo.refCompany && (directoryInfo.refCompany.name || directoryInfo.refCompany.nameCompany)
           ? String(directoryInfo.refCompany.name || directoryInfo.refCompany.nameCompany)
-          : null
+          : null,
+        email: signedInEmail(windowObject)
       }
     };
+  }
+
+  // The signed-in contact's email. Helix gives it for the person signed in, not for others.
+  function signedInEmail(windowObject) {
+    const contact = windowObject && windowObject.loginObject && windowObject.loginObject.contact;
+    const email = contact && typeof contact.email === "string" ? contact.email.trim() : "";
+    return email.includes("@") ? email : null;
   }
 
   // Who is signed in, read from any Helix page (not only a project page). Null until Helix has
@@ -275,7 +285,8 @@
         contactId: contactId ? String(contactId) : null,
         fullName: String(fullName),
         companyId: companyId ? String(companyId) : null,
-        company: company ? String(company) : null
+        company: company ? String(company) : null,
+        email: signedInEmail(windowObject)
       };
     }
 
@@ -291,7 +302,8 @@
       contactId: String(contactId),
       fullName: String(contactName),
       companyId: companyId ? String(companyId) : null,
-      company: company ? String(company) : null
+      company: company ? String(company) : null,
+      email: signedInEmail(windowObject)
     };
   }
 
@@ -1487,7 +1499,8 @@
           id: String(attachment._id),
           filename: String(attachment.description || attachment.filename || protectedFile.filename || "Attachment"),
           uploadedAt: toIso(attachment._kmd && attachment._kmd.ect),
-          url
+          url,
+          uploadedBy: uploaderOf(attachment)
         };
       }
     );
@@ -1501,6 +1514,17 @@
       reportError,
       attachments: attachmentResults
     };
+  }
+
+  // { name, company } of who uploaded the file, or null. The attachment's uploader (their entry in the
+  // project's directory, copied onto it) carries their company's name as nameCompany; its refCompany
+  // has only the id. Helix's last editor's name stands in when no uploader is named.
+  function uploaderOf(attachment) {
+    const creator = attachment.refDirectoryCreator;
+    const name = getIdentityName(creator) || attachment.nameEditor;
+    if (!name || !String(name).trim()) return null;
+    const company = (creator && creator.nameCompany) || getIdentityCompanyName(creator);
+    return { name: String(name).trim(), company: company && String(company).trim() ? String(company).trim() : null };
   }
 
   async function openItem(windowObject, itemId, itemType, projectId) {

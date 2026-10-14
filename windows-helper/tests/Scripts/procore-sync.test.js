@@ -25,7 +25,7 @@ const win = { location: { hostname: "app.procore.com" } };
 
 test("discovers every company and its active projects with one sign-in", async () => {
   const procore = fakeProcore({
-    "/rest/v1.0/me": { name: "Tim S" },
+    "/rest/v1.0/me": { id: 4242, name: "Tim S", login: "tim@smc.example" },
     "/rest/v1.0/companies": [
       { id: 10, name: "Gilbane Building Company" },
       { id: 20, name: "Ryan Companies" },
@@ -42,7 +42,7 @@ test("discovers every company and its active projects with one sign-in", async (
 
   const result = await ProcoreSync.discover(win, { fetch: procore.fetch });
 
-  assert.equal(result.user.fullName, "Tim S");
+  assert.deepEqual(result.user, { fullName: "Tim S", id: "4242", email: "tim@smc.example" });
   assert.deepEqual(result.projects, [
     { projectId: "111", accountId: "10", accountName: "Gilbane Building Company", name: "J11004.000 - Aligned Data Centers - CMH01", host: "app.procore.com" },
     { projectId: "221", accountId: "20", accountName: "Ryan Companies", name: "007941000 - ADC LBB01 - Lubbock TX", host: "app.procore.com" }
@@ -174,6 +174,7 @@ test("pages are asked for several at a time when Procore says how many rows ther
 
   assert.equal(result.rfis.length, 1250);
   assert.ok(most > 1, "pages were read in parallel");
+  assert.ok(most <= 3, "no more than three pages at a time");
 });
 
 test("a server that sends fewer rows per page than asked for is still read to the end", async () => {
@@ -205,6 +206,137 @@ test("after the first read only changed items are asked for", async () => {
   assert.ok(calls.every((path) => path.includes("filters[updated_at]=2026-10-01T10:00:00.000Z...")));
 });
 
+test("an RFI's files are its question's and every answer's, dated by what they came with", async () => {
+  // As Procore sends them: the question names its asker only by name (the RFI's creator, who has a
+  // company); an answer says "Name (Company)".
+  const procore = fakeProcore({
+    "/rest/v1.0/projects/9/rfis/77": {
+      id: 77,
+      created_by: { id: 5, login: "jack@gc.example", name: "Jack Romain", vendor: { id: 50, name: "Ryan Companies US Inc" } },
+      questions: [{
+        created_by: "Jack Romain",
+        question_date: "2026-10-01T21:48:59Z",
+        attachments: [{ id: 1, filename: "Question sketch.pdf", name: "ignored", url: "https://storage.procore.com/api/v5/files/1?sig=a" }],
+        answers: [
+          {
+            created_by: "Mahfooz Akbari (LA Fuess Partners Inc)", created_by_id: 6, answer_date: "2026-10-08T02:21:19Z",
+            attachments: [{ id: 2, name: "Answer.pdf", url: "https://storage.procore.com/api/v5/files/2?sig=b" }]
+          },
+          { answer_date: "2026-10-09T10:00:00Z", attachments: [] }
+        ]
+      }]
+    }
+  });
+
+  const result = await ProcoreSync.readItemFiles(win, { projectId: "9", companyId: "10", itemType: "rfi", itemId: "77" }, { fetch: procore.fetch });
+
+  assert.deepEqual(result.attachments, [
+    {
+      id: "1", filename: "Question sketch.pdf", uploadedAt: "2026-10-01T21:48:59Z", url: "https://storage.procore.com/api/v5/files/1?sig=a",
+      uploadedBy: { name: "Jack Romain", company: "Ryan Companies US Inc", note: null }
+    },
+    {
+      id: "2", filename: "Answer.pdf", uploadedAt: "2026-10-08T02:21:19Z", url: "https://storage.procore.com/api/v5/files/2?sig=b",
+      uploadedBy: { name: "Mahfooz Akbari", company: "LA Fuess Partners Inc", note: null }
+    }
+  ]);
+  // Every company was known: the directory isn't read.
+  assert.deepEqual(procore.calls.map((call) => [call.path, call.companyId]), [["/rest/v1.0/projects/9/rfis/77", "10"]]);
+});
+
+function submittalWithPeople() {
+  const file = (id, name) => ({ id, filename: name, url: `https://storage.procore.com/api/v5/files/${id}?sig=x` });
+  const person = (id, name) => ({ id, name, login: `${name.split(" ")[0].toLowerCase()}@example.com`, locale: null });
+  return {
+    id: 55,
+    created_at: "2026-10-06T13:58:59Z",
+    received_date: "2026-10-05",
+    distributed_at: "2026-10-08T14:38:50Z",
+    created_by: person(1, "Peter Leszko"),
+    received_from: person(4, "Troy Dow"),
+    attachments: [file(1, "Product data.pdf")],
+    approvers: [
+      { user: person(4, "Troy Dow"), response: { name: "Submitted" }, returned_date: "2026-10-06", attachments: [file(2, "Product data.pdf")] },
+      { user: person(2, "Gregg Poole"), response: { name: "Awaiting Response" }, returned_date: null, sent_date: "2026-10-06", attachments: [] },
+      { user: person(3, "Juan Cortez"), response: { name: "Approved as Noted" }, returned_date: null, sent_date: "2026-10-07", attachments: [file(3, "Reviewed.pdf")] }
+    ],
+    distributed_submittals: [
+      { distributed_by: person(5, "MV Dushyanthram"), sent_at: "2026-10-08T14:38:50Z", final_attachments: [file(3, "Reviewed.pdf"), file(4, "Stamped.pdf")] }
+    ]
+  };
+}
+
+test("a Submittal's files are its own and every response's, each listed once", async () => {
+  const procore = fakeProcore({
+    "/rest/v1.1/projects/9/submittals/55": submittalWithPeople(),
+    // The project's directory has everyone's company but the distributor's (not on the project).
+    "/rest/v1.0/projects/9/users": [
+      { id: 1, name: "Peter Leszko", vendor: { id: 11, name: "Ryan Companies US Inc" } },
+      { id: 3, name: "Juan Cortez", vendor: { id: 33, name: "Strategic Mission Critical" } },
+      { id: 4, name: "Troy Dow", vendor: { id: 44, name: "MasTec North America Inc" } }
+    ]
+  });
+
+  const result = await ProcoreSync.readItemFiles(win, { projectId: "9", companyId: "10", itemType: "submittal", itemId: "55" }, { fetch: procore.fetch });
+
+  // The same file name under another id is another file (it is kept); the same id is listed once.
+  assert.deepEqual(result.attachments.map((entry) => [entry.id, entry.filename, entry.uploadedAt]), [
+    ["1", "Product data.pdf", "2026-10-06T13:58:59Z"],
+    ["2", "Product data.pdf", "2026-10-06"],
+    ["3", "Reviewed.pdf", "2026-10-07"],
+    ["4", "Stamped.pdf", "2026-10-08T14:38:50Z"]
+  ]);
+  assert.deepEqual(result.attachments.map((entry) => entry.uploadedBy), [
+    {
+      name: "Peter Leszko",
+      company: "Ryan Companies US Inc",
+      note: "Peter Leszko created the submittal. Procore doesn't record who attached its own files. It was received from Troy Dow (MasTec North America Inc)."
+    },
+    { name: "Troy Dow", company: "MasTec North America Inc", note: null },
+    { name: "Juan Cortez", company: "Strategic Mission Critical", note: null },
+    { name: "MV Dushyanthram", company: null, note: null }
+  ]);
+  // One directory read for everyone, with the item's company.
+  assert.deepEqual(procore.calls.map((call) => [decodeURIComponent(call.path), call.companyId]), [
+    ["/rest/v1.1/projects/9/submittals/55", "10"],
+    ["/rest/v1.0/projects/9/users?per_page=100&filters[id][]=1&filters[id][]=4&filters[id][]=3&filters[id][]=5", "10"]
+  ]);
+});
+
+test("if the project's directory can't be read, the files still list with names alone", async () => {
+  const procore = fakeProcore({ "/rest/v1.1/projects/9/submittals/55": submittalWithPeople(), "/rest/v1.0/projects/9/users": 403 });
+
+  const result = await ProcoreSync.readItemFiles(win, { projectId: "9", itemType: "submittal", itemId: "55" }, { fetch: procore.fetch });
+
+  assert.deepEqual(result.attachments.map((entry) => [entry.uploadedBy.name, entry.uploadedBy.company]), [
+    ["Peter Leszko", null], ["Troy Dow", null], ["Juan Cortez", null], ["MV Dushyanthram", null]
+  ]);
+  assert.match(result.attachments[0].uploadedBy.note, /received from Troy Dow\.$/);
+});
+
+test("files without a link or id are left out, and a nameless file is still listed", async () => {
+  const procore = fakeProcore({
+    "/rest/v1.0/projects/9/rfis/77": {
+      questions: [{ question_date: null, attachments: [{ id: 1, url: "" }, { url: "https://storage.procore.com/x" }, { id: 3, url: "https://storage.procore.com/3" }] }]
+    }
+  });
+
+  const result = await ProcoreSync.readItemFiles(win, { projectId: "9", itemType: "rfi", itemId: "77" }, { fetch: procore.fetch });
+
+  assert.deepEqual(result.attachments, [{ id: "3", filename: "Attachment", uploadedAt: null, url: "https://storage.procore.com/3", uploadedBy: null }]);
+});
+
+test("an item that can't be read fails with Procore's status", async () => {
+  await assert.rejects(
+    ProcoreSync.readItemFiles(win, { projectId: "9", itemType: "submittal", itemId: "1" }, { fetch: fakeProcore({}).fetch }),
+    (error) => error.status === 404
+  );
+  await assert.rejects(
+    ProcoreSync.readItemFiles(win, { projectId: "9", itemType: "rfi", itemId: "1" }, { fetch: fakeProcore({ "/rest/v1.0/projects/9/rfis/1": 401 }).fetch }),
+    (error) => error.status === 401
+  );
+});
+
 test("if Procore refuses the changes filter, everything is read instead", async () => {
   const calls = [];
   const fetch = async (path) => {
@@ -218,4 +350,84 @@ test("if Procore refuses the changes filter, everything is read instead", async 
   assert.equal(result.changesOnly, false);
   assert.equal(result.rfis.length, 2);
   assert.equal(result.submittals.length, 2);
+});
+
+// A fetch answer with the given status, body and headers (header names are matched case-insensitively).
+function answer(status, body, headers) {
+  const named = Object.fromEntries(Object.entries(Object.assign({ "Content-Type": "application/json" }, headers || {}))
+    .map(([name, value]) => [name.toLowerCase(), String(value)]));
+  return { ok: status >= 200 && status < 300, status, headers: { get: (name) => named[name.toLowerCase()] ?? null }, json: async () => body };
+}
+
+test("Procore's 429 stops the read with how long it asked to wait", async () => {
+  const fetch = async () => answer(429, {}, { "Retry-After": "120" });
+
+  await assert.rejects(ProcoreSync.readProject(win, { projectId: "9" }, { fetch }),
+    (error) => error.status === 429 && error.retryAfter === 120);
+});
+
+test("without Retry-After, the wait runs until Procore's rate limit resets", async () => {
+  const reset = Math.floor(Date.now() / 1000) + 600;
+  const fetch = async () => answer(429, {}, { "X-Rate-Limit-Limit": "3600", "X-Rate-Limit-Remaining": "0", "X-Rate-Limit-Reset": String(reset) });
+
+  await assert.rejects(ProcoreSync.readProject(win, { projectId: "9" }, { fetch }),
+    (error) => error.status === 429 && error.retryAfter >= 598 && error.retryAfter <= 600);
+});
+
+test("a 503 with a Retry-After date waits until that date; one without says nothing", async () => {
+  const at = new Date(Date.now() + 300000).toUTCString();
+  await assert.rejects(ProcoreSync.readProject(win, { projectId: "9" }, { fetch: async () => answer(503, {}, { "Retry-After": at }) }),
+    (error) => error.status === 503 && error.retryAfter >= 298 && error.retryAfter <= 300);
+  await assert.rejects(ProcoreSync.readProject(win, { projectId: "9" }, { fetch: async () => answer(503, {}) }),
+    (error) => error.status === 503 && error.retryAfter === undefined);
+});
+
+test("a 429 while listing companies stops discovery instead of trying the next company", async () => {
+  const calls = [];
+  const fetch = async (path) => {
+    calls.push(path);
+    if (path.startsWith("/rest/v1.0/me")) return answer(200, { id: 1, name: "Tim S" });
+    if (path.startsWith("/rest/v1.0/companies")) return answer(200, [{ id: 10, name: "A" }, { id: 20, name: "B" }]);
+    return answer(429, {}, { "Retry-After": "60" });
+  };
+
+  await assert.rejects(ProcoreSync.discover(win, { fetch }), (error) => error.status === 429 && error.retryAfter === 60);
+  assert.ok(!calls.some((path) => path.includes("company_id=20")), "the second company wasn't asked");
+});
+
+test("a 429 on /me stops discovery too", async () => {
+  await assert.rejects(ProcoreSync.discover(win, { fetch: async () => answer(429, {}) }), (error) => error.status === 429);
+});
+
+test("with totals, each list is asked for one row to learn how many items Procore has", async () => {
+  const calls = [];
+  const fetch = async (path) => {
+    calls.push(decodeURIComponent(path));
+    const url = new URL(path, "https://app.procore.com");
+    if (url.pathname.endsWith("/submittals")) return answer(403, {});
+    if (url.searchParams.get("per_page") === "1") return answer(200, [{ id: 1 }], { Total: "357", "X-Rate-Limit-Limit": "100000", "X-Rate-Limit-Remaining": "99990" });
+    return answer(200, [{ id: 5 }], { "X-Rate-Limit-Limit": "100000", "X-Rate-Limit-Remaining": "99995" });
+  };
+
+  const result = await ProcoreSync.readProject(win, { projectId: "9", updatedSince: "2026-10-01T10:00:00.000Z", withTotals: true }, { fetch });
+
+  assert.deepEqual(result.totals, { rfis: 357, submittals: null });
+  assert.deepEqual(result.unavailable, ["submittals"]);
+  assert.ok(calls.includes("/rest/v1.0/projects/9/rfis?page=1&per_page=1"));
+  // The lowest headroom Procore stated during the read.
+  assert.deepEqual(result.rateLimit, { limit: 100000, remaining: 99990, reset: null });
+});
+
+test("without totals asked for, no extra request is made and no rate limit is invented", async () => {
+  const calls = [];
+  const fetch = async (path) => {
+    calls.push(path);
+    return answer(200, [{ id: 1 }]);
+  };
+
+  const result = await ProcoreSync.readProject(win, { projectId: "9", updatedSince: "2026-10-01T10:00:00.000Z" }, { fetch });
+
+  assert.deepEqual(result.totals, { rfis: null, submittals: null });
+  assert.equal(result.rateLimit, null);
+  assert.equal(calls.length, 2);
 });

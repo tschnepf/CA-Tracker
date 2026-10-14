@@ -10,11 +10,12 @@ namespace SmcCaTracker.App.Views;
 public enum SettingsSection
 {
     General,
-    Connections
+    Connections,
+    People
 }
 
 /// <summary>
-/// The Settings page inside the main window: a sidebar with General settings and Connections.
+/// The Settings page inside the main window: a sidebar with General settings, Connections and People.
 /// General edits a copy of the settings and applies it on Save (the theme is saved as soon as it's
 /// picked); leaving with unsaved changes asks first. Connections shows each site's sign-in and last
 /// sync, with Sign in and Sync buttons handled by the main window.
@@ -32,7 +33,7 @@ public partial class SettingsPage : UserControl
         InitializeComponent();
 
         // Every edit updates Save/Discard and checks the field at once, rather than only on Save.
-        foreach (var box in new[] { RfiFolderBox, SubmittalFolderBox, ReturnedFolderBox, AlwaysStatusesBox, NeverStatusesBox, SyncIntervalBox, TimeoutBox })
+        foreach (var box in new[] { RfiFolderBox, SubmittalFolderBox, ReturnedFolderBox, AlwaysStatusesBox, NeverStatusesBox, WorkHoursIntervalBox, OffHoursIntervalBox, TimeoutBox })
         {
             box.TextChanged += (_, _) => OnEdited();
         }
@@ -56,7 +57,7 @@ public partial class SettingsPage : UserControl
         settingsSource = source;
         paths = appPaths;
         Populate(source());
-        SectionList.SelectedItem = section == SettingsSection.Connections ? ConnectionsItem : GeneralItem;
+        SectionList.SelectedItem = ItemFor(section);
         ShowSection(section);
     }
 
@@ -75,7 +76,7 @@ public partial class SettingsPage : UserControl
         var model = DataContext as MainViewModel;
         var foldersLocked = model?.AreFoldersLocked == true;
         RfiFolderBox.IsEnabled = SubmittalFolderBox.IsEnabled = ReturnedFolderBox.IsEnabled = !foldersLocked;
-        SyncIntervalBox.IsEnabled = model?.IsSyncLocked != true;
+        WorkHoursIntervalBox.IsEnabled = OffHoursIntervalBox.IsEnabled = model?.IsSyncLocked != true;
         RfiFolderBox.Text = settings.Folders.RfiFolder;
         SubmittalFolderBox.Text = settings.Folders.SubmittalFolder;
         ReturnedFolderBox.Text = settings.Folders.ReturnedFolder;
@@ -88,7 +89,8 @@ public partial class SettingsPage : UserControl
 
         CloseWindowBox.IsChecked = settings.Browser.CloseWindowWhenDone;
         AutoSyncBox.IsChecked = settings.Sync.AutoSync;
-        SyncIntervalBox.Text = settings.Sync.IntervalMinutes.ToString();
+        WorkHoursIntervalBox.Text = settings.Sync.WorkHoursIntervalMinutes.ToString();
+        OffHoursIntervalBox.Text = settings.Sync.OffHoursIntervalMinutes.ToString();
         TimeoutBox.Text = settings.Browser.TimeoutSeconds.ToString();
         loading = false;
 
@@ -100,7 +102,7 @@ public partial class SettingsPage : UserControl
     /// <summary>Everything General settings edits (but the theme, which saves itself), to tell whether it changed.</summary>
     private string CurrentFields() => string.Join("\u001f",
         RfiFolderBox.Text, SubmittalFolderBox.Text, ReturnedFolderBox.Text, AlwaysStatusesBox.Text, NeverStatusesBox.Text,
-        SyncIntervalBox.Text, TimeoutBox.Text, WhenNotHeldBox.IsChecked, WhenClosedBox.IsChecked, WhenComingUpBox.IsChecked,
+        WorkHoursIntervalBox.Text, OffHoursIntervalBox.Text, TimeoutBox.Text, WhenNotHeldBox.IsChecked, WhenClosedBox.IsChecked, WhenComingUpBox.IsChecked,
         AutoSyncBox.IsChecked, CloseWindowBox.IsChecked);
 
     private bool IsDirty => !loading && editing is not null && CurrentFields() != savedFields;
@@ -134,9 +136,11 @@ public partial class SettingsPage : UserControl
 
         var folderProblems = Folders().Validate().ToList();
         Show(FoldersError, folderProblems.Count == 0 ? null : string.Join(" ", folderProblems));
-        Show(IntervalError, int.TryParse(SyncIntervalBox.Text.Trim(), out var interval) && interval is >= 5 and <= 240
-            ? null
-            : "Enter 5 to 240 minutes.");
+        Show(IntervalError, !InRange(WorkHoursIntervalBox, SyncSettings.WorkHoursMinimum, SyncSettings.WorkHoursMaximum)
+            ? $"Enter {SyncSettings.WorkHoursMinimum} to {SyncSettings.WorkHoursMaximum} minutes for 7 am to 5 pm."
+            : !InRange(OffHoursIntervalBox, SyncSettings.OffHoursMinimum, SyncSettings.OffHoursMaximum)
+                ? $"Enter {SyncSettings.OffHoursMinimum} to {SyncSettings.OffHoursMaximum} minutes for other times."
+                : null);
         Show(TimeoutError, int.TryParse(TimeoutBox.Text.Trim(), out var timeout) && timeout is >= 30 and <= 1800
             ? null
             : "Enter 30 to 1800 seconds.");
@@ -145,6 +149,9 @@ public partial class SettingsPage : UserControl
         ErrorText.Text = valid ? "" : "Fix the fields marked in red to save.";
         return valid;
     }
+
+    private static bool InRange(TextBox box, int minimum, int maximum) =>
+        int.TryParse(box.Text.Trim(), out var value) && value >= minimum && value <= maximum;
 
     private FolderLayout Folders() => new()
     {
@@ -197,15 +204,24 @@ public partial class SettingsPage : UserControl
     /// <summary>Switches section without reloading the settings being edited.</summary>
     public void ShowSectionFromOutside(SettingsSection section)
     {
-        SectionList.SelectedItem = section == SettingsSection.Connections ? ConnectionsItem : GeneralItem;
+        SectionList.SelectedItem = ItemFor(section);
         ShowSection(section);
     }
+
+    private ListBoxItem ItemFor(SettingsSection section) => section switch
+    {
+        SettingsSection.Connections => ConnectionsItem,
+        SettingsSection.People => PeopleItem,
+        _ => GeneralItem
+    };
 
     private void Section_Changed(object sender, SelectionChangedEventArgs e)
     {
         if (SectionList.SelectedItem is not null)
         {
-            ShowSection(SectionList.SelectedItem == ConnectionsItem ? SettingsSection.Connections : SettingsSection.General);
+            ShowSection(SectionList.SelectedItem == ConnectionsItem ? SettingsSection.Connections
+                : SectionList.SelectedItem == PeopleItem ? SettingsSection.People
+                : SettingsSection.General);
         }
     }
 
@@ -213,15 +229,19 @@ public partial class SettingsPage : UserControl
     {
         if (section == SettingsSection.Connections && DataContext is MainViewModel model)
         {
-            CentralServerBox.Text = model.CentralServerText;
-            CentralServerBox.IsEnabled = !model.IsCentralServerLocked;
-            CentralTokenBox.Clear();
-            ShowCentralMessage(null);
+            WorkloadAddressBox.Text = model.WorkloadTrackerAddress;
+            WorkloadTokenBox.Clear();
+            ShowWorkloadMessage(null);
             SignOutMessage.Text = "";
         }
 
         GeneralPanel.Visibility = section == SettingsSection.General ? Visibility.Visible : Visibility.Collapsed;
         ConnectionsPanel.Visibility = section == SettingsSection.Connections ? Visibility.Visible : Visibility.Collapsed;
+        PeoplePanel.Visibility = section == SettingsSection.People ? Visibility.Visible : Visibility.Collapsed;
+        if (section == SettingsSection.People && DataContext is MainViewModel viewModel)
+        {
+            _ = PeoplePanel.OpenAsync(viewModel);
+        }
     }
 
     private void Back_Click(object sender, RoutedEventArgs e)
@@ -308,6 +328,31 @@ public partial class SettingsPage : UserControl
         }
     }
 
+    private async void ExportFixtures_Click(object sender, RoutedEventArgs e)
+    {
+        if (DataContext is not MainViewModel model)
+        {
+            return;
+        }
+
+        ErrorText.Text = "";
+        try
+        {
+            var (folder, problem) = await model.ExportWorkloadTrackerFixturesAsync();
+            if (folder is null)
+            {
+                ErrorText.Text = $"No fixtures exported: {problem}";
+                return;
+            }
+
+            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("explorer.exe", $"\"{folder}\"") { UseShellExecute = true });
+        }
+        catch (Exception error) when (error is System.IO.IOException or UnauthorizedAccessException or System.ComponentModel.Win32Exception)
+        {
+            ErrorText.Text = $"No fixtures exported: {error.Message}";
+        }
+    }
+
     private async void ClearBrowser_Click(object sender, RoutedEventArgs e) => await SignOutAsync(forgetPasswords: false);
 
     private async void ForgetBrowser_Click(object sender, RoutedEventArgs e) => await SignOutAsync(forgetPasswords: true);
@@ -363,7 +408,8 @@ public partial class SettingsPage : UserControl
         }
 
         int.TryParse(TimeoutBox.Text.Trim(), out var timeout);
-        int.TryParse(SyncIntervalBox.Text.Trim(), out var interval);
+        int.TryParse(WorkHoursIntervalBox.Text.Trim(), out var workHours);
+        int.TryParse(OffHoursIntervalBox.Text.Trim(), out var offHours);
         editing.Theme = SelectedTheme();
         editing.Folders = Folders();
         editing.Returned.WhenNoCompanyHolder = WhenNotHeldBox.IsChecked == true;
@@ -377,7 +423,8 @@ public partial class SettingsPage : UserControl
             TimeoutSeconds = timeout
         };
         editing.Sync.AutoSync = AutoSyncBox.IsChecked == true;
-        editing.Sync.IntervalMinutes = interval;
+        editing.Sync.WorkHoursIntervalMinutes = workHours;
+        editing.Sync.OffHoursIntervalMinutes = offHours;
 
         if (SaveRequested is not null)
         {
@@ -393,46 +440,79 @@ public partial class SettingsPage : UserControl
         SavedText.Visibility = Visibility.Visible;
     }
 
-    private void ShowCentralMessage(string? message)
+    private void ShowWorkloadMessage(string? message)
     {
-        CentralMessage.Text = message ?? "";
-        CentralMessage.Visibility = message is null ? Visibility.Collapsed : Visibility.Visible;
-        CentralStatus.Visibility = message is null ? Visibility.Visible : Visibility.Collapsed;
+        WorkloadMessage.Text = message ?? "";
+        WorkloadMessage.Visibility = message is null ? Visibility.Collapsed : Visibility.Visible;
+        WorkloadStatus.Visibility = message is null ? Visibility.Visible : Visibility.Collapsed;
     }
 
-    private async void SaveCentral_Click(object sender, RoutedEventArgs e)
-    {
-        if (DataContext is not MainViewModel model)
-        {
-            return;
-        }
-
-        var server = CentralServerBox.Text.Trim();
-        if (!model.IsCentralServerLocked && server.Length > 0 && !MainViewModel.IsValidCentralServer(server))
-        {
-            ShowCentralMessage("Enter the server's full address, starting with https://");
-            return;
-        }
-
-        ShowCentralMessage("Connecting…");
-        var problem = await model.ConnectCentralAsync(server, CentralTokenBox.Password);
-        CentralTokenBox.Clear();
-        CentralServerBox.Text = model.CentralServerText;
-        ShowCentralMessage(problem ?? "Connected: your data is shared every couple of minutes while CA Tracker is open.");
-    }
-
-    private async void ShareCentral_Click(object sender, RoutedEventArgs e)
+    /// <summary>Opens the tracker's Profile page in the built-in browser; it hands the token over when you press Connect CA Tracker.</summary>
+    private async void ConnectWorkload_Click(object sender, RoutedEventArgs e)
     {
         if (DataContext is not MainViewModel model)
         {
             return;
         }
 
-        ShowCentralMessage("Sharing…");
-        ShowCentralMessage(await model.ShareWithCentralAsync() ?? $"Shared. {model.CentralStatusText}");
+        var address = MainViewModel.NormalizeWorkloadTrackerAddress(WorkloadAddressBox.Text);
+        if (address is null)
+        {
+            ShowWorkloadMessage("Enter the Workload Tracker address, starting with https://");
+            return;
+        }
+
+        WorkloadAddressBox.Text = address;
+        var window = new WorkloadTrackerSignInWindow(address, model.Paths) { Owner = Window.GetWindow(this) };
+        if (window.ShowDialog() != true || window.Token is not { } token)
+        {
+            ShowWorkloadMessage("Not connected: the window closed before Workload Tracker handed over a token.");
+            return;
+        }
+
+        ShowWorkloadMessage("Connecting…");
+        var problem = await model.ConnectWorkloadTrackerAsync(address, token.Token, token.SessionId, token.ExpiresAt);
+        ShowWorkloadMessage(problem ?? "Connected: what CA Tracker reads is sent every minute while it is open.");
     }
 
-    private void DisconnectCentral_Click(object sender, RoutedEventArgs e)
+    private async void PasteWorkloadToken_Click(object sender, RoutedEventArgs e)
+    {
+        if (DataContext is not MainViewModel model)
+        {
+            return;
+        }
+
+        var address = MainViewModel.NormalizeWorkloadTrackerAddress(WorkloadAddressBox.Text);
+        if (address is null)
+        {
+            ShowWorkloadMessage("Enter the Workload Tracker address, starting with https://");
+            return;
+        }
+
+        if (WorkloadTokenBox.Password.Trim().Length == 0)
+        {
+            ShowWorkloadMessage("Paste the token from Workload Tracker first.");
+            return;
+        }
+
+        ShowWorkloadMessage("Connecting…");
+        var problem = await model.ConnectWorkloadTrackerAsync(address, WorkloadTokenBox.Password, null, null);
+        WorkloadTokenBox.Clear();
+        ShowWorkloadMessage(problem ?? "Connected: what CA Tracker reads is sent every minute while it is open. To disconnect this PC later, also revoke it under Active Sessions in Workload Tracker.");
+    }
+
+    private async void SendWorkload_Click(object sender, RoutedEventArgs e)
+    {
+        if (DataContext is not MainViewModel model)
+        {
+            return;
+        }
+
+        ShowWorkloadMessage("Sending…");
+        ShowWorkloadMessage(await model.SendToWorkloadTrackerAsync() ?? $"Sent. {model.WorkloadTrackerStatusText}");
+    }
+
+    private async void DisconnectWorkload_Click(object sender, RoutedEventArgs e)
     {
         if (DataContext is not MainViewModel model)
         {
@@ -441,15 +521,15 @@ public partial class SettingsPage : UserControl
 
         var answer = MessageBox.Show(
             Window.GetWindow(this),
-            $"Stop sharing with {model.CentralServerText}? Your data stays on this PC, and you can connect again later.",
+            $"Stop sending to {model.WorkloadTrackerAddress}? Everything stays on this PC, this PC's connection is revoked in Workload Tracker, and you can connect again later.",
             "Disconnect",
             MessageBoxButton.YesNo,
             MessageBoxImage.Question,
             MessageBoxResult.No);
         if (answer == MessageBoxResult.Yes)
         {
-            model.DisconnectCentral();
-            ShowCentralMessage("Disconnected. Everything stays on this PC until you connect again.");
+            await model.DisconnectWorkloadTrackerAsync();
+            ShowWorkloadMessage("Disconnected. Everything stays on this PC until you connect again.");
         }
     }
 

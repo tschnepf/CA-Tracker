@@ -177,14 +177,19 @@ public partial class SignInWindow : Window
     {
         string? name = null;
         string? company = null;
+        string? contactId = null;
+        string? email = null;
         if (root.TryGetProperty("user", out var user) && user.ValueKind == JsonValueKind.Object)
         {
             name = user.TryGetProperty("fullName", out var fullName) && fullName.ValueKind == JsonValueKind.String ? fullName.GetString() : null;
             company = user.TryGetProperty("company", out var companyElement) && companyElement.ValueKind == JsonValueKind.String ? companyElement.GetString() : null;
+            // Helix: the contact id is the person on every project. Procore's ids come with discovery.
+            contactId = user.TryGetProperty("contactId", out var contactElement) && contactElement.ValueKind == JsonValueKind.String ? contactElement.GetString() : null;
+            email = user.TryGetProperty("email", out var emailElement) && emailElement.ValueKind == JsonValueKind.String ? emailElement.GetString() : null;
         }
 
         var now = DateTimeOffset.Now;
-        store.RecordAccount(provider, name, company, now);
+        store.RecordAccount(provider, name, company, now, contactId, email);
 
         var projectCount = 0;
         if (root.TryGetProperty("catalog", out var catalogElement) && catalogElement.ValueKind == JsonValueKind.Object)
@@ -226,6 +231,8 @@ public partial class SignInWindow : Window
 
         if (ProviderSites.IsProcore(provider))
         {
+            // Procore's sign-in is session cookies: keep them, or the next start asks you to sign in again.
+            _ = ProcoreSignIn.KeepAsync(Browser.CoreWebView2);
             _ = FindProcoreProjectsAsync();
         }
     }
@@ -267,9 +274,10 @@ public partial class SignInWindow : Window
         var discovery = ProcoreSyncService.ParseDiscovery(root, siteHost);
         ProcoreSearchFinished = true;
         procoreSearching = false;
+        _ = ProcoreSignIn.KeepAsync(Browser.CoreWebView2);
         if (!string.IsNullOrWhiteSpace(discovery.UserName))
         {
-            store.RecordAccount(provider, discovery.UserName, null, DateTimeOffset.Now);
+            store.RecordAccount(provider, discovery.UserName, null, DateTimeOffset.Now, discovery.UserId, discovery.UserEmail);
         }
 
         SetStatus(discovery.ProjectCount > 0

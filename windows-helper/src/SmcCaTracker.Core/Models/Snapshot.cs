@@ -38,6 +38,10 @@ public sealed class SnapshotUser
     public string FullName { get; set; } = "";
     public string? CompanyId { get; set; }
     public string? Company { get; set; }
+
+    /// <summary>The provider's stable id for the person: Helix contact id, Procore user id.</summary>
+    public string? ProviderUserId { get; set; }
+    public string? Email { get; set; }
 }
 
 public sealed class SnapshotItem
@@ -80,6 +84,12 @@ public sealed class SnapshotHolder
 
     /// <summary>When the item reached this person (current holders only), if the site records it.</summary>
     public DateTimeOffset? Since { get; set; }
+
+    /// <summary>The provider's stable id for the person (Helix contact id, Procore user id), when the page gives one.</summary>
+    public string? ProviderUserId { get; set; }
+
+    /// <summary>The person's email, when the provider publishes it (Procore's login). Not relied on.</summary>
+    public string? Email { get; set; }
 }
 
 public static class Providers

@@ -1,6 +1,7 @@
 <UserControl x:Class="SmcCaTracker.App.Views.SettingsPage"
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
-             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:views="clr-namespace:SmcCaTracker.App.Views">
     <!-- Shown in place of the project list. DataContext is the main window's MainViewModel. -->
     <UserControl.Resources>
         <BooleanToVisibilityConverter x:Key="Visible" />
@@ -37,6 +38,13 @@
                         <StackPanel>
                             <TextBlock Text="Connections" FontWeight="SemiBold" />
                             <TextBlock Text="Helix, Procore and company server" FontSize="11.5"
+                                       Foreground="{DynamicResource TextSecondary}" TextWrapping="Wrap" />
+                        </StackPanel>
+                    </ListBoxItem>
+                    <ListBoxItem x:Name="PeopleItem" Padding="10,8" AutomationProperties.Name="People">
+                        <StackPanel>
+                            <TextBlock Text="People" FontWeight="SemiBold" />
+                            <TextBlock Text="Link Helix and Procore people to Workload Tracker people" FontSize="11.5"
                                        Foreground="{DynamicResource TextSecondary}" TextWrapping="Wrap" />
                         </StackPanel>
                     </ListBoxItem>
@@ -90,7 +98,7 @@
                             </Grid>
                             <TextBlock x:Name="FoldersError" Style="{StaticResource FieldError}" />
                             <TextBlock Style="{StaticResource Muted}" Margin="0,8,0,0" FontSize="12"
-                                       Text="Example: CA\RFIs\~Returned. Renaming here does not rename any folders on disk. A project can use its own names in Edit project → Folder names." />
+                                       Text="Example: CA\RFIs\~Returned. Renaming here does not rename any folders on disk. A project can use its own names in Project settings → Folder names." />
                         </StackPanel>
                     </Border>
 
@@ -99,7 +107,7 @@
                         <StackPanel>
                             <TextBlock Text="WHEN IS AN ITEM RETURNED?" Style="{StaticResource SectionTitle}" />
                             <TextBlock Style="{StaticResource Muted}" FontSize="12" Margin="0,0,0,8"
-                                       Text="For every project. Each project's company is chosen in Edit project." />
+                                       Text="For every project. Each project's company is chosen in Project settings." />
                             <CheckBox x:Name="WhenNotHeldBox" Content="No one from your company holds it (default)" Margin="0,0,0,6" />
                             <CheckBox x:Name="WhenClosedBox" Content="It is closed, complete, or voided" Margin="0,0,0,6" />
                             <CheckBox x:Name="WhenComingUpBox" Content="Also when your company only has a review step coming up later" Margin="0,0,0,10" />
@@ -132,11 +140,27 @@
                             <TextBlock Style="{StaticResource Muted}" TextWrapping="Wrap" Margin="0,0,0,10"
                                        Text="Helix and Procore are read in the background with your sign-in from Connections. Every Procore project you can see is found by itself; right-click a project to stop syncing it." />
                             <CheckBox x:Name="AutoSyncBox" Content="Keep Helix and Procore projects up to date in the background" Margin="0,0,0,8" />
-                            <StackPanel Orientation="Horizontal" Margin="24,0,0,0">
-                                <TextBlock Text="Every" VerticalAlignment="Center" Margin="0,0,8,0" />
-                                <TextBox x:Name="SyncIntervalBox" Width="60" AutomationProperties.Name="Sync every how many minutes" />
-                                <TextBlock Text="minutes (5–240; only changed items are read)" VerticalAlignment="Center" Margin="8,0,0,0" />
-                            </StackPanel>
+                            <Grid Margin="24,0,0,0">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                </Grid.RowDefinitions>
+                                <TextBlock Text="7 am to 5 pm: every" VerticalAlignment="Center" Margin="0,0,8,0" />
+                                <TextBox x:Name="WorkHoursIntervalBox" Grid.Column="1" Width="60"
+                                         AutomationProperties.Name="From 7 am to 5 pm, sync every how many minutes" />
+                                <TextBlock Grid.Column="2" Text="minutes (15–240)" VerticalAlignment="Center" Margin="8,0,0,0" />
+                                <TextBlock Grid.Row="1" Text="Other weekday times: every" VerticalAlignment="Center" Margin="0,8,8,0" />
+                                <TextBox x:Name="OffHoursIntervalBox" Grid.Row="1" Grid.Column="1" Width="60" Margin="0,8,0,0"
+                                         AutomationProperties.Name="At other weekday times, sync every how many minutes" />
+                                <TextBlock Grid.Row="1" Grid.Column="2" Text="minutes (30–720)" VerticalAlignment="Center" Margin="8,8,0,0" />
+                            </Grid>
+                            <TextBlock Style="{StaticResource Muted}" TextWrapping="Wrap" Margin="24,6,0,0"
+                                       Text="Nothing syncs by itself on Saturdays and Sundays; Sync all still works. Only changed items are read. Procore projects are read in full once a week, and sooner when Procore's item counts show something was removed." />
                             <TextBlock x:Name="IntervalError" Style="{StaticResource FieldError}" Margin="24,4,0,0" />
 
                             <TextBlock Text="WHEN PROCORE NEEDS THE BROWSER WINDOW" Style="{StaticResource SectionTitle}" Margin="0,16,0,6" />
@@ -160,11 +184,18 @@
                                            Text="Timings and errors, one file per day. Send today's file along when something is slow or fails." />
                             </DockPanel>
                             <Expander Header="Developer tools" Margin="0,12,0,0" Foreground="{DynamicResource TextSecondary}">
-                                <DockPanel Margin="0,8,0,0">
-                                    <Button DockPanel.Dock="Left" Content="Export a Helix test sample" Click="ExportSample_Click" VerticalAlignment="Center" />
-                                    <TextBlock Style="{StaticResource Muted}" FontSize="12" Margin="12,0,0,0" VerticalAlignment="Center"
-                                               Text="Saves an anonymized copy of the selected Helix project's items (names, companies and titles replaced), so a wrong ball-in-court result can become a test case." />
-                                </DockPanel>
+                                <StackPanel Margin="0,8,0,0">
+                                    <DockPanel>
+                                        <Button DockPanel.Dock="Left" Content="Export a Helix test sample" Click="ExportSample_Click" VerticalAlignment="Center" />
+                                        <TextBlock Style="{StaticResource Muted}" FontSize="12" Margin="12,0,0,0" VerticalAlignment="Center"
+                                                   Text="Saves an anonymized copy of the selected Helix project's items (names, companies and titles replaced), so a wrong ball-in-court result can become a test case." />
+                                    </DockPanel>
+                                    <DockPanel Margin="0,8,0,0">
+                                        <Button DockPanel.Dock="Left" Content="Export Workload Tracker fixtures" Click="ExportFixtures_Click" VerticalAlignment="Center" />
+                                        <TextBlock Style="{StaticResource Muted}" FontSize="12" Margin="12,0,0,0" VerticalAlignment="Center"
+                                                   Text="Saves anonymized observations of every Helix and Procore project's items, as Workload Tracker would receive them (people, companies, emails, titles, ids and links replaced), as test fixtures for the Workload Tracker connection." />
+                                    </DockPanel>
+                                </StackPanel>
                             </Expander>
                         </StackPanel>
                     </Border>
@@ -266,12 +297,12 @@
                     </DockPanel>
                 </Border>
 
-                <!-- Company server (optional) -->
+                <!-- Workload Tracker (optional) -->
                 <Border Style="{StaticResource Card}" Margin="0,0,0,14">
                     <StackPanel>
-                        <TextBlock Text="COMPANY SERVER (OPTIONAL)" Style="{StaticResource SectionTitle}" />
+                        <TextBlock Text="WORKLOAD TRACKER (OPTIONAL)" Style="{StaticResource SectionTitle}" />
                         <TextBlock Style="{StaticResource Muted}" TextWrapping="Wrap" Margin="0,0,0,10"
-                                   Text="With your company's CA Tracker server, everyone shares what they read from Helix and Procore and the discipline choices made for each project. Your CA folder locations stay on this PC. Without it, everything stays on this PC." />
+                                   Text="Connected to your company's Workload Tracker, CA Tracker sends what it reads from Helix and Procore: item numbers, titles, statuses, due dates and who holds each item, never files or attachments. Items then show on people's My Work. Without it, everything stays on this PC." />
                         <Grid Margin="0,0,0,8" MaxWidth="720" HorizontalAlignment="Left">
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="120" />
@@ -280,30 +311,36 @@
                             <Grid.RowDefinitions>
                                 <RowDefinition Height="Auto" />
                                 <RowDefinition Height="Auto" />
-                                <RowDefinition Height="Auto" />
-                                <RowDefinition Height="Auto" />
                             </Grid.RowDefinitions>
-                            <TextBlock Text="Server address" VerticalAlignment="Center" />
-                            <TextBox x:Name="CentralServerBox" Grid.Column="1" AutomationProperties.Name="Server address" />
+                            <TextBlock Text="Address" VerticalAlignment="Center" />
+                            <TextBox x:Name="WorkloadAddressBox" Grid.Column="1" AutomationProperties.Name="Workload Tracker address" />
                             <TextBlock Grid.Row="1" Grid.Column="1" Style="{StaticResource Muted}" FontSize="12" Margin="0,2,0,6"
                                        Text="For example https://workload.yourcompany.com" />
-                            <TextBlock Grid.Row="2" Text="Access token" VerticalAlignment="Center" />
-                            <PasswordBox x:Name="CentralTokenBox" Grid.Row="2" Grid.Column="1" AutomationProperties.Name="Access token" />
-                            <TextBlock Grid.Row="3" Grid.Column="1" Style="{StaticResource Muted}" FontSize="12" Margin="0,2,0,0" TextWrapping="Wrap"
-                                       Text="From the server's administrator. Leave it empty to keep the token already saved; it is stored encrypted for your Windows user." />
                         </Grid>
                         <StackPanel Orientation="Horizontal">
-                            <Button Content="Save and connect" Click="SaveCentral_Click" Margin="0,0,8,0" />
-                            <Button Content="Share now" Click="ShareCentral_Click" Margin="0,0,8,0" IsEnabled="{Binding IsCentralSetUp}" />
-                            <Button Content="Disconnect…" Click="DisconnectCentral_Click" IsEnabled="{Binding IsCentralSetUp}" />
+                            <Button Content="Connect…" Click="ConnectWorkload_Click" Margin="0,0,8,0" />
+                            <Button Content="Send now" Click="SendWorkload_Click" Margin="0,0,8,0" IsEnabled="{Binding IsWorkloadTrackerPaired}" />
+                            <Button Content="Disconnect…" Click="DisconnectWorkload_Click" IsEnabled="{Binding IsWorkloadTrackerPaired}" />
                         </StackPanel>
-                        <!-- One status line: what just happened, or else how sharing stands. -->
-                        <TextBlock x:Name="CentralStatus" Text="{Binding CentralStatusText}" Margin="0,8,0,0" TextWrapping="Wrap" />
-                        <TextBlock x:Name="CentralMessage" Foreground="{DynamicResource AccentBrush}" Margin="0,8,0,0" TextWrapping="Wrap"
+                        <Expander Header="Paste a token instead" Margin="0,10,0,0" Foreground="{DynamicResource TextSecondary}">
+                            <StackPanel Margin="0,8,0,0" MaxWidth="720" HorizontalAlignment="Left">
+                                <TextBlock Style="{StaticResource Muted}" FontSize="12" TextWrapping="Wrap" Margin="0,0,0,6"
+                                           Text="If the sign-in window can't hand the token over: in Workload Tracker open Profile, CA Tracker, press Connect CA Tracker, copy the token and paste it here." />
+                                <DockPanel>
+                                    <Button DockPanel.Dock="Right" Content="Connect with this token" Click="PasteWorkloadToken_Click" Margin="8,0,0,0" />
+                                    <PasswordBox x:Name="WorkloadTokenBox" AutomationProperties.Name="Workload Tracker token" />
+                                </DockPanel>
+                            </StackPanel>
+                        </Expander>
+                        <!-- One status line: what just happened, or else how sending stands. -->
+                        <TextBlock x:Name="WorkloadStatus" Text="{Binding WorkloadTrackerStatusText}" Margin="0,8,0,0" TextWrapping="Wrap" />
+                        <TextBlock x:Name="WorkloadMessage" Foreground="{DynamicResource AccentBrush}" Margin="0,8,0,0" TextWrapping="Wrap"
                                    Visibility="Collapsed" />
                     </StackPanel>
                 </Border>
             </StackPanel>
         </ScrollViewer>
+        <!-- People: links between Helix/Procore people and Workload Tracker people -->
+        <views:PeoplePanel x:Name="PeoplePanel" Grid.Column="2" Visibility="Collapsed" />
     </Grid>
 </UserControl>

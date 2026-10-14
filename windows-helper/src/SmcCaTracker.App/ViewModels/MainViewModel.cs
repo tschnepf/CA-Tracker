@@ -4,7 +4,6 @@ using System.Net.Http;
 using System.Text.Json;
 using System.Windows.Threading;
 using SmcCaTracker.App.Services;
-using SmcCaTracker.Core.Central;
 using SmcCaTracker.Core.Comparison;
 using SmcCaTracker.Core.Operations;
 using SmcCaTracker.Core.Data;
@@ -15,6 +14,7 @@ using SmcCaTracker.Core.Procore;
 using SmcCaTracker.Core.Refresh;
 using SmcCaTracker.Core.Storage;
 using SmcCaTracker.Core.Updates;
+using SmcCaTracker.Core.WorkloadTracker;
 
 namespace SmcCaTracker.App.ViewModels;
 
@@ -74,7 +74,7 @@ public static class Filters
 /// nothing on screen waits on the disk, the Egnyte drive or Helix. Reading and comparing never
 /// changes a CA folder; every change goes through an OperationPlan that the window previews first.
 /// </summary>
-public sealed class MainViewModel : ObservableObject, IDisposable
+public sealed partial class MainViewModel : ObservableObject, IDisposable
 {
     private readonly TrackerStore store;
     private readonly FolderIndex folderIndex;
@@ -112,6 +112,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     private int settingsVersion;
     private bool catalogChanged;
     private bool accountsChanged;
+    private bool assignmentsChanged;
     private int folderTicks;
     private bool folderCheckRunning;
     private bool autoSyncRunning;
@@ -125,6 +126,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     private string sortBy = ItemSorts.Number;
     private string disciplineFilter = "";
     private bool isBusy;
+    private bool busyShown;
     private string statusMessage = "";
     private string refreshMessage = "";
     private bool refreshMessageIsError;
@@ -168,6 +170,13 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         {
             viewStateTimer.Stop();
             SaveViewState();
+        };
+
+        busyShowDelay.Tick += (_, _) =>
+        {
+            busyShowDelay.Stop();
+            busyShown = isBusy;
+            OnStatusChanged();
         };
 
         badgeTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(400) };
@@ -216,11 +225,13 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         folderTimer.Tick += async (_, _) => await RunTimerAsync("folder check", CheckFoldersAsync);
         folderTimer.Start();
 
-        // Helix: tracked projects are read in the background every few minutes (changes only).
+        // Helix and Procore: projects are read in the background (changes only) on weekdays, hourly from
+        // 7 am to 5 pm and every three hours at other times (Settings → Background sync), and once soon
+        // after start. Not on Saturdays and Sundays.
         autoSyncTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(30) };
         autoSyncTimer.Tick += async (_, _) => await RunTimerAsync("automatic sync", AutoSyncAsync);
         autoSyncTimer.Start();
-        lastAutoSync = DateTimeOffset.Now - TimeSpan.FromMinutes(Settings.Sync.IntervalMinutes) + TimeSpan.FromSeconds(20);
+        lastAutoSync = DateTimeOffset.Now - Settings.Sync.IntervalAt(DateTime.Now) + TimeSpan.FromSeconds(20);
 
         LoadProjects();
         RefreshAccounts();
@@ -379,7 +390,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     /// A banner under the header while Helix or Procore needs you to sign in (its sign-in expired, or you
     /// signed out while its projects are still listed), so a sync doesn't just look like it failed.
     /// </summary>
-    public bool ShowSignInBanner => !signInBannerDismissed && Connections.Any(connection => connection.WantsSignIn);
+    public bool ShowSignInBanner => !signInBannerDismissed && (Connections.Any(connection => connection.WantsSignIn) || WorkloadTrackerNeedsConnect);
 
     public string SignInBannerText
     {
@@ -387,9 +398,12 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         {
             var sites = Connections.Where(connection => connection.WantsSignIn).ToList();
             var names = string.Join(" and ", sites.Select(site => site.Label));
-            return sites.Count == 0 ? ""
+            var text = sites.Count == 0 ? ""
                 : sites.All(site => site.NeedsSignIn) ? $"Your {names} sign-in has expired. Sign in again to keep your projects up to date."
                 : $"Sign in to {names} to keep your projects up to date.";
+            return WorkloadTrackerNeedsConnect
+                ? $"{text} Workload Tracker needs you to connect again to keep sending.".Trim()
+                : text;
         }
     }
 
@@ -536,7 +550,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
 
     /// <summary>
     /// Archives or unarchives projects for you only: they leave your list and stop syncing. Nothing
-    /// changes in Helix, Procore or on the company server (this is kept with your view on this PC).
+    /// changes in Helix or Procore (this is kept with your view on this PC).
     /// </summary>
     public void SetArchived(IEnumerable<ProjectViewModel> projects, bool archive)
     {
@@ -688,7 +702,9 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     public bool CanShowMyWork => YourNames().Count > 0;
 
     public string MyWorkToolTip => CanShowMyWork
-        ? "Your open items in every linked project, by when they're due"
+        ? Settings.WorkloadTracker is { IsPaired: true, PersonId: not null }
+            ? "Your open items in every linked project (in your court, or assigned to you in Workload Tracker), by when they're due"
+            : "Your open items in every linked project, by when they're due"
         : "Sign in to Helix or Procore (Settings → Connections) so CA Tracker knows your name";
 
     private int myWorkOpen;
@@ -769,7 +785,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
             .SelectMany(project => badgeSources.TryGetValue(project.Id, out var source) ? source.Rows : new List<RowViewModel>())
             .Where(row => row.Row.Item is { Closed: false })
             .ToList();
-        var mine = open.Where(row => row.HolderNames.Any(you.Contains)).ToList();
+        var mine = open.Where(row => row.HolderNames.Any(you.Contains) || row.IsAssignedToMe).ToList();
         myWorkOpen = mine.Count;
         myWorkOverdue = mine.Count(row => row.IsOverdue);
         allOverdue = open.Count(row => row.IsOverdue);
@@ -1387,12 +1403,15 @@ public sealed class MainViewModel : ObservableObject, IDisposable
                 var key = row.Row.Folder is not null
                     ? Disciplines.Key(row.Row.ItemType, row.Row.Folder.Name)
                     : Disciplines.ItemKey(row.Row.ItemType, row.Row.Item!.ItemId);
-                // Back to detecting: kept as an empty choice (not removed) so the company server shares it too.
+                // Back to detecting: kept as an empty choice (not removed).
                 edited.Disciplines[key] = code ?? "";
             }
 
             await UpdateProjectAsync(edited);
         }
+
+        // Workload Tracker's lists show the discipline too: send it now rather than at the next round.
+        SendToWorkloadTrackerSoon();
     }
 
     public bool IsBusy
@@ -1402,7 +1421,14 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         {
             if (Set(ref isBusy, value))
             {
-                OnPropertyChanged(nameof(HasFooter));
+                busyShown = false;
+                busyShowDelay.Stop();
+                if (value)
+                {
+                    busyShowDelay.Start();
+                }
+
+                OnStatusChanged();
             }
         }
     }
@@ -1414,13 +1440,35 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         {
             if (Set(ref statusMessage, value ?? ""))
             {
-                OnPropertyChanged(nameof(HasFooter));
+                OnStatusChanged();
             }
         }
     }
 
-    /// <summary>The footer shows only while there is a message or work going on.</summary>
-    public bool HasFooter => statusMessage.Length > 0 || isBusy;
+    // Work that ends this quickly (most reads from the saved folder lists) never shows in the status bar.
+    private readonly DispatcherTimer busyShowDelay = new() { Interval = TimeSpan.FromMilliseconds(300) };
+
+    /// <summary>The app's own status shows: work going on once it has taken a moment, or a message.</summary>
+    private bool ShowsOwnStatus => isBusy ? busyShown : statusMessage.Length > 0;
+
+    /// <summary>
+    /// The status bar's text: what the app is doing ("Reading 3 projects…") once it has taken a moment, or
+    /// its last message; otherwise how syncing the shown project went. The bar is always there, so this
+    /// changing never moves the page.
+    /// </summary>
+    public string StatusText => ShowsOwnStatus ? (statusMessage.Length > 0 ? statusMessage : "Working…") : refreshMessage;
+
+    public bool HasStatusText => StatusText.Length > 0;
+
+    /// <summary>The shown project's sync failed (said in the status bar's text).</summary>
+    public bool StatusIsError => !ShowsOwnStatus && refreshMessageIsError && refreshMessage.Length > 0;
+
+    private void OnStatusChanged()
+    {
+        OnPropertyChanged(nameof(StatusText));
+        OnPropertyChanged(nameof(HasStatusText));
+        OnPropertyChanged(nameof(StatusIsError));
+    }
 
     /// <summary>Helix and Procore, for the Connections settings page, the sign-in banner and Sync all.</summary>
     public ObservableCollection<ConnectionViewModel> Connections { get; } = new(
@@ -1722,7 +1770,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
             store.MergeCatalog(catalog, now, replace: complete && catalog.Projects.Count > 0);
             if (!string.IsNullOrWhiteSpace(discovery.UserName))
             {
-                store.RecordAccount(Providers.Procore, discovery.UserName, null, now);
+                store.RecordAccount(Providers.Procore, discovery.UserName, null, now, discovery.UserId, discovery.UserEmail);
             }
 
             Settings.Procore.LastDiscoveredAt = now;
@@ -2256,10 +2304,6 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         ? ""
         : $"CA folder rescanned {Formatting.When(comparison.ComparedAt)}";
 
-    public string RefreshMessage => refreshMessage;
-    public bool HasRefreshMessage => refreshMessage.Length > 0;
-    public bool RefreshMessageIsError => refreshMessageIsError;
-
     public string ProjectSubtitle
     {
         get
@@ -2308,7 +2352,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
 
             if (!comparison.Company.IsKnown)
             {
-                return "Returned: closed items only until your company is known (sync, or choose it in Edit project).";
+                return "Returned: closed items only until your company is known (sync, or choose it in Project settings).";
             }
 
             var rule = Settings.Returned;
@@ -2366,7 +2410,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     /// <summary>The CA folder and link (Details) describe one project, so they hide when several are shown.</summary>
     public bool CanShowProjectDetails => HasProject && !IsMultiProject;
 
-    /// <summary>Edit project / Choose CA folder acts on one project: hidden while several are shown (My work, Ctrl-click).</summary>
+    /// <summary>Project settings acts on one project: hidden while several are shown (My work, Ctrl-click).</summary>
     public bool CanEditProject => HasProject && !IsMultiProject;
 
     // ---- The header's counts by when items are due (each a quick Due filter) ----------------
@@ -2421,7 +2465,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
 
     /// <summary>
     /// Counts folders and items that say neither BB nor TFO as the selected project's part (the "Also
-    /// include…" box in Edit project). Only the tracker's settings change.
+    /// include…" box in Project settings). Only the tracker's settings change.
     /// </summary>
     public async Task IncludeUnlabeledAsync()
     {
@@ -2455,7 +2499,6 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     /// <summary>The selected project is a Helix/Procore project with no CA folder chosen yet.</summary>
     public bool IsPlaceholder => SelectedProject?.IsPlaceholder == true;
     public bool CanEditConnection => HasProject && !IsPlaceholder;
-    public string EditButtonText => IsPlaceholder ? "Choose CA folder…" : "Edit project…";
 
     public bool CanCreateTypeFolders => comparison is not null
         && HasCaFolder
@@ -2466,8 +2509,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     public string BothTabText => TabText(ItemTypeChoices.Both);
 
     public string EmptyText => !HasProject ? ""
-        : IsPlaceholder && Rows.Count == 0 ? "Select Choose CA folder… to track this project's RFIs and Submittals against its CA folder."
-        : !HasCaFolder && Rows.Count == 0 ? "Choose this project's CA folder in Edit project."
+        : !HasCaFolder && Rows.Count == 0 ? "Choose this project's CA folder in Project settings."
         : !IsConnected && Rows.Count == 0 ? "Link this project to its Helix or Procore project (Link… above), then Sync, to compare its items."
         : Rows.Count == 0 && HasItemSearch ? SearchEmptyText()
         : Rows.Count == 0 && IsFiling ? Filter switch
@@ -2554,7 +2596,8 @@ public sealed class MainViewModel : ObservableObject, IDisposable
                      nameof(CheckedCount), nameof(HasChecks), nameof(SelectionText), nameof(AllShownChecked),
                      nameof(CanMarkReturned), nameof(MarkReturnedText), nameof(CanMoveBack), nameof(MoveBackText),
                      nameof(CanSetDiscipline), nameof(SetDisciplineText), nameof(CanDownloadChecked), nameof(DownloadCheckedText),
-                     nameof(VerifyCheckedText), nameof(MarkReturnedToolTip), nameof(ShowActionBar)
+                     nameof(VerifyCheckedText), nameof(MarkReturnedToolTip), nameof(ShowActionBar),
+                     nameof(CanAssignChecked), nameof(AssignCheckedText)
                  })
         {
             OnPropertyChanged(name);
@@ -2631,31 +2674,20 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     public IReadOnlyList<RowViewModel> CheckedRows() => allRows.Where(row => row.IsChecked).ToList();
 
     /// <summary>
-    /// What the Download button needs for a row: the Helix item, and where its files go by default
+    /// What the Download button needs for a row: the Helix or Procore item, and where its files go by default
     /// (its matched folder, else a new "&lt;number&gt; - &lt;name&gt;" folder in the project's RFI/Submittal folder).
-    /// Null when the item can't be downloaded (not Helix, or no item).
+    /// Null when the row has no item (a folder only) or its project isn't connected.
     /// </summary>
     public DownloadRequest? DownloadRequestFor(RowViewModel row)
     {
         var project = row.Project.Project;
         var item = row.Row.Item;
-        if (project?.Connection is null || item is null
-            || !string.Equals(project.Connection.Provider, Providers.Helix, StringComparison.OrdinalIgnoreCase))
+        if (project?.Connection is null || item is null)
         {
             return null;
         }
 
-        string? parent = null;
-        if (!string.IsNullOrWhiteSpace(project.CaFolder)
-            && row.Comparison.For(row.Row.ItemType).Scan is { Error: null } scan && scan.TypeFolderPath.Length > 0)
-        {
-            // Into the matching discipline and BB/TFO folders when the project is organised that way
-            // (e.g. Submittals\Elec\BB); otherwise the RFI/Submittal folder itself. The discipline is
-            // the one set by hand for the item, else the one detected from its title.
-            var phase = project.Scope is { IsSplit: true } scope ? scope.Phase : (ProjectPhase?)null;
-            parent = FolderScanner.SuggestParent(scan.TypeFolderPath, row.Row.Discipline, phase);
-        }
-
+        var parent = NewFolderParent(row);
         var projectName = !string.IsNullOrWhiteSpace(project.Connection.ProjectName)
             ? project.Connection.ProjectName
             : row.Project.Snapshot?.ProjectName ?? "";
@@ -2666,9 +2698,81 @@ public sealed class MainViewModel : ObservableObject, IDisposable
             && row.Comparison.For(row.Row.ItemType).Scan is { Error: null } typeScan
                 ? OperationPlanner.ActiveDestination(folder, typeScan)
                 : null;
-        return new DownloadRequest(item.ItemType, item.ItemId, project.Connection.ProjectId, item.Number, item.Title,
-            projectName, row.Row.Folder?.FullPath, parent, moveBackTo);
+        return new DownloadRequest(project.Connection.Provider, item.ItemType, item.ItemId, project.Connection.ProjectId, item.Number, item.Title,
+            projectName, row.Row.Folder?.FullPath, parent, moveBackTo,
+            string.IsNullOrWhiteSpace(project.Connection.AccountId) ? null : project.Connection.AccountId,
+            string.IsNullOrWhiteSpace(project.Connection.Host) ? null : project.Connection.Host,
+            row.Row.Discipline?.Label, row.Row.DisciplineSource);
     }
+
+    /// <summary>
+    /// Where the row's item folder is or will be (Open parent folder): the folder its folder is in, or for an item
+    /// with no folder yet the one Download makes it in. Null when its project has no CA folder or its RFI/Submittal
+    /// folder couldn't be listed.
+    /// </summary>
+    public string? ParentFolderFor(RowViewModel row) => row.Row.Folder is { } folder
+        ? Path.GetDirectoryName(Path.TrimEndingDirectorySeparator(folder.FullPath))
+        : NewFolderParent(row);
+
+    /// <summary>
+    /// What a row's Open parent folder opens: <see cref="ParentFolderFor"/>, or when that isn't there yet (a discipline
+    /// folder Download would make, a new "Elec"), the nearest folder above it, with a note for the status bar saying so.
+    /// No folder: the note says why (shown as a message).
+    /// </summary>
+    public (string? Folder, string? Note) ParentFolderToOpen(RowViewModel row)
+    {
+        if (ParentFolderFor(row) is not { } parent)
+        {
+            return (null, $"The {row.TypeLabel} folder couldn't be listed, so where its folder goes isn't known. Try Rescan folder.");
+        }
+
+        var existing = parent;
+        while (!Directory.Exists(existing) && Path.GetDirectoryName(existing) is { } up)
+        {
+            existing = up;
+        }
+
+        if (!Directory.Exists(existing))
+        {
+            return (null, $"{parent} can't be found. Check that the CA folder's drive is connected.");
+        }
+
+        if (string.Equals(Path.TrimEndingDirectorySeparator(existing), Path.TrimEndingDirectorySeparator(parent), StringComparison.OrdinalIgnoreCase))
+        {
+            return (parent, null);
+        }
+
+        var name = Path.GetFileName(Path.TrimEndingDirectorySeparator(existing));
+        return (existing, $"Its folder goes in {Path.GetRelativePath(existing, parent)}, which isn't in {name} yet (Download makes it), so {name} opened.");
+    }
+
+    /// <summary>
+    /// Where Download makes a new "&lt;number&gt; - &lt;name&gt;" folder for the row's item: into the matching discipline
+    /// and BB/TFO folders when the project is organised that way (e.g. Submittals\Elec\BB), otherwise the RFI/Submittal
+    /// folder itself. The discipline is the one set by hand for the item, else the one detected from its title. A
+    /// discipline folder that isn't there yet (a new "Elec") is made when files are downloaded.
+    /// </summary>
+    private static string? NewFolderParent(RowViewModel row)
+    {
+        var project = row.Project.Project;
+        if (string.IsNullOrWhiteSpace(project.CaFolder)
+            || row.Comparison.For(row.Row.ItemType).Scan is not { Error: null } scan || scan.TypeFolderPath.Length == 0)
+        {
+            return null;
+        }
+
+        var phase = project.Scope is { IsSplit: true } scope ? scope.Phase : (ProjectPhase?)null;
+        return FolderScanner.SuggestParent(scan.TypeFolderPath, row.Row.Discipline, phase);
+    }
+
+    /// <summary>The row of the item a download window lists, while its project is shown.</summary>
+    public RowViewModel? RowForDownload(DownloadRequest request) => allRows.FirstOrDefault(row =>
+        row.Row.Item is { } item
+        && item.ItemId == request.ItemId
+        && string.Equals(item.ItemType, request.ItemType, StringComparison.OrdinalIgnoreCase)
+        && row.Project.Project.Connection is { } connection
+        && connection.ProjectId == request.ProjectId
+        && string.Equals(connection.Provider, request.Provider, StringComparison.OrdinalIgnoreCase));
 
     public IReadOnlyList<CatalogProject> KnownProviderProjects() => store.CatalogWithSnapshots();
 
@@ -2713,7 +2817,9 @@ public sealed class MainViewModel : ObservableObject, IDisposable
 
         var ids = Settings.Projects.Select(project => project.Id).ToHashSet();
         AddProviderProjects(existing, ids);
-        foreach (var stale in Projects.Where(project => !ids.Contains(project.Id)).ToList())
+        var gone = Projects.Where(project => !ids.Contains(project.Id)).ToList();
+        HandOverSelection(gone);
+        foreach (var stale in gone)
         {
             Projects.Remove(stale);
             selectedProjects.Remove(stale);
@@ -2802,6 +2908,28 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     }
 
     /// <summary>
+    /// A selected Helix/Procore project that was just set up leaves the list: the project now linked to it
+    /// takes its place in the selection before it goes, so the header (and an open Project settings) stay
+    /// on it rather than losing the selection.
+    /// </summary>
+    private void HandOverSelection(IReadOnlyCollection<ProjectViewModel> leaving)
+    {
+        ProjectViewModel? SetUpAs(ProjectViewModel project) => project.IsPlaceholder && leaving.Contains(project)
+            ? Projects.FirstOrDefault(candidate => !candidate.IsPlaceholder
+                && string.Equals(candidate.ProviderArchiveKey, project.ProviderArchiveKey, StringComparison.OrdinalIgnoreCase))
+            : null;
+
+        if (!selectedProjects.Any(project => SetUpAs(project) is not null))
+        {
+            return;
+        }
+
+        var primary = selectedProject is null ? null : SetUpAs(selectedProject) ?? selectedProject;
+        SetSelectedProjects(selectedProjects.Select(project => SetUpAs(project) ?? project).Where(project => !leaving.Contains(project)).ToList(),
+            primary);
+    }
+
+    /// <summary>
     /// A tracked project is archived and favorited by its own id, a project without a CA folder by its
     /// Helix/Procore project (see <see cref="ProjectViewModel.ArchiveKey"/>). A mark under the
     /// Helix/Procore key — from before 3.1, or set before the CA folder was chosen — moves to each tracked
@@ -2853,7 +2981,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     {
         if (ProjectViewModel.IsPlaceholderId(edited.Id))
         {
-            // Not a tracker project yet: it is saved only once its CA folder is chosen.
+            // Not a tracker project: Project settings saves a new one in its place.
             return;
         }
 
@@ -3224,9 +3352,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     {
         refreshMessage = message;
         refreshMessageIsError = isError;
-        OnPropertyChanged(nameof(RefreshMessage));
-        OnPropertyChanged(nameof(HasRefreshMessage));
-        OnPropertyChanged(nameof(RefreshMessageIsError));
+        OnStatusChanged();
 
         // How a sync went fades after a while (the times above the list keep it); progress and errors stay.
         refreshMessageHide.Stop();
@@ -3318,6 +3444,8 @@ public sealed class MainViewModel : ObservableObject, IDisposable
                 view.Compared = hasFolder;
             }
 
+            ReadAssignmentIndexes();
+            ApplyAssignments(rows);
             allRows = rows;
             comparison = SelectedProject is not null && comparisons.TryGetValue(SelectedProject.Id, out var primary) ? primary : null;
             RebuildPersonOptions();
@@ -3369,6 +3497,58 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         }
 
         await CompareAsync();
+    }
+
+    /// <summary>
+    /// A row's Rescan folder: lists its RFI or Submittal folder again now (after a folder was made, renamed or
+    /// moved in Explorer), compares, and says in the status bar where the item's folder is now.
+    /// </summary>
+    public async Task RescanFolderAsync(RowViewModel row)
+    {
+        if (!row.CanRescanFolder)
+        {
+            return;
+        }
+
+        var projectId = row.Project.Id;
+        var tracked = row.Project.Project;
+        var itemType = row.Row.ItemType;
+        var itemId = row.Row.Item?.ItemId;
+        var folderPath = row.Row.Folder?.FullPath;
+        var typeFolder = $"{row.TypeLabel} folder";
+        var layout = tracked.EffectiveFolders(Settings.Folders);
+        IsBusy = true;
+        StatusMessage = $"Rescanning the {typeFolder}…";
+        TypeFolderScan scan;
+        try
+        {
+            scan = await Task.Run(() => folderIndex.Rescan(tracked, itemType, layout));
+        }
+        catch (Exception error)
+        {
+            AppLog.Error("folders", "Rescanning a CA folder failed", error);
+            scan = new TypeFolderScan { ItemType = itemType, Error = error.Message };
+        }
+
+        await CompareAsync();
+        if (scan.Error is { Length: > 0 } problem)
+        {
+            SetRefreshMessage($"Couldn't rescan the {typeFolder}: {problem}", true);
+            return;
+        }
+
+        // The rows were rebuilt: find this one again (an item by its id; a folder with no item by its path).
+        var now = allRows.FirstOrDefault(other => other.Project.Id == projectId && other.Row.ItemType == itemType
+            && (itemId is not null
+                ? other.Row.Item?.ItemId == itemId
+                : string.Equals(other.Row.Folder?.FullPath, folderPath, StringComparison.OrdinalIgnoreCase)));
+        SetRefreshMessage(now switch
+        {
+            null when itemId is null => $"{typeFolder} rescanned: {Path.GetFileName(folderPath)} isn't there any more.",
+            { HasItem: true, HasFolder: true } => $"{typeFolder} rescanned: {now.TypeSingular} {now.Number} is in {now.FolderPathText}.",
+            { HasItem: true } => $"{typeFolder} rescanned: {now.TypeSingular} {now.Number} has no folder yet.",
+            _ => $"{typeFolder} rescanned."
+        }, false);
     }
 
     /// <summary>Checks the CA folders soon (the window calls this when you come back to it, e.g. from Explorer).</summary>
@@ -3425,14 +3605,16 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     }
 
     /// <summary>
-    /// Background sync of the tracked projects on the interval in Settings: Helix (only changed items)
-    /// and Procore (when it can be read in the background). Sites whose sign-in has expired are skipped.
+    /// Background sync of the tracked projects on the schedule in Settings (weekdays only; one interval
+    /// from 7 am to 5 pm, a longer one at other times): Helix (only changed items) and Procore (when it can
+    /// be read in the background). Sites whose sign-in has expired are skipped, and Procore while it has
+    /// asked to slow down.
     /// </summary>
     private async Task AutoSyncAsync()
     {
         var sync = Settings.Sync;
-        if (autoSyncRunning || !sync.AutoSync || refreshingMany
-            || DateTimeOffset.Now - lastAutoSync < TimeSpan.FromMinutes(sync.IntervalMinutes))
+        if (autoSyncRunning || !sync.AutoSync || refreshingMany || !SyncSettings.SyncsAt(DateTime.Now)
+            || DateTimeOffset.Now - lastAutoSync < sync.IntervalAt(DateTime.Now))
         {
             return;
         }
@@ -3446,7 +3628,8 @@ public sealed class MainViewModel : ObservableObject, IDisposable
                 await AutoSyncSiteAsync(Providers.Helix, project => IsHelix(project) && !project.IsArchived, (targets, starting) => SyncHelixAsync(targets, starting, null));
             }
 
-            var procoreReady = store.Account(Providers.Procore) is { NeedsSignIn: false } && !procoreSync.PageReadingUnavailable;
+            var procoreReady = store.Account(Providers.Procore) is { NeedsSignIn: false } && !procoreSync.PageReadingUnavailable
+                && ProcoreThrottle.Shared.WaitingUntil(DateTimeOffset.Now) is null;
             if (procoreReady && !procoreSync.IsBusy && !ConnectionFor(Providers.Procore).IsSyncing)
             {
                 // New projects appear without anyone pasting links: your companies are looked through
@@ -3545,6 +3728,33 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         return (file, null);
     }
 
+    /// <summary>
+    /// Saves anonymized Workload Tracker observations built from the app's own data to a new folder in the
+    /// exports folder: projects set up in the app as item observations (a sample of up to 600 items each),
+    /// the others as catalog observations. Returns the folder, or a reason it couldn't.
+    /// </summary>
+    public async Task<(string? Folder, string? Problem)> ExportWorkloadTrackerFixturesAsync()
+    {
+        var snapshots = store.Snapshots();
+        if (snapshots.Count == 0)
+        {
+            return (null, "Refresh a Helix or Procore project first.");
+        }
+
+        var projects = store.SettingsCopy().Projects;
+        var files = await Task.Run(() => FixtureExport.Build(snapshots, projects, TrackerVersion.Current));
+
+        var folder = Path.Combine(Paths.ExportsDirectory, $"workload-tracker-fixtures-{DateTime.Now:yyyyMMdd-HHmmss}");
+        Directory.CreateDirectory(folder);
+        foreach (var file in files)
+        {
+            await File.WriteAllTextAsync(Path.Combine(folder, file.Name), file.Json);
+        }
+
+        AppLog.Info("export", $"Exported {files.Count} anonymized Workload Tracker fixtures to {folder}.");
+        return (folder, null);
+    }
+
     // ---- Company settings and updates ------------------------------------------------------
 
     private CompanySettings? company;
@@ -3584,132 +3794,127 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     public bool AreFoldersLocked => company?.IsLocked("folders") == true;
     public bool IsSyncLocked => company?.IsLocked("sync") == true;
 
-    // ---- Company server (optional) ---------------------------------------------------------
+    // ---- Workload Tracker (optional) -------------------------------------------------------
 
-    private CentralSync? central;
-    private DispatcherTimer? centralTimer;
+    private WorkloadTrackerSync? workloadTracker;
+    private DispatcherTimer? workloadTimer;
 
-    /// <summary>Shares with the company's CA Tracker server (when one is set up) shortly after starting, then every two minutes.</summary>
-    public void UseCentral(CentralSync service)
+    /// <summary>Sends what scans changed to Workload Tracker (while paired) shortly after starting, then every minute.</summary>
+    public void UseWorkloadTracker(WorkloadTrackerSync service)
     {
-        central = service;
+        workloadTracker = service;
+        service.StatusChanged += (_, _) => System.Windows.Application.Current?.Dispatcher.BeginInvoke(new Action(RaiseWorkloadTracker));
         var timer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(20) };
-        centralTimer = timer;
+        workloadTimer = timer;
         timer.Tick += async (_, _) =>
         {
-            timer.Interval = TimeSpan.FromMinutes(2);
-            if (service.IsConfigured)
+            timer.Interval = TimeSpan.FromMinutes(1);
+            if (service.IsPaired)
             {
-                await RunTimerAsync("sharing", ShareWithCentralAsync);
+                await RunTimerAsync("Workload Tracker", () => service.SendAsync());
             }
         };
         timer.Start();
-        RaiseCentral();
+        RaiseWorkloadTracker();
     }
 
-    public static bool IsValidCentralServer(string server) => CentralSync.NormalizeServer(server).Length > 0;
+    /// <summary>The tracker's address as https://host, or null when it isn't one.</summary>
+    public static string? NormalizeWorkloadTrackerAddress(string address) => WorkloadTrackerApi.NormalizeAddress(address);
 
-    /// <summary>The server's address (set by the company settings file when it names one).</summary>
-    public string CentralServerText => central?.Server ?? "";
+    public string WorkloadTrackerAddress => Settings.WorkloadTracker.Address;
 
-    public bool IsCentralServerLocked => central?.IsCompanyServer == true;
+    public bool IsWorkloadTrackerPaired => Settings.WorkloadTracker.IsPaired;
 
-    /// <summary>A company server is set up (Share now and Disconnect apply).</summary>
-    public bool IsCentralSetUp => central is { Server.Length: > 0 };
+    /// <summary>The token was refused or can't be read: Connect again (also shown in the sign-in banner).</summary>
+    public bool WorkloadTrackerNeedsConnect => workloadTracker is { NeedsSignIn: true };
 
-    /// <summary>What Settings → Connections shows about the company server.</summary>
-    public string CentralStatusText
+    /// <summary>What Settings → Connections shows about Workload Tracker.</summary>
+    public string WorkloadTrackerStatusText
     {
         get
         {
-            if (central is { IsCompanyServer: true, Server.Length: 0 })
+            var sync = Settings.WorkloadTracker;
+            if (!sync.IsPaired)
             {
-                return "⚠ The company settings file's server address isn't a valid https:// address.";
+                return sync.Address.Length == 0
+                    ? "Not connected: everything stays on this PC."
+                    : $"Not connected. Connect to send your projects to {sync.Address}.";
             }
 
-            if (central is null || central.Server.Length == 0)
+            if (workloadTracker is null)
             {
-                return "Not set up: everything stays on this PC.";
+                return "Workload Tracker isn't available in this version.";
             }
 
-            if (!central.HasToken)
+            var waiting = workloadTracker.PendingCount;
+            var queued = waiting == 0 ? "" : $" · {waiting} project{(waiting == 1 ? "" : "s")} waiting to send";
+            var assignments = workloadTracker.PendingAssignmentCount;
+            queued += assignments == 0 ? "" : $" · {assignments} assignment change{(assignments == 1 ? "" : "s")} waiting to send";
+            if (workloadTracker.LastProblem is { } problem)
             {
-                return $"Enter your access token for {central.Server}.";
+                return $"⚠ {problem}{queued}";
             }
 
-            if (central.LastProblem is { } problem)
-            {
-                return $"⚠ {problem}";
-            }
-
-            if (central.LastSyncAt is not { } at)
-            {
-                return $"Set up: sharing with {central.Server} starts in a moment.";
-            }
-
-            var who = string.IsNullOrWhiteSpace(central.ConnectedAs) ? "" : $" as {central.ConnectedAs}";
-            var received = central.LastReceived > 0 ? $" · {central.LastReceived} changes from others" : "";
-            return $"Sharing with {central.Server}{who} · last shared {Formatting.When(at)}{received}";
+            var person = sync.PersonId is null
+                ? " ⚠ No person is linked to this account in Workload Tracker, so assignments and My Work can't use it."
+                : "";
+            var sent = workloadTracker.LastSentAt is { } at ? $" · last sent {Formatting.When(at)}" : " · sending starts in a moment";
+            return $"Connected to {sync.Address} as {sync.AccountName}{sent}{queued}.{person}";
         }
     }
 
-    private void RaiseCentral()
+    private void RaiseWorkloadTracker()
     {
-        OnPropertyChanged(nameof(CentralServerText));
-        OnPropertyChanged(nameof(IsCentralServerLocked));
-        OnPropertyChanged(nameof(CentralStatusText));
-        OnPropertyChanged(nameof(IsCentralSetUp));
+        OnPropertyChanged(nameof(WorkloadTrackerAddress));
+        OnPropertyChanged(nameof(IsWorkloadTrackerPaired));
+        OnPropertyChanged(nameof(WorkloadTrackerNeedsConnect));
+        OnPropertyChanged(nameof(WorkloadTrackerStatusText));
+        OnPropertyChanged(nameof(ShowsAssignments));
+        OnPropertyChanged(nameof(ShowSignInBanner));
+        OnPropertyChanged(nameof(SignInBannerText));
     }
 
-    /// <summary>Saves the server and token, checks them and shares. Null when it worked; otherwise what's wrong.</summary>
-    public async Task<string?> ConnectCentralAsync(string server, string? token)
+    /// <summary>Pairs with Workload Tracker using a token from its Profile page. Null when it worked; otherwise what's wrong.</summary>
+    public async Task<string?> ConnectWorkloadTrackerAsync(string address, string token, int? sessionId, DateTimeOffset? expiresAt)
     {
-        if (central is null)
+        if (workloadTracker is null)
         {
-            return "The company server isn't available in this version.";
+            return "Workload Tracker isn't available in this version.";
         }
 
-        central.Configure(server, token);
-        RaiseCentral();
-        if (central.Server.Length == 0)
-        {
-            return IsCentralServerLocked
-                ? "The company settings file's server address isn't a valid https:// address. Ask whoever manages CA Tracker."
-                : "Saved. With no server address, everything stays on this PC.";
-        }
-
-        var problem = await central.TestAsync();
+        var problem = await workloadTracker.ConnectAsync(address, token, sessionId, expiresAt);
         if (problem is null)
         {
-            problem = (await central.SyncAsync()).Problem;
+            signInBannerDismissed = false;
+            await workloadTracker.SendAsync();
         }
 
-        RaiseCentral();
+        RaiseWorkloadTracker();
         return problem;
     }
 
-    /// <summary>Shares now. Null when it worked; otherwise what's wrong.</summary>
-    public async Task<string?> ShareWithCentralAsync()
+    /// <summary>Sends what is waiting now. Null when it worked; otherwise what's wrong.</summary>
+    public async Task<string?> SendToWorkloadTrackerAsync()
     {
-        if (central is not { IsConfigured: true })
+        if (workloadTracker is not { IsPaired: true })
         {
-            return "Set up the company server first.";
+            return "Connect to Workload Tracker first.";
         }
 
-        if (central.IsRunning)
-        {
-            return "Already sharing; it finishes in a moment.";
-        }
-
-        var result = await central.SyncAsync();
-        RaiseCentral();
-        return result.Problem;
+        await workloadTracker.SendAsync();
+        RaiseWorkloadTracker();
+        return workloadTracker.LastProblem;
     }
 
-    public void DisconnectCentral()
+    /// <summary>Stops sending: revokes this PC's connection in Workload Tracker and keeps everything on this PC.</summary>
+    public async Task DisconnectWorkloadTrackerAsync()
     {
-        central?.Disconnect();
-        RaiseCentral();
+        if (workloadTracker is not null)
+        {
+            await workloadTracker.DisconnectAsync();
+        }
+
+        RaiseWorkloadTracker();
     }
 
     /// <summary>Checks the company's update location now, then every six hours.</summary>
@@ -3779,6 +3984,8 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     {
         // Settings doesn't edit the Procore section (which projects to sync, last look): keep the live one.
         updated.Procore = Settings.Procore;
+        // Nor the Workload Tracker connection, which Connect and Disconnect save as they happen.
+        updated.WorkloadTracker = Settings.WorkloadTracker;
         store.SaveSettings(updated);
         LoadProjects();
         await CompareAsync();
@@ -3803,6 +4010,12 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     private void RebuildRows()
     {
         using var timing = AppLog.Time("list.rebuild", $"{allRows.Count} rows", 100);
+        var assignedFirst = groupBy is GroupModes.Urgency && !IsFiling && IsMyWorkActive;
+        foreach (var row in allRows)
+        {
+            row.ListAssignedFirst = assignedFirst;
+        }
+
         var visible = allRows
             .Where(MatchesType)
             .Where(Matches)
@@ -3930,6 +4143,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
             foreach (var (view, source) in results)
             {
                 badgeSources[view.Id] = source;
+                ApplyAssignments(source.Rows);
             }
         }
 
@@ -4006,7 +4220,8 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         // only by name may have the company in brackets after it.
         return (rememberCompany && row.Holders.Any(holder => row.Comparison.Company.Matches(holder.CompanyId, holder.Company)
                     || row.Comparison.Company.Matches(null, PersonNames.CompanyIn(holder.Name))))
-            || row.HolderNames.Any(rememberedPeople.Contains);
+            || row.HolderNames.Any(rememberedPeople.Contains)
+            || (row.IsAssignedToMe && YourNames().Any(rememberedPeople.Contains));
     }
 
     /// <summary>
@@ -4025,7 +4240,8 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         }
         else if (groupBy is GroupModes.Urgency)
         {
-            var byUrgency = left.Urgency.CompareTo(right.Urgency);
+            // "Assigned to me" (in My work), then by when it's due.
+            var byUrgency = left.HeadingOrder.CompareTo(right.HeadingOrder);
             if (byUrgency != 0)
             {
                 return byUrgency;
@@ -4081,6 +4297,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         nameof(RowViewModel.DaysTillDue) => row.DaysTillDue is null,
         nameof(RowViewModel.Number) => row.Row.Item is null,
         nameof(RowViewModel.PersonSortKey) => row.HolderNames.Count == 0,
+        nameof(RowViewModel.AssignedSortKey) => row.Assignees.Count == 0,
         nameof(RowViewModel.Status) => false,
         _ => string.IsNullOrWhiteSpace(SortText(row, column))
     };
@@ -4101,6 +4318,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         nameof(RowViewModel.Title) => row.TitleText,
         nameof(RowViewModel.ProviderStatus) => row.ProviderStatus,
         nameof(RowViewModel.PersonSortKey) or nameof(RowViewModel.HolderText) => row.PersonSortKey,
+        nameof(RowViewModel.AssignedSortKey) => row.AssignedSortKey,
         nameof(RowViewModel.FolderName) => row.HasFolder ? row.FolderName : "",
         nameof(RowViewModel.DisciplineText) => row.Row.Discipline?.Label ?? "",
         nameof(RowViewModel.LocationText) => row.LocationText,
@@ -4179,8 +4397,9 @@ public sealed class MainViewModel : ObservableObject, IDisposable
                      nameof(HasSetupChip), nameof(SetupIssuesText), nameof(CanShowProjectDetails), nameof(CanEditProject), nameof(HasDueChips),
                      nameof(LastSyncFailed), nameof(CanIncludeUnlabeled), nameof(IncludeUnlabeledText), nameof(MarkReturnedToolTip),
                      nameof(HasActiveFilters), nameof(CanClearFilters), nameof(HasHiddenSearchMatches),
-                     nameof(IsPlaceholder), nameof(CanEditConnection), nameof(EditButtonText),
-                     nameof(RfiTabText), nameof(SubmittalTabText), nameof(BothTabText), nameof(IsMultiProject), nameof(EmptyText), nameof(HasEmptyText), nameof(Comparison)
+                     nameof(IsPlaceholder), nameof(CanEditConnection),
+                     nameof(RfiTabText), nameof(SubmittalTabText), nameof(BothTabText), nameof(IsMultiProject), nameof(EmptyText), nameof(HasEmptyText), nameof(Comparison),
+                     nameof(ShowsAssignments)
                  })
         {
             OnPropertyChanged(name);
@@ -4218,6 +4437,9 @@ public sealed class MainViewModel : ObservableObject, IDisposable
                 case StoreChangeKind.Accounts:
                     accountsChanged = true;
                     break;
+                case StoreChangeKind.Assignments:
+                    assignmentsChanged = true;
+                    break;
             }
         }
 
@@ -4240,6 +4462,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         bool catalog;
         bool accounts;
         bool touched;
+        bool assignments;
         lock (changeGate)
         {
             itemLists = new HashSet<string>(changedItemLists, StringComparer.OrdinalIgnoreCase);
@@ -4248,9 +4471,10 @@ public sealed class MainViewModel : ObservableObject, IDisposable
             catalog = catalogChanged;
             accounts = accountsChanged;
             touched = snapshotsTouched;
+            assignments = assignmentsChanged;
             changedItemLists.Clear();
             changedFolderIndexes.Clear();
-            settingsChanged = catalogChanged = accountsChanged = snapshotsTouched = false;
+            settingsChanged = catalogChanged = accountsChanged = snapshotsTouched = assignmentsChanged = false;
         }
 
         if (settings)
@@ -4259,8 +4483,8 @@ public sealed class MainViewModel : ObservableObject, IDisposable
             settingsVersion++;
         }
 
-        // The tracker projects on screen before reloading: settings saved from elsewhere (such as discipline
-        // choices from the company server) replace them, and then the list is compared again.
+        // The tracker projects on screen before reloading: settings saved from elsewhere replace them, and
+        // then the list is compared again.
         var shownBefore = new Dictionary<string, TrackerProject>(StringComparer.Ordinal);
         foreach (var project in selectedProjects)
         {
@@ -4282,6 +4506,11 @@ public sealed class MainViewModel : ObservableObject, IDisposable
             || (shownBefore.TryGetValue(project.Id, out var before) && !ReferenceEquals(before, project.Project))
             || (project.Project.Connection is { } connection && !project.IsRefreshing
                 && itemLists.Contains($"{connection.Provider}|{connection.ProjectId}")));
+        if (assignments)
+        {
+            OnAssignmentsChanged(rowsWillBeRebuilt: shownChanged);
+        }
+
         if (shownChanged)
         {
             await CompareAsync();
@@ -4437,6 +4666,6 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         folderTimer.Stop();
         autoSyncTimer.Stop();
         updateTimer?.Stop();
-        centralTimer?.Stop();
+        workloadTimer?.Stop();
     }
 }

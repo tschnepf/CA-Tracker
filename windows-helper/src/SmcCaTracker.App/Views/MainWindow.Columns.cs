@@ -20,6 +20,9 @@ public partial class MainWindow
     private const double CellPadding = 22;
     // Header padding (8 each side) plus the sort arrow.
     private const double HeaderPadding = 32;
+    // A pill after a cell's text: its padding (8 each side) and the gap before it.
+    private const double PillPadding = 22;
+    private const double PillFontSize = 12;
 
     private bool fitPending;
 
@@ -30,7 +33,8 @@ public partial class MainWindow
         double Max,
         double Extra = 0,
         double FontSize = 0,
-        bool Bold = false);
+        bool Bold = false,
+        Func<RowViewModel, string?>? Pill = null);
 
     private IEnumerable<ColumnFit> ColumnFits() => new[]
     {
@@ -40,8 +44,10 @@ public partial class MainWindow
         new ColumnFit(TitleColumn, row => row.TitleText, 220, 900),
         new ColumnFit(StatusColumn, row => row.ProviderStatus, 0, 220),
         new ColumnFit(CourtColumn, row => row.HolderText, 150, 600),
-        new ColumnFit(DaysInCourtColumn, row => row.DaysInCourtText, 0, 160),
+        // The "Done in Workload Tracker" pill follows the names on items marked complete there.
+        new ColumnFit(AssignedColumn, row => row.AssignedText, 110, 420, Pill: row => row.ShowsDoneFlag ? RowViewModel.DoneFlagText : null),
         new ColumnFit(DaysTillDueColumn, row => row.DueText, 0, 260, Bold: true),
+        new ColumnFit(DaysInCourtColumn, row => row.DaysInCourtText, 0, 160),
         new ColumnFit(FolderColumn, row => row.FolderName, 140, 520),
         // The "Set" link sits beside the discipline text.
         new ColumnFit(DisciplineColumn, row => row.DisciplineText, 110, 300, Extra: 44),
@@ -115,7 +121,8 @@ public partial class MainWindow
         foreach (var fit in fits)
         {
             var size = fit.FontSize > 0 ? fit.FontSize : ItemsGrid.FontSize;
-            var content = rows.Count == 0 ? 0 : rows.Max(row => Measure(fit.Text(row) ?? "", size, fit.Bold));
+            var content = rows.Count == 0 ? 0 : rows.Max(row => Measure(fit.Text(row) ?? "", size, fit.Bold)
+                + (fit.Pill?.Invoke(row) is { } pill ? Measure(pill, PillFontSize, false) + PillPadding : 0));
             var header = Measure(fit.Column.Header as string ?? "", ItemsGrid.FontSize, true) + HeaderPadding;
             needed[fit.Column] = Math.Ceiling(Math.Min(fit.Max, Math.Max(header, content + fit.Extra + CellPadding)));
         }

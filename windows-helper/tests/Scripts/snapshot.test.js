@@ -63,6 +63,8 @@ test("Helix snapshots list every current-project item with company-aware holders
     ["Sam Coworker", "co-smc", "current"],
     ["Alex Architect", "co-arch", "upcoming"]
   ]);
+  // Each holder keeps the contact id that is the same person on every project.
+  assert.deepEqual(byId.get("held").holders.map((h) => [h.providerUserId, h.email]), [["c-cw", null], ["c-ar", null]]);
   assert.deepEqual(byId.get("returned").holders.map((h) => [h.companyId, h.state]), [["co-arch", "current"]]);
   assert.deepEqual(byId.get("later").holders.map((h) => [h.companyId, h.state]), [
     ["co-smc", "upcoming"],
@@ -127,7 +129,9 @@ test("Helix snapshots exclude items from other projects and contain no workflow 
   ]));
   assert.deepEqual(snapshot.items.map((entry) => entry.itemId), ["mine"]);
   const serialized = JSON.stringify(snapshot);
-  assert.doesNotMatch(serialized, /workflow|contactId|c-me/);
+  assert.doesNotMatch(serialized, /workflow|contactId/);
+  // The contact id is kept on purpose, as the person's provider id: it links them in Workload Tracker.
+  assert.equal(snapshot.user.providerUserId, "c-me");
 });
 
 test("Procore snapshots are grouped by project and always partial", () => {

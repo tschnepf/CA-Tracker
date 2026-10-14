@@ -41,6 +41,14 @@ Source: "..\company\ca-tracker-company.json"; DestDir: "{app}"; Flags: ignorever
 Name: "{userprograms}\SMC CA Tracker"; Filename: "{app}\SmcCaTracker.exe"
 Name: "{userdesktop}\SMC CA Tracker"; Filename: "{app}\SmcCaTracker.exe"; Tasks: desktopicon
 
+[Registry]
+; smc-ca-tracker:// links (the buttons in Workload Tracker's lists) open the app, for this Windows user only.
+; The app also writes this at startup when it is missing or names a copy that is gone.
+Root: HKCU; Subkey: "Software\Classes\smc-ca-tracker"; ValueType: string; ValueName: ""; ValueData: "URL:SMC CA Tracker"; Flags: uninsdeletekey
+Root: HKCU; Subkey: "Software\Classes\smc-ca-tracker"; ValueType: string; ValueName: "URL Protocol"; ValueData: ""
+Root: HKCU; Subkey: "Software\Classes\smc-ca-tracker\DefaultIcon"; ValueType: string; ValueName: ""; ValueData: """{app}\SmcCaTracker.exe"",0"
+Root: HKCU; Subkey: "Software\Classes\smc-ca-tracker\shell\open\command"; ValueType: string; ValueName: ""; ValueData: """{app}\SmcCaTracker.exe"" ""%1"""
+
 [Run]
 ; Also runs after a quiet update, so the app comes back by itself.
 Filename: "{app}\SmcCaTracker.exe"; Description: "Start SMC CA Tracker"; Flags: nowait postinstall
